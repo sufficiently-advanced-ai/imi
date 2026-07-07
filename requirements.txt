@@ -1,0 +1,66 @@
+# fastapi>=0.115 pulls starlette>=0.40: required with httpx>=0.28.1 —
+# starlette<0.37.2 TestClient passes the removed `app=` kwarg to
+# httpx.Client and every route test errors at setup.
+fastapi==0.115.12
+uvicorn[standard]==0.32.1  # >=0.31.1 required by mcp>=1.27
+python-dotenv==1.0.0
+pydantic>=2.10.4
+pydantic-settings>=2.1.0
+anthropic==0.45.2
+# Multi-endpoint inference routing (OpenAI-compatible self-hosted + Bedrock).
+# Only used when config/inference.yaml routes a call off the Anthropic default;
+# imported lazily so the Anthropic-only path needs nothing here.
+# NOTE: Bedrock endpoints additionally require `boto3` (not bundled — install
+# it in deployments that configure a `type: bedrock` endpoint).
+litellm==1.89.2
+pyyaml==6.0.1
+pytest==8.0.0
+pytest-asyncio==0.23.8
+pytest-timeout==2.3.1
+httpx>=0.28.1
+PyGithub>=2.1.1
+python-multipart>=0.0.9
+openpyxl==3.1.2
+
+# Claude Agent SDK (requires mcp>=1.8.0 for ToolAnnotations)
+# mcp floor raised to 1.27.2: fixes SSE transport disconnect cleanup
+# (ClosedResourceError on mid-request close) that previously leaked
+# CLOSE_WAIT sockets and wedged the uvicorn worker.
+claude-agent-sdk>=0.2.110,<0.3  # floor = version validated in CI; <0.3 guards 0.x breaking bumps
+mcp>=1.27.2,<2
+
+# Neo4j graph database
+neo4j>=5.27.0
+
+# semantica (below) hard-depends on torch. By default pip installs torch's CUDA
+# build, which drags in the nvidia-*/triton wheels (~4.6GB) — all dead weight:
+# every deployment is CPU-only and embeddings run through FastEmbed (ONNX runtime,
+# see app/services/semantica_init.py), never torch-on-GPU. Pin the CPU-only wheel
+# instead. The `+cpu` local version is published only on the PyTorch CPU index, so
+# `==2.12.0+cpu` resolves there deterministically (PyPI's plain 2.12.0 won't match)
+# and still satisfies semantica's `torch>=1.12.0`. Saves ~4.4GB per image.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu
+
+# Semantica knowledge engine
+semantica[llm-anthropic,graph-neo4j]>=0.3.0,<0.4.0
+
+# Database dependencies
+sqlalchemy[asyncio]==2.0.35
+aiosqlite==0.20.0
+alembic==1.13.3
+
+# OpenTelemetry dependencies for LLM monitoring
+traceloop-sdk==0.40.7
+# Aligned to 0.64b0: traceloop-sdk 0.40.7 needs opentelemetry-api<2.0, and the
+# old 0.58b0 pin froze the otel core at a level its instrumentation siblings
+# rejected (ResolutionImpossible). 0.64b0 is the consistent set pip resolves to.
+opentelemetry-instrumentation-fastapi==0.64b0
+# Let traceloop-sdk determine all OpenTelemetry versions for compatibility
+
+# Entity webhook delivery (entity_webhook_service) and the OTEL forwarder sidecar
+aiohttp==3.11.11
+
+# Development tools
+ruff==0.8.6
+

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <existing_profile>{{existing_profile}}</existing_profile>
+  <trigger_files>{{trigger_files}}</trigger_files>
+  <recent_digests>{{recent_digests}}</recent_digests>
+  <grounded_facts>{{grounded_facts}}</grounded_facts>
+
+  <instructions>
+    You are updating a person profile for: {{entity_id}}
+    
+    Based on the existing profile (if any), new information from trigger files, and recent organizational context from digests, create an updated person profile.
+    
+    The profile should be written from the organization's perspective - tracking who people are, their roles, and their involvement in organizational activities.
+    
+    REQUIRED STRUCTURE:
+    
+    1. Start with YAML frontmatter in standard format (enclosed in --- delimiters) containing:
+       - name: Full name of the person
+       - title: Their current title/role
+       - department: Their department or team (if internal)
+       - company: Their company (if external)
+       - contact: Email or other contact info (if available)
+       - projects: List of project IDs they're involved in
+       - teams: List of team IDs they belong to or work with
+       - last_seen: Most recent mention date
+    
+    2. Then include these sections:
+
+       
+       # [Person's Full Name]
+       
+       ## Current Role & Responsibilities
+       A brief paragraph about their current position and key responsibilities.
+       Include any recent role changes or new responsibilities.
+       
+       ## Project Involvement
+       List ONLY projects this person is actually tied to — via a typed
+       relationship (e.g. works_on, leads) or work they personally performed.
+       Do not list a project merely because it was discussed in a meeting they
+       attended.
+       - Project Name: Their specific role or contribution
+
+       ## Recent Activities
+       Bullet points of activities THIS PERSON personally performed, decided, or
+       owns. The &lt;grounded_facts&gt; block (their Recent Signals + typed
+       relationships) is the AUTHORITATIVE source for attribution — derive
+       activities from it, not from un-attributed transcript text.
+       Meetings have multiple participants — do NOT attribute another
+       participant's decisions, action items, or work to this person. If a
+       decision reads "Jordan will…", it belongs to Jordan, not to others who
+       merely attended. When unsure who did something, omit it.
+
+       ## Key Relationships
+       Note working relationships ONLY when grounded in a typed relationship or
+       an explicit statement (never inferred from co-attendance alone):
+       - Works closely with: [person names]
+       - Reports to: [if known]
+       - Direct reports: [if applicable]
+       
+       ## Expertise & Skills
+       Areas where they've demonstrated expertise or been recognized for their knowledge.
+       
+       ## Notes & Context
+       Any other relevant information about this person that helps understand their role
+       in the organization or their working style.
+    
+    IMPORTANT GUIDELINES:
+    - CORRECTIONS OVERRIDE EVERYTHING: if the &lt;grounded_facts&gt; block contains
+      a "Corrections (authoritative …)" section, treat each correction as the
+      final truth. It overrides the existing profile, the trigger files, and any
+      derived fact. Never re-introduce a fact a correction contradicts.
+    - Use the exact entity_id provided (e.g., "person-sarah-chen")
+    - Focus on professional/organizational context
+    - Don't make up information not found in the source documents
+    - ATTRIBUTION IS CRITICAL: this profile is for {{entity_id}} ONLY. Trigger
+      files are shared meetings involving many people. Attribute an activity,
+      decision, action item, or responsibility to this person ONLY when they are
+      the named actor/owner (per the "Recent Signals"/grounded facts) or it is
+      explicitly stated about them. Never carry a co-participant's work onto this
+      profile. Prefer omission over a guess.
+    - A fact stated about this person by someone else (e.g. "X leads Project Y")
+      may be included ONLY when backed by a typed relationship or an explicit
+      statement — do not infer leadership/ownership from mere co-attendance.
+    - If updating an existing profile, preserve important historical information
+    - Track actual activities and contributions, not speculation
+    - Use person IDs consistently (e.g., "person-firstname-lastname")
+    - For external people, note their company/organization clearly
+    - Avoid generic example content - use actual information from the files
+  </instructions>
+</prompt>

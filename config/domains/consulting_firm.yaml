@@ -1,0 +1,260 @@
+domain:
+  id: consulting_firm
+  name: "Consulting Firm"
+  version: "1.0.0"
+  ui:
+    app_name: "Advisory Intelligence"
+    entity_label: "Clients & Projects"
+    graph_label: "Relationship Map"
+    nav_groups:
+      knowledge_base:
+        label: "Client Intelligence"
+        items:
+          /entities:
+            label: "Clients & Projects"
+            description: "Manage client accounts, projects, and teams"
+          /domain-graph-enhanced:
+            label: "Relationship Map"
+            description: "Interactive visualization of client relationships"
+      intelligence:
+        label: "Intelligence"
+        items:
+          /feed:
+            label: "Signal Feed"
+            description: "Live feed of client decisions, risks, and opportunities"
+    terminology:
+      entity: "record"
+      signal: "insight"
+  entities:
+    account:
+      id: account
+      name: account
+      label: Client
+      icon: building-2
+      description: Client organizations and companies
+      plural: accounts
+      plural_label: Clients
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: industry
+          type: enum
+          enum: ["tech", "finance", "healthcare", "retail", "other"]
+        - name: revenue
+          type: number
+          unit: USD
+        - name: founded_date
+          type: date
+        - name: is_active
+          type: boolean
+      relationships:
+        - type: has_projects
+          target: project
+          cardinality: one_to_many
+          inverse_name: belongs_to_account
+        - type: managed_by
+          target: person
+          cardinality: many_to_one
+          inverse_name: manages_accounts
+    project:
+      id: project
+      name: project
+      label: Engagement
+      icon: briefcase
+      description: Client projects and engagements
+      plural: projects
+      plural_label: Engagements
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: budget
+          type: number
+          unit: USD
+        - name: start_date
+          type: date
+        - name: end_date
+          type: date
+        - name: status
+          type: enum
+          enum: ["planning", "active", "completed", "on_hold"]
+      relationships:
+        - type: belongs_to_account
+          target: account
+          cardinality: many_to_one
+          inverse_name: has_projects
+        - type: has_team_members
+          target: person
+          cardinality: many_to_many
+          inverse_name: works_on_projects
+        - type: managed_by
+          target: person
+          cardinality: many_to_one
+        - type: discussed_topic
+          target: person
+          cardinality: many_to_many
+    person:
+      id: person
+      name: person
+      label: Person
+      icon: user
+      description: Consultants and client contacts
+      plural: people
+      plural_label: People
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: email
+          type: string
+        - name: role
+          type: string
+        - name: department
+          type: string
+      relationships:
+        - type: works_on_projects
+          target: project
+          cardinality: many_to_many
+          inverse_name: has_team_members
+        - type: manages_accounts
+          target: account
+          cardinality: one_to_many
+          inverse_name: managed_by
+        - type: member_of_team
+          target: team
+          cardinality: many_to_one
+          inverse_name: has_members
+        - type: reports_to
+          target: person
+          cardinality: many_to_one
+          inverse_name: manages
+        - type: manages
+          target: person
+          cardinality: one_to_many
+          inverse_name: reports_to
+        - type: collaborates_with
+          target: person
+          cardinality: many_to_many
+          inverse_name: collaborates_with
+        - type: discussed_topic
+          target: project
+          cardinality: many_to_many
+    team:
+      id: team
+      name: team
+      label: Team
+      icon: users
+      description: Project teams and departments
+      plural: teams
+      plural_label: Teams
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: department
+          type: string
+        - name: focus_area
+          type: string
+      relationships:
+        - type: has_members
+          target: person
+          cardinality: one_to_many
+          inverse_name: member_of_team
+        - type: works_on_projects
+          target: project
+          cardinality: many_to_many
+  intelligence_patterns:
+    scope_creep:
+      name: "Scope Creep Detection"
+      pattern_type: risk
+      triggers:
+        - entity: project
+          condition: timeline_extension_mentioned
+          weight: 0.8
+        - entity: meeting
+          condition: additional_features_discussed
+          weight: 0.6
+      priority: high
+      actions:
+        - "Alert project manager"
+        - "Review project scope document"
+    resource_conflicts:
+      name: "Resource Conflict Detection"
+      pattern_type: risk
+      triggers:
+        - entity: person
+          condition: scheduling_conflict_mentioned
+          weight: 0.7
+        - entity: team
+          condition: workload_concerns_raised
+          weight: 0.8
+      priority: medium
+      actions:
+        - "Review team capacity"
+        - "Consider resource reallocation"
+    budget_concerns:
+      name: "Budget Risk Detection"
+      pattern_type: risk
+      triggers:
+        - entity: project
+          condition: budget_overrun_discussed
+          weight: 0.9
+        - entity: account
+          condition: cost_concerns_raised
+          weight: 0.7
+      priority: high
+      actions:
+        - "Schedule budget review"
+        - "Alert account manager"
+    client_dissatisfaction:
+      name: "Client Dissatisfaction Detection"
+      pattern_type: risk
+      triggers:
+        - entity: account
+          condition: client_complaint_mentioned
+          weight: 0.9
+        - entity: meeting
+          condition: deliverable_concerns_raised
+          weight: 0.8
+      priority: high
+      actions:
+        - "Escalate to senior management"
+        - "Schedule client meeting"
+    upsell_opportunity:
+      name: "Upsell Opportunity Detection"
+      pattern_type: opportunity
+      triggers:
+        - entity: account
+          condition: additional_services_interest
+          weight: 0.7
+        - entity: project
+          condition: expanded_scope_discussed
+          weight: 0.6
+      priority: medium
+      actions:
+        - "Prepare proposal"
+        - "Schedule sales meeting"
+  extraction_priorities:
+    meetings:
+      pattern: entity_extraction
+      priority: high
+    documents:
+      pattern: project_analysis
+      priority: high
+    emails:
+      pattern: communication_tracking
+      priority: medium
+  success_metrics:
+    - name: project_success_rate
+      type: percentage
+      calculation: "completed_on_time_on_budget / total_projects"
+      target: 0.85
+    - name: client_satisfaction
+      type: score
+      range: [1, 10]
+      target: 8.5
+    - name: resource_utilization
+      type: percentage
+      calculation: "billable_hours / available_hours"
+      target: 0.75

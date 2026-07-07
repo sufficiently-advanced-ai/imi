@@ -1,0 +1,8 @@
+{
+  "provider": "otter",
+  "title": "Acme Corp — engagement scoping",
+  "external_id": "otter-acme-2026-04-16",
+  "recorded_at": "2026-04-16T15:00:00+00:00",
+  "participants": ["Jane Okoye", "Reema Sharma", "Victor Lin", "Consultant"],
+  "transcript": "Reema (Acme Corp, COO): Thanks for joining. We want a carbon baseline we can stand behind at the June board meeting. Victor (Acme Corp, CFO): I'll be honest — I'm not convinced we need a fully independent baseline. Can't we just estimate it internally and save the spend? Consultant: We can, but an internal estimate won't survive auditor or lender scrutiny, and you'll end up paying twice when you have to redo it. Victor: I hear you, but I'm not sold yet. Jane (Acme Corp, Head of Sustainability): Victor, a credible number is exactly what protects us if anyone challenges the disclosure. Consultant: For scope, we decided to cover Scope 1 and Scope 2 now, and limit Scope 3 to Category 1 — purchased goods and services — for this phase. Reema: Agreed, keep it contained. Consultant: I'll deliver a detailed project plan and data request list by April 23. Reema: Good. Let's keep this on the board timeline."
+}

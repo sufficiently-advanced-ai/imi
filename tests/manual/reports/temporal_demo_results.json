@@ -1,0 +1,1103 @@
+[
+  {
+    "id": "EAT-1",
+    "category": "entity_at_time",
+    "question": "What did we know about Priya Kapoor on January 15, 2026?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what was known about Priya Kapoor on January 15, 2026. Let me first look up this person in the knowledge graph.Now let me retrieve what was known about Priya Kapoor on January 15, 2026.Let me also check what relationships were active for Priya Kapoor on that date.Based on the historical data, here's what was known about **Priya Kapoor** on **January 15, 2026**:\n\n## Basic Information\n- **Title**: Senior Consultant\n- **Company**: Meridian Partners\n- **Department**: Consulting\n- **Contact**: priya.kapoor@meridianpartners.com\n- **Entity entered system**: January 6, 2026 (so this data was available by January 15)\n\n## Project Work\nPriya was working on three projects:\n1. **Project Atlas** (primary engagement)\n2. **Project Beacon**\n3. **Polaris Onboarding**\n\n## Team Membership\n- Member of **Atlas Squad**\n\n## Professional Network\nShe was collaborating with 7 colleagues:\n- Derek Osman\n- Elena Voss\n- Marcus Chen (very strong collaboration based on co-occurrence data)\n- Nadia Reeves\n- Rachel Lin\n- Sam Okoro\n- Tom Halstead\n\n## Key Connections\nThe relationship data shows particularly strong connections to:\n- **Marcus Chen** - highest co-occurrence strength (1.0) across 7 shared documents\n- **Elena Voss** - strong co-occurrence (1.0) across 6 shared documents\n- **Project Atlas** - strongest project connection (1.0) across 7 shared documents\n\nShe also had connections to accounts including Northstar Retail, Vanguard Group, Polaris Health, and Meridian Internal based on meeting participation.\n\nAll of this information was active and available in the knowledge base as of January 15, 2026.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 1614,
+      "has_error": false,
+      "error": null,
+      "duration_s": 32.3
+    }
+  },
+  {
+    "id": "EAT-2",
+    "category": "entity_at_time",
+    "question": "What was the state of Project Atlas on February 10, 2026?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the historical state of Project Atlas on February 10, 2026. Let me first look up this project to get its entity ID.Now let me retrieve the state of Project Atlas as it was on February 10, 2026:Let me also check what relationships and connections were active for Project Atlas on that date:Let me also check what signals (decisions, action items, key points) were active around that date to get a fuller picture:## State of Project Atlas on February 10, 2026\n\nBased on the temporal data from the knowledge graph, here's what Project Atlas looked like on February 10, 2026:\n\n### **Project Status: On Track and Ahead of Schedule**\nJust three days before (February 7), during the \"Atlas Sprint Review: Phase 2 Launch\" meeting, the project was reported as **ahead of schedule** with:\n- Phase 2 launched on time\n- Data remediation at 70% completion\n\n### **Account & Team Structure**\n- **Client**: Northstar Retail\n- **Team Members** (as of Feb 10):\n  - Derek Osman\n  - Marcus Chen  \n  - Nadia Reeves\n  - Priya Kapoor\n  - Elena Voss\n\n### **Related Projects**\nProject Atlas had connections to:\n- Project Beacon\n- Vanguard Replatform\n- Polaris Onboarding\n\n### **Notable Context**\nThe team composition was about to change: on February 14 (4 days after your query date), there was a team restructuring where Priya Kapoor was reassigned from Atlas to Beacon, and Derek Osman was reassigned from Beacon to Atlas. So on February 10, this restructuring had not yet occurred, and Priya was still actively on the Atlas team.\n\nIn summary, **Project Atlas was in a strong position on February 10, 2026** \u2014 ahead of schedule with Phase 2 recently launched and data remediation work progressing well.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "entity_at_time",
+        "get_entity_by_name",
+        "query_signals"
+      ],
+      "answer_length": 1698,
+      "has_error": false,
+      "error": null,
+      "duration_s": 39.8
+    }
+  },
+  {
+    "id": "EAT-3",
+    "category": "entity_at_time",
+    "question": "What did we know about Kai Novak on February 15, 2026? Did he exist in our system at that time?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find out what we knew about Kai Novak on February 15, 2026. Let me start by looking up this entity.I found Kai Novak in the system. Now let me check what his state was on February 15, 2026.**No, Kai Novak did not exist in our system on February 15, 2026.**\n\nBased on the temporal query results, Kai Novak was first added to the system on **February 20, 2026** - five days after the date you're asking about. \n\nHis current profile shows:\n- **Title:** CTO, Polaris Health\n- **Company:** Polaris Health\n- **Department:** Technology\n- **Contact:** kai.novak@polarishealth.com\n- **First appeared in system:** February 20, 2026\n- **Last seen:** March 10, 2026\n\nSo there was no information about Kai Novak in the knowledge base on February 15, 2026 - he was added shortly thereafter.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 790,
+      "has_error": false,
+      "error": null,
+      "duration_s": 21.4
+    }
+  },
+  {
+    "id": "EAT-4",
+    "category": "entity_at_time",
+    "question": "What was Tom Halstead's role on March 1, 2026? Was he still with the firm?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find Tom Halstead's role on March 1, 2026. Let me start by looking up his entity information.Now let me check his state specifically on March 1, 2026:Let me check his status just before that date to understand what happened:Based on the temporal data in the knowledge graph:\n\n**No, Tom Halstead was not with the firm on March 1, 2026.**\n\nHis entity record shows that his validity period ended on **February 28, 2026**. On February 28th, he held the role of **Engagement Lead, Vanguard** at Meridian Partners in the Delivery department, where he:\n- Managed the Vanguard Group account\n- Worked on the Vanguard Replatform project\n- Was a member of the Beacon Squad team\n\nHowever, when I queried for his status on March 1, 2026, his entity was not found in the system, indicating he departed the firm or his role ended as of February 28, 2026. His last recorded activity in the knowledge base was on February 28, 2026 at 10:00 AM.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 940,
+      "has_error": false,
+      "error": null,
+      "duration_s": 27.5
+    }
+  },
+  {
+    "id": "EAT-5",
+    "category": "entity_at_time",
+    "question": "What did we know about the Vanguard Replatform project on January 30, 2026?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what was known about the Vanguard Replatform project on January 30, 2026. Let me start by looking up this project.Now let me retrieve what was known about this project on January 30, 2026:Let me also check what relationships were active at that time:Let me also check what signals (decisions, action items, insights) were known about this project around that time:Based on the temporal query, here's what was known about the **Vanguard Replatform project on January 30, 2026**:\n\n## Project Status & Overview\n- **Status**: At risk\n- **Client**: Vanguard Group\n- **Project Started**: January 6, 2026 (project was 24 days old)\n- **Focus Areas**: Platform modernization, API migration, mobile\n- **Key Technologies**: TypeScript, React Native, Node.js, PostgreSQL\n\n## Team Composition\nThe project had **five active team members**:\n1. **Tom Halstead** (at that time, still the engagement lead)\n2. **Marcus Chen** (heavily involved - appeared in all project contexts)\n3. **Nadia Reeves**\n4. **Jess Nolan**\n5. **Elena Voss**\n\nThe team had connections to Atlas Squad, Beacon Squad, and the Leadership Team.\n\n## Recent Decision (as of Jan 30)\n**Ten days earlier** (January 20, 2026), a significant decision was made:\n- **\"Approved exploration of Vanguard scope expansion to include mobile modernization\"**\n\nThis was the most recent signal in the knowledge base on January 30, meaning the project had just recently expanded its scope to include mobile work, which likely contributed to the \"at risk\" status.\n\n## Notable Context\nBy January 30, the project was still under Tom Halstead's leadership (Elena Voss wouldn't take over until March 3), and the scope expansion had just been approved. The concerns about workload and eventual leadership transition were still in the future.\n\nWould you like me to explore what changed after this date, or provide more detail about any specific aspect of the project's state on January 30?",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "entity_at_time",
+        "get_entity_by_name",
+        "get_entity_signals"
+      ],
+      "answer_length": 1935,
+      "has_error": false,
+      "error": null,
+      "duration_s": 40.8
+    }
+  },
+  {
+    "id": "EAT-6",
+    "category": "entity_at_time",
+    "question": "What was Marcus Chen's role on February 1, 2026 versus March 10, 2026?",
+    "expected_tools": [
+      "entity_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find out what Marcus Chen's role was at those two different times. Let me start by looking up Marcus Chen's entity information.Now let me check Marcus Chen's role on February 1, 2026:Now let me check his role on March 10, 2026:Based on the temporal data from the knowledge graph, **Marcus Chen's role was the same on both dates**:\n\n- **February 1, 2026**: Director Client Delivery / Interim Managing Partner\n- **March 10, 2026**: Director Client Delivery / Interim Managing Partner\n\nMarcus Chen has held this title continuously since January 6, 2026. There was no change in his role between the two dates you asked about. He remains in the Delivery department at Meridian Partners and manages multiple accounts including NorthStar Retail, Polaris Health, and Vanguard Group.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "entity_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 788,
+      "has_error": false,
+      "error": null,
+      "duration_s": 20.7
+    }
+  },
+  {
+    "id": "WC-1",
+    "category": "what_changed",
+    "question": "What changed about Priya Kapoor since February 1, 2026?",
+    "expected_tools": [
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Priya Kapoor since February 1, 2026. Let me start by looking up their entity ID.Now let me check what has changed about Priya Kapoor since February 1, 2026.The temporal query shows no changes to Priya Kapoor's core entity profile since February 1, 2026. However, let me check for recent activity like meetings and signals (action items, decisions) to give you a more complete picture.Perfect! Now I have a clear picture. Let me also check the recent meeting activity to provide complete context.## What Changed About Priya Kapoor Since February 1, 2026\n\nWhile **Priya's core profile** (title, department, contact information) has **not changed**, she has experienced **significant project reassignments and made a major technical contribution** during this period:\n\n### Project Assignment Changes\n\n1. **February 14, 2026**: Priya was reassigned from **Atlas to Beacon** project (effective immediately)\n\n2. **March 7, 2026**: She was **temporarily reassigned back to Atlas** to assist with critical data remediation work\n\n3. **March 10, 2026**: Decision made to assign Priya (along with Derek Osman) to **Polaris Onboarding** project once Atlas stabilizes\n\n### Major Achievement\n\n4. **March 17, 2026**: Priya **identified and resolved the root cause of data corruption** on the Atlas project, getting it back on track - this was noted as a key achievement in the Atlas Recovery & Status Update meeting\n\n### Meeting Activity\n\nSince February 1, Priya has participated in **7 meetings**, including:\n- Team Restructuring meetings\n- Atlas Sprint Reviews and Recovery meetings\n- Beacon Budget Review\n- Q1 Retrospective & Q2 Planning\n\n**Summary**: While her role as Senior Consultant at Meridian Partners hasn't changed, Priya has been actively moved between critical projects based on urgent needs, and played a crucial role in resolving a major technical crisis on the Atlas project. Her most recent assignment trajectory points toward the Polaris Onboarding project once Atlas is fully stabilized.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "list_meeting_documents",
+        "query_signals",
+        "what_changed"
+      ],
+      "answer_length": 2030,
+      "has_error": false,
+      "error": null,
+      "duration_s": 38.5
+    }
+  },
+  {
+    "id": "WC-2",
+    "category": "what_changed",
+    "question": "What changed about Project Atlas since January 6, 2026?",
+    "expected_tools": [
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Project Atlas since January 6, 2026. Let me first look up the entity and then check the changes.Now let me check what changed about Project Atlas since January 6, 2026:The temporal tracking shows **no structural changes** to Project Atlas since January 6, 2026 - meaning its properties and relationships in the knowledge graph have remained the same.\n\nHowever, let me check if there have been any recent meetings, decisions, or action items related to Project Atlas that wouldn't show up as entity changes:Excellent! While Project Atlas's structural properties haven't changed in the knowledge graph, there has been **significant activity and several major developments** since January 6, 2026:\n\n## Timeline of Changes:\n\n**February 7, 2026** - Atlas Sprint Review:\n- Project was **ahead of schedule**\n- Phase 2 launched on time\n- Data remediation was 70% complete\n\n**February 14, 2026** - Team Restructuring:\n- **Priya Kapoor reassigned FROM Atlas to Beacon**\n- **Derek Osman reassigned FROM Beacon TO Atlas**\n\n**March 7, 2026** - Crisis Response (Beacon Budget Review):\n- **$30K reallocated from Beacon to Atlas recovery** (indicating Atlas encountered problems)\n- **Priya Kapoor temporarily reassigned BACK to Atlas** to assist with data remediation\n\n**March 17, 2026** - Atlas Recovery Update:\n- **Atlas is back on track** after Priya identified and resolved the root cause of data corruption\n- This confirms there was a data corruption issue that derailed the project\n\n**March 21, 2026** - Q1 Retrospective:\n- Q1 showed 92% budget utilization across all projects (including Atlas)\n- **Q2 priorities confirmed: complete Atlas** (alongside stabilizing Vanguard, ramping Polaris, and evaluating Beacon restart)\n\n## Summary:\nProject Atlas went from being ahead of schedule in early February to experiencing data corruption issues (likely after Priya's reassignment), requiring emergency budget reallocation and her return to resolve the problem. As of mid-March, the project is back on track and remains a Q2 completion priority.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_signals",
+        "what_changed"
+      ],
+      "answer_length": 2067,
+      "has_error": false,
+      "error": null,
+      "duration_s": 37.3
+    }
+  },
+  {
+    "id": "WC-3",
+    "category": "what_changed",
+    "question": "What changed about Marcus Chen since February 15, 2026?",
+    "expected_tools": [
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Marcus Chen since February 15, 2026. Let me start by looking up Marcus Chen's entity ID.Now let me check what changed about Marcus Chen since February 15, 2026.The temporal tracking shows no structural changes to Marcus Chen's entity since February 15, 2026. Let me check for recent activity and signals related to him to see what's been happening.Let me check for recent signals (decisions, action items, etc.) related to Marcus Chen since mid-February.I found some recent activity. Let me also read Marcus Chen's profile to get more context about his current state.Based on the knowledge graph data, here's what changed about Marcus Chen since February 15, 2026:\n\n## Key Change: Promoted to Interim Managing Partner\n\n**Effective March 1, 2026**, Marcus Chen was appointed **Interim Managing Partner** while Nadia Reeves is on sabbatical. This is a significant leadership transition - he went from Director of Client Delivery to taking on the firm's top operational role.\n\n## Current Status (as of March 21, 2026)\n\nAccording to signals from the Q1 Retrospective & Q2 Planning meeting on March 21, Marcus is **\"successfully leading as Interim Managing Partner during Nadia sabbatical.\"**\n\n## What Stayed the Same\n\nHis profile shows he continues to:\n- Lead the **Atlas Squad** as technical lead\n- Oversee technical delivery across client engagements\n- Work on **Project Atlas** (Northstar Retail), **Vanguard Replatform**, and **Polaris Onboarding**\n- Manage accounts for Northstar Retail, Polaris Health, and Vanguard Group\n- Collaborate with the same core team members (Derek Osman, Elena Voss, Jess Nolan, Kai Novak, Priya Kapoor, Rachel Lin, Sam Okoro, Tom Halstead)\n\nThe main change is the **addition of the Interim Managing Partner responsibilities** on top of his existing Director of Client Delivery role, representing a significant increase in leadership scope while Nadia is away.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_context_summary",
+        "query_signals",
+        "read_document",
+        "what_changed"
+      ],
+      "answer_length": 1927,
+      "has_error": false,
+      "error": null,
+      "duration_s": 51.3
+    }
+  },
+  {
+    "id": "WC-4",
+    "category": "what_changed",
+    "question": "What changed about Tom Halstead since January 1, 2026?",
+    "expected_tools": [
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Tom Halstead since January 1, 2026. Let me first look up Tom Halstead's entity information.Now let me check what changed about Tom Halstead since January 1, 2026:Let me get more details by reading Tom Halstead's profile document:Let me also check for any signals (decisions, action items) related to Tom Halstead to provide more context:Based on the knowledge base records, here's what changed about Tom Halstead since January 1, 2026:\n\n## Timeline of Changes\n\n**January 6, 2026** - Tom Halstead was first recorded in the knowledge base as:\n- **Role**: Engagement Lead for Vanguard Replatform project\n- **Team**: Member of Beacon Squad\n- **Responsibilities**: Managing Vanguard account relationship\n\n**January 20, 2026** - Positive performance:\n- Reported high client satisfaction with Vanguard\n- Demonstrated strong client relationship\n\n**February 14, 2026** - Concerns emerged:\n- Tom expressed concern about workload on Vanguard project after scope expansion\n\n**February 28, 2026** - DEPARTURE:\n- **Tom Halstead left Meridian Partners**\n- His departure occurred during critical API compatibility issues on the Vanguard project\n- His entity record ends on this date (valid_to: February 28, 2026)\n\n**March 3, 2026** - Leadership transition:\n- Elena Voss was appointed as the new Vanguard engagement lead to replace Tom\n\n## Summary\nThe most significant change is that **Tom Halstead departed Meridian Partners on February 28, 2026**, after just under two months as Engagement Lead. His departure followed workload concerns and occurred at a critical juncture for the Vanguard project.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_signals",
+        "read_document",
+        "what_changed"
+      ],
+      "answer_length": 1621,
+      "has_error": false,
+      "error": null,
+      "duration_s": 35.7
+    }
+  },
+  {
+    "id": "WC-5",
+    "category": "what_changed",
+    "question": "What changed about Project Beacon since January 6, 2026?",
+    "expected_tools": [
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Project Beacon since January 6, 2026. Let me first look up the project to get its ID.Now let me check what changed about Project Beacon since January 6, 2026.The change tracking shows no structural changes to Project Beacon's entity data since January 6, 2026. However, let me check if there have been any signals (decisions, action items, or key points) related to the project during this time period to give you a more complete picture.Based on the signals in the knowledge base, here's what changed about Project Beacon since January 6, 2026:\n\n## Key Changes to Project Beacon\n\n**February 14, 2026 - Team Restructuring:**\n- **Priya Kapoor** was reassigned from Atlas to Beacon\n- **Derek Osman** was reassigned from Beacon to Atlas\n\n**March 7, 2026 - Project Paused:**\n- **Project Beacon was paused effective March 14** to reallocate budget\n- Despite the pause, **Rachel Lin reported that Beacon deliverables were on track** despite a budget overrun\n- **$30K was reallocated** from Beacon to Atlas recovery\n- **$15K was reallocated** from Beacon to Polaris assessment\n\n**March 21, 2026 - Q2 Planning:**\n- Q2 priorities were confirmed, including **evaluating a potential Beacon restart**\n- Other Q2 priorities: stabilize Vanguard, complete Atlas, and ramp Polaris\n\n## Summary\nProject Beacon experienced significant changes since January 6: first a team shuffle in mid-February, then a pause in early March due to budget constraints and reallocation to other priority projects (Atlas and Polaris). However, the most recent signal suggests the organization is considering restarting Beacon in Q2, indicating it hasn't been permanently canceled.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_signals",
+        "what_changed"
+      ],
+      "answer_length": 1681,
+      "has_error": false,
+      "error": null,
+      "duration_s": 27.5
+    }
+  },
+  {
+    "id": "WCB-1",
+    "category": "what_changed_between",
+    "question": "What changed about Project Atlas between February 1 and February 28, 2026?",
+    "expected_tools": [
+      "what_changed_between",
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Project Atlas between February 1 and February 28, 2026. Let me first look up the entity ID for Project Atlas.Great! I found Project Atlas. Now let me check what changed about it between February 1 and February 28, 2026.The temporal tracking shows no recorded changes to Project Atlas's entity data between February 1 and February 28, 2026. Let me check if there were any signals (decisions, action items, or key points) related to Project Atlas during that time period.Based on the meeting signals, **Project Atlas had significant activity during February 2026**, even though the entity properties themselves didn't change:\n\n## Key Changes in February 2026:\n\n**Early February (Feb 7):**\n- **Phase 2 launched on time** - Project was ahead of schedule\n- **Data remediation was 70% complete**\n- Overall project status: ahead of schedule\n\n**Mid-February (Feb 14) - Team Restructuring:**\n- **Priya Kapoor was reassigned FROM Atlas TO Beacon** (effective immediately)\n- **Derek Osman was reassigned FROM Beacon TO Atlas** (effective immediately)\n\nThese were documented in the \"Team Restructuring: Cross-Project Moves\" meeting on February 14, 2026.\n\n---\n\n**Note:** While the entity metadata for Project Atlas didn't change (it remained \"on_track\" status), the project experienced significant team composition changes and achieved a major milestone with the Phase 2 launch during February. The personnel swap between Atlas and Beacon appears to have been part of a strategic reallocation of resources.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_signals",
+        "what_changed_between"
+      ],
+      "answer_length": 1531,
+      "has_error": false,
+      "error": null,
+      "duration_s": 30.9
+    }
+  },
+  {
+    "id": "WCB-2",
+    "category": "what_changed_between",
+    "question": "What changed about Elena Voss between January 6 and March 10, 2026?",
+    "expected_tools": [
+      "what_changed_between",
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Elena Voss between those dates. Let me first look up her entity ID.Now let me check what changed about Elena between January 6 and March 10, 2026.Based on the temporal data, **Elena Voss was created in the knowledge base on January 6, 2026**, and **no changes were made to her profile between January 6 and March 10, 2026**.\n\nHere's what we know about her state during that period:\n- **Title**: Senior Consultant\n- **Company**: Meridian Partners\n- **Department**: Consulting\n- **Projects**: Atlas and Vanguard Replatform\n- **Team**: Atlas Squad\n- **Collaborators**: Derek Osman, Jess Nolan, Marcus Chen, Nadia Reeves, Priya Kapoor, Rachel Lin, Sam Okoro, and Tom Halstead\n\nThe entity remained stable with no attribute changes or relationship modifications during this 2-month window. The absence of changes could indicate that her initial profile was comprehensive, or that the period was one of continuity in her role and responsibilities.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "answer_length": 978,
+      "has_error": false,
+      "error": null,
+      "duration_s": 22.0
+    }
+  },
+  {
+    "id": "WCB-3",
+    "category": "what_changed_between",
+    "question": "What changed about the Beacon project between February 3 and March 14, 2026?",
+    "expected_tools": [
+      "what_changed_between",
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find out what changed about the Beacon project between those dates. Let me first look up the Beacon project to get its entity ID.Now let me check what changed about Project Beacon between February 3 and March 14, 2026.The temporal change tracking shows no property or relationship changes were recorded for Project Beacon between those dates. Let me check if there were any signals (decisions, action items, or key points) related to the project during that period.Based on the signals from meetings during that period, here's what changed about Project Beacon between February 3 and March 14, 2026:\n\n## Key Changes:\n\n### Team Restructuring (February 14, 2026)\nIn a \"Team Restructuring: Cross-Project Moves\" meeting:\n- **Priya Kapoor** was reassigned **to Beacon** from Project Atlas\n- **Derek Osman** was reassigned **from Beacon** to Project Atlas\n\n### Project Pause Decision (March 7, 2026)\nIn the \"Beacon Budget Review & Pause Decision\" meeting:\n- **Project status**: Despite Rachel Lin reporting that deliverables were on track, the project experienced a budget overrun\n- **Decision made**: Beacon project was **paused effective March 14** to reallocate budget\n- **Budget reallocation**: \n  - $30K reallocated from Beacon to Atlas recovery\n  - $15K reallocated to Polaris assessment\n\n## Summary\nDuring this period, Project Beacon underwent a team restructuring in mid-February, but then was paused by mid-March due to budget constraints. The project went from gaining a new team member (Priya Kapoor) to being paused entirely within one month, with its budget redirected to other projects (Atlas and Polaris).",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_signals",
+        "what_changed_between"
+      ],
+      "answer_length": 1628,
+      "has_error": false,
+      "error": null,
+      "duration_s": 27.4
+    }
+  },
+  {
+    "id": "WCB-4",
+    "category": "what_changed_between",
+    "question": "What changed about Sam Okoro between January 1 and March 1, 2026?",
+    "expected_tools": [
+      "what_changed_between",
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what changed about Sam Okoro between those dates. Let me first look up Sam Okoro's entity ID, then check what changed during that period.Now let me check what changed about Sam Okoro between January 1 and March 1, 2026.Based on the temporal query, **Sam Okoro was newly added to the knowledge base during this period**. Specifically:\n\n## Key Change: Entity Creation\n- **Created:** January 6, 2026\n- Sam Okoro's profile was first added to the system on this date\n\n## Initial State (as of January 6, 2026):\n- **Title:** VP Sales\n- **Company:** Meridian Partners\n- **Department:** Sales\n- **Contact:** sam.okoro@meridianpartners.com\n\n**Relationships established:**\n- **Manages accounts:** Polaris Health\n- **Works on projects:** Polaris Onboarding\n- **Member of team:** Leadership Team\n- **Collaborates with:** Derek Osman, Elena Voss, Kai Novak, Marcus Chen, Nadia Reeves, Priya Kapoor, Rachel Lin, Tom Halstead\n\n## No subsequent changes\nAfter the initial creation on January 6, there were **no attribute or relationship changes** between then and March 1, 2026. Sam Okoro's profile remained stable during this period.\n\nThe main change during your requested timeframe was Sam Okoro's introduction into the system as a new entity with all the associated roles and relationships.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "answer_length": 1294,
+      "has_error": false,
+      "error": null,
+      "duration_s": 22.9
+    }
+  },
+  {
+    "id": "WCB-5",
+    "category": "what_changed_between",
+    "question": "How did the Vanguard Group account situation change between January 27 and March 3, 2026?",
+    "expected_tools": [
+      "what_changed_between",
+      "what_changed",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you understand how the Vanguard Group account changed between those dates. Let me start by looking up the Vanguard Group entity.Now let me check what changed for this account between January 27 and March 3, 2026.The entity wasn't found at those timestamps. I notice the Vanguard Group entity has a \"valid_from\" date of March 24, 2026, which suggests it was created very recently. Let me search for meeting documents and signals from that time period to see if there were discussions about Vanguard Group before the entity was formally added to the knowledge base.I found several meetings about Vanguard Group during that period. Let me read the key meetings to understand the timeline of changes. I'll start with the account status meeting and the escalation meeting.Based on the meeting records, I can now provide you with a clear picture of how the Vanguard Group account situation changed dramatically between January 27 and March 3, 2026.\n\n## The Timeline of Changes\n\n**Early January (January 20) - Strong Position:**\nAt the start of this period, Vanguard Group was in excellent standing:\n- High client satisfaction with Tom Halstead as the trusted engagement lead\n- Strong relationship and expansion opportunities being explored\n- Plans for scope expansion to include mobile modernization\n- Tom was scheduled to draft an expansion proposal by January 27\n\n**February 28 - Crisis Point:**\nThe situation deteriorated severely by late February:\n- **Technical Failure**: Multiple API endpoints had breaking changes, violating the backward compatibility promise made to the client\n- **Leadership Loss**: Tom Halstead's last day at Meridian Partners was February 28, leaving the account without an engagement lead at a critical moment\n- **Client Escalation**: The account was at risk of formal escalation by the client (Jess Nolan)\n- **Multiple Crises**: Marcus Chen was managing this alongside other project crises (Atlas)\n\n**March 3 - Recovery Mode:**\nBy early March, recovery efforts were underway:\n- **New Leadership**: Elena Voss was appointed as the new Vanguard engagement lead, replacing Tom Halstead\n- **Recovery Plan**: A formal API compatibility recovery plan was presented to the client\n- **Increased Oversight**: Weekly written status reports mandated every Monday to rebuild transparency\n- **Reprioritization**: API compatibility fixes prioritized over all new feature development\n- **Cautious Progress**: Jess Nolan was cautiously positive about the recovery approach, giving Meridian a narrow window to rebuild trust\n\n## Summary\n\nThe Vanguard Group account went from a **growth opportunity** (expansion discussions) to a **crisis situation** (technical failures + leadership departure) to **recovery mode** (new leadership + structured remediation plan) between January 27 and March 3, 2026.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "what_changed_between"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "list_meeting_documents",
+        "read_document",
+        "what_changed_between"
+      ],
+      "answer_length": 2815,
+      "has_error": false,
+      "error": null,
+      "duration_s": 54.8
+    }
+  },
+  {
+    "id": "GAO-1",
+    "category": "graph_as_of",
+    "question": "Show me the knowledge graph around Project Atlas as of January 15, 2026. What entities were connected to it?",
+    "expected_tools": [
+      "graph_as_of",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you visualize the knowledge graph around Project Atlas as of January 15, 2026. Let me start by finding the entity ID for Project Atlas.Now let me reconstruct the knowledge graph around Project Atlas as it existed on January 15, 2026:The result is quite large. Let me try with a smaller depth to get a more focused view of the immediate connections:Perfect! Here's what the knowledge graph around **Project Atlas** looked like on **January 15, 2026**:\n\n## Core Project Information\n- **Status**: On track\n- **Account**: Northstar Retail\n- **Primary Team**: Team Atlas Squad\n\n## Connected People (Team Members)\nAs of January 15, 2026, Project Atlas had **5 team members**:\n\n1. **Marcus Chen** - Director Client Delivery / Interim Managing Partner\n   - Also on Leadership Team\n   - Working on Atlas, Vanguard Replatform, and Polaris Onboarding\n\n2. **Nadia Reeves** - Managing Partner\n   - On Leadership Team\n   - Managing multiple accounts including Northstar Retail\n   - Working on Atlas, Beacon, and Vanguard Replatform\n\n3. **Elena Voss** - Senior Consultant\n   - On Team Atlas Squad\n   - Working on Atlas and Vanguard Replatform\n\n4. **Priya Kapoor** - Senior Consultant\n   - On Team Atlas Squad\n   - Working on Atlas, Beacon, and Polaris Onboarding\n\n5. **Derek Osman** - Junior Consultant\n   - On Team Atlas Squad\n   - Working on Beacon, Atlas, and Polaris Onboarding\n\n## Connected Projects (Co-occurring)\nProject Atlas showed strong connections to three other projects:\n\n- **Project Beacon** (status: paused) - 3 shared team members\n- **Vanguard Replatform** (status: at risk) - 3 shared team members  \n- **Project Polaris Onboarding** - 3 shared team members\n\n## Connected Teams\n- **Team Atlas Squad** - The primary delivery team (5 shared documents)\n- **Team Leadership Team** - Executive oversight (2 connections through Marcus and Nadia)\n\nThis snapshot shows Project Atlas was well-staffed with a mix of senior leadership and consultants, and had significant resource overlap with other active projects in mid-January 2026.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "answer_length": 2037,
+      "has_error": false,
+      "error": null,
+      "duration_s": 36.0
+    }
+  },
+  {
+    "id": "GAO-2",
+    "category": "graph_as_of",
+    "question": "What was the graph around Tom Halstead as of February 15, 2026?",
+    "expected_tools": [
+      "graph_as_of",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you reconstruct the graph around Tom Halstead as of February 15, 2026. Let me first look up Tom Halstead's entity ID, then retrieve the historical graph state.Now let me reconstruct the graph around Tom Halstead as it existed on February 15, 2026:The result is quite large. Let me try with a smaller depth to focus on Tom Halstead's immediate connections:## Graph Around Tom Halstead as of February 15, 2026\n\nHere's what the knowledge graph looked like around Tom Halstead on that date:\n\n### **Tom Halstead's Profile**\n- **Title:** Engagement Lead, Vanguard\n- **Company:** Meridian Partners (Delivery department)\n- **Contact:** tom.halstead@meridianpartners.com\n- **Entity valid from:** January 6, 2026 to February 28, 2026\n\n### **Direct Connections**\n\n**1. Collaborators (8 people):**\n- **Derek Osman** - Junior Consultant\n- **Elena Voss** - Senior Consultant\n- **Jess Nolan** - VP Product at Vanguard Group (client contact)\n- **Marcus Chen** - Director Client Delivery / Interim Managing Partner (strongest connection with 6 shared meeting documents)\n- **Nadia Reeves** - Managing Partner\n- **Priya Kapoor** - Senior Consultant\n- **Rachel Lin** - Finance & Operations Manager\n- **Sam Okoro** - VP Sales\n\n**2. Account Management:**\n- Managed **Vanguard Group** account\n\n**3. Project Work:**\n- Worked on **Vanguard Replatform** project\n  - Status: at_risk\n  - Focus areas: platform modernization, API migration, mobile\n  - Key technologies: TypeScript, React Native, Node.js, PostgreSQL\n\n**4. Team Membership:**\n- Member of **Beacon Squad**\n\n**5. Key Signals/Context (as of Feb 15):**\n- **Feb 14, 2026:** Expressed concern about workload on Vanguard after scope expansion\n- **Jan 20, 2026:** Vanguard client satisfaction reported as high with strong relationship\n\n### **Strongest Relationships:**\nTom had particularly strong collaboration with Marcus Chen (1.0 strength, 6 shared documents) and the Vanguard-related work overall, appearing in multiple meetings about the project and account.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "answer_length": 2001,
+      "has_error": false,
+      "error": null,
+      "duration_s": 44.9
+    }
+  },
+  {
+    "id": "GAO-3",
+    "category": "graph_as_of",
+    "question": "Show the graph around Marcus Chen as of March 15, 2026. How many entities are connected to him?",
+    "expected_tools": [
+      "graph_as_of",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you visualize the graph around Marcus Chen as of March 15, 2026. Let me first find his entity ID, then reconstruct the temporal subgraph.The result was too large. Let me try with a smaller depth to see Marcus Chen's direct connections as of March 15, 2026:## Graph Around Marcus Chen as of March 15, 2026\n\nHere's the temporal subgraph showing Marcus Chen's direct connections as they existed on March 15, 2026:\n\n### **Connected Entities: 19 total**\n\n**People (9):**\n- Derek Osman - Junior Consultant\n- Elena Voss - Senior Consultant  \n- Jess Nolan - VP Product, Vanguard Group\n- Kai Novak - CTO, Polaris Health\n- Nadia Reeves - Managing Partner\n- Priya Kapoor - Senior Consultant\n- Rachel Lin - Finance & Operations Manager\n- Sam Okoro - VP Sales\n- Tom Halstead - (referenced in relationships)\n\n**Projects (3):**\n- Project Atlas (on track)\n- Vanguard Replatform (at risk)\n- Polaris Onboarding (active)\n\n**Accounts (3):**\n- NorthStar Retail\n- Polaris Health\n- Vanguard Group\n\n**Teams (2):**\n- Atlas Squad\n- Leadership Team\n\n**Signals (1):**\n- Decision: \"Nadia Reeves confirmed sabbatical starting March 1 and Marcus Chen appointed Interim Managing Partner\" (from Feb 14, 2026)\n\n### **Key Observations:**\nAs of March 15, 2026, Marcus Chen was:\n- **Role:** Director Client Delivery / Interim Managing Partner (just appointed 2 weeks prior)\n- **Managing:** 3 client accounts\n- **Working on:** 3 active projects\n- **Collaborating with:** 9 people across Meridian Partners and client organizations\n- **Team membership:** 2 teams (Atlas Squad and Leadership Team)\n\nThe graph shows Marcus Chen was in a pivotal position on March 15th, having just taken over as Interim Managing Partner while maintaining his delivery responsibilities across multiple high-stakes projects.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "answer_length": 1773,
+      "has_error": false,
+      "error": null,
+      "duration_s": 46.2
+    }
+  },
+  {
+    "id": "GAO-4",
+    "category": "graph_as_of",
+    "question": "What was the graph around Polaris Health as of February 25, 2026?",
+    "expected_tools": [
+      "graph_as_of",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you reconstruct the knowledge graph around Polaris Health as it existed on February 25, 2026. Let me first look up this entity.Now let me reconstruct the graph around Polaris Health as it existed on February 25, 2026:Based on the temporal query results, **Polaris Health did not exist in the knowledge graph on February 25, 2026**.\n\nThe entity \"Polaris Health\" was first added to the knowledge base on **March 24, 2026** (today), as indicated by its `valid_from` timestamp. Since you're asking about February 25, 2026, which is about a month before the entity was created, there were no nodes or relationships for Polaris Health at that point in time.\n\n**Current state of Polaris Health (as of today, March 24, 2026):**\n- **Type:** Account\n- **Industry:** Healthcare\n- **Primary Contact:** Sam Okoro\n- **Projects:** Polaris Onboarding project\n- **Connections:** 18 relationships in the current graph\n- **Documents:** 4 related documents\n\nIf you'd like to see the current graph structure around Polaris Health or learn more about when specific relationships were established, I can help with that instead.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "answer_length": 1114,
+      "has_error": false,
+      "error": null,
+      "duration_s": 24.5
+    }
+  },
+  {
+    "id": "GAO-5",
+    "category": "graph_as_of",
+    "question": "Show the graph around the Beacon Squad team as of March 1, 2026.",
+    "expected_tools": [
+      "graph_as_of",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you visualize the graph around the Beacon Squad team as it existed on March 1, 2026. Let me first find the team entity.Now let me reconstruct the graph around Beacon Squad as it existed on March 1, 2026:The graph reconstruction shows that **Beacon Squad did not exist on March 1, 2026**. \n\nAccording to the entity metadata, the Beacon Squad team was created on **March 24, 2026** (today), which is after the requested date of March 1, 2026. This means:\n\n- **Nodes**: None (the team and its relationships didn't exist yet)\n- **Edges**: None\n\nThe team currently has:\n- **Lead**: Tom Halstead\n- **Members**: Tom Halstead, Priya Kapoor, Derek Osman\n- **Project**: Beacon project\n\nIf you'd like to see the current graph around Beacon Squad (as of today, March 24, 2026), or check if any of the individual team members existed on March 1st, I'd be happy to show you that instead.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "graph_as_of"
+      ],
+      "answer_length": 883,
+      "has_error": false,
+      "error": null,
+      "duration_s": 24.6
+    }
+  },
+  {
+    "id": "FC-1",
+    "category": "find_contradictions",
+    "question": "Are there any contradicting signals about Project Atlas?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find any contradicting signals about Project Atlas. Let me first look up the project to get its entity ID.Now let me check for contradicting signals about Project Atlas.Good news! I analyzed 8 signals related to Project Atlas and **found no contradicting signals**. This means that all the recorded decisions, action items, key points, and insights about Project Atlas are consistent with each other - there are no conflicting statements like \"project on track\" followed by \"project delayed\" or similar contradictions.\n\nThe project appears to have consistent reporting and status updates. If you'd like to see what signals do exist for Project Atlas, or if you want to check for contradictions within a specific time period, just let me know!",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "answer_length": 756,
+      "has_error": false,
+      "error": null,
+      "duration_s": 22.0
+    }
+  },
+  {
+    "id": "FC-2",
+    "category": "find_contradictions",
+    "question": "Are there contradictions about the Vanguard Replatform project? Any conflicting promises?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find any contradictions about the Vanguard Replatform project. Let me start by looking up this project.Now let me check for contradictions in signals about this project.The automated contradiction detection didn't find direct conflicts. Let me review all the signals about this project to look for any conflicting promises or commitments.I found some signals that suggest potential conflicts. Let me read the project details to understand the full context of commitments made.I can see there was a \"Client Escalation\" meeting in late February and a \"Leadership Transition & Vanguard Recovery\" meeting in early March. Let me check those critical meetings to understand what promises were made and what went wrong.Found it! There's a reference to a broken \"API backward compatibility promise from Meeting 4\". Let me check that meeting to see what was originally promised.Perfect! Now let me also check the scope expansion meeting to see if there were conflicting commitments about project scope.## Yes, there are significant contradictions about the Vanguard Replatform project:\n\n### **1. Critical API Compatibility Contradiction (BROKEN PROMISE)**\n\n**Promise Made (January 27, 2026):**\nIn the \"Technical Deep Dive with Client\" meeting, the team made an explicit commitment to Jess Nolan (VP Product at Vanguard):\n- **Decision:** \"API backward compatibility confirmed and will be maintained during replatform with **no breaking changes**\"\n- The notes emphasized: \"API backward compatibility is a **firm requirement** that constrains technical options\"\n\n**Promise Broken (February 28, 2026):**\nJust one month later in the \"Client Escalation\" meeting:\n- Jess Nolan identified **multiple API endpoints with breaking changes**\n- The meeting notes state: \"API backward compatibility promise from Meeting 4 has failed\"\n- This was characterized as a \"**serious client trust issue**\" that put the project at risk of formal escalation\n\n### **2. Scope Expansion vs. Stabilization Conflict**\n\n**Expansion Phase (January 20, 2026):**\n- Approved exploration of scope expansion to include mobile modernization\n- Characterized as a \"significant upsell opportunity with low risk\"\n- Tom Halstead tasked with drafting expansion proposal\n\n**Reality Check (February 14, 2026):**\n- Tom Halstead expressed concerns about workload after the scope expansion\n\n**Defensive Pivot (March 21, 2026):**\n- Q2 priorities shifted to \"**stabilize Vanguard**\" (not expand)\n- \"Vanguard recovery ongoing with Elena building client trust\"\n- Project status: **at_risk**\n\n### **Impact:**\nThese contradictions resulted in:\n- Client escalation and damaged trust with Vanguard Group\n- Leadership transition during crisis (Tom departed Feb 28)\n- Shift from growth/expansion mode to recovery/stabilization mode\n- Project status degraded to \"at_risk\"\n\nThe API compatibility promise is the most serious contradiction\u2014it was an explicit, documented commitment that was broken within 30 days.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name",
+        "get_entity_signals",
+        "list_meeting_documents",
+        "read_document"
+      ],
+      "answer_length": 2955,
+      "has_error": false,
+      "error": null,
+      "duration_s": 70.2
+    }
+  },
+  {
+    "id": "FC-3",
+    "category": "find_contradictions",
+    "question": "Are there contradicting signals about the Beacon project budget?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find any contradicting signals about the Beacon project budget. Let me start by looking up the Beacon project entity.Now let me check for contradicting signals about the Beacon project:The contradiction detection didn't find automatic conflicts. Let me examine all the signals about the Beacon project to look for budget-related contradictions manually:Based on the signals, I can see a potential contradiction around the Beacon project budget. Let me read the budget review meeting document to get the full context:Let me find the correct meeting document:**Yes, there are contradicting signals about the Beacon project budget.** Here's the contradiction:\n\n## The Budget Paradox\n\n**Signal 1 (March 7, 2026):**\n- \"Rachel Lin reports Beacon deliverables on track **despite budget overrun**\"\n- The meeting notes state: \"Beacon has consumed **more budget than planned** but deliverables are on track\"\n\n**Signal 2 (Same meeting, March 7, 2026):**\n- \"Beacon project paused effective March 14 **to reallocate budget**\"\n- \"$30K reallocated **from Beacon** to Atlas recovery and $15K to Polaris assessment\"\n\n## The Contradiction\n\nThe project was **already over budget** (meaning it had spent more than allocated), yet the decision was to **take $45K away from Beacon** and reallocate it to other projects. \n\nThis doesn't make logical sense from a pure budget perspective:\n- You can't reallocate budget that has already been overspent\n- If a project is over budget but delivering well, you typically either fund the overrun or accept it\n- Instead, they removed funding from an already underfunded (overspent) project\n\n## The Real Story\n\nThe meeting notes reveal the actual driver: **competing priorities**, not budget logic:\n- Atlas had a data corruption crisis requiring immediate attention\n- Polaris needed initial funding\n- Priya Kapoor's expertise was needed urgently on Atlas\n\nThe \"budget reallocation\" language masks what was really a **priority-based decision** to pause a functioning but over-budget project in favor of more urgent work. The stated reason (\"to reallocate budget\") contradicts the reported state (already over budget).",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name",
+        "get_entity_signals",
+        "list_meeting_documents",
+        "read_document"
+      ],
+      "answer_length": 2147,
+      "has_error": false,
+      "error": null,
+      "duration_s": 50.7
+    }
+  },
+  {
+    "id": "FC-4",
+    "category": "find_contradictions",
+    "question": "Are there contradictions about Nadia Reeves? Any conflicting information about her plans?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you check for contradictions about Nadia Reeves. Let me start by looking up her entity information.Now let me check for contradictions in signals about Nadia Reeves:The contradiction detection found **no conflicting information** among the 3 signals analyzed for Nadia Reeves. Let me get more details about what signals we have for her to give you a complete picture:## No Direct Contradictions Found\n\nThe analysis of signals about Nadia Reeves shows **no explicit contradictions**, but there is **evolving uncertainty** about her plans:\n\n### The Timeline:\n\n1. **February 14, 2026** - Decision made:\n   - Nadia confirmed sabbatical starting March 1\n   - Marcus Chen appointed Interim Managing Partner\n\n2. **March 21, 2026** - Recent updates:\n   - Marcus Chen is successfully leading as Interim Managing Partner during Nadia's sabbatical\n   - **Nadia's return date \"remains uncertain\" with the original plan for June**\n\n### Key Observation:\n\nWhile not a contradiction per se, there's a notable shift from a **definite plan** (June return) to **uncertainty** about that timeline. The most recent signal (March 21) indicates the June return date is no longer firm.\n\nThis suggests:\n- The sabbatical is proceeding as planned (started March 1)\n- The return date has become less certain since the initial decision\n- Marcus Chen is handling the interim role well, which may be reducing pressure for a fixed return date\n\n**Bottom line**: The information is consistent about the sabbatical itself, but there's growing ambiguity about when Nadia will return, despite an original June target.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name",
+        "get_entity_signals"
+      ],
+      "answer_length": 1590,
+      "has_error": false,
+      "error": null,
+      "duration_s": 32.7
+    }
+  },
+  {
+    "id": "FC-5",
+    "category": "find_contradictions",
+    "question": "Are there contradictions about Derek Osman's performance? Has the assessment changed over time?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you investigate whether there are contradictions about Derek Osman's performance and how the assessment has changed over time. Let me start by finding Derek's entity information.Now let me check for contradictions in the signals about Derek's performance:The system didn't detect direct contradictions, but let me examine all the signals about Derek to see how assessments have evolved over time:Let me search for discussions about Derek's performance in meeting transcripts to get a more complete picture:Let me read Derek's full profile to understand the complete assessment history:Let me check the meeting documents to see the detailed discussions about Derek's performance evolution:## Assessment of Derek Osman's Performance Over Time\n\n**No, there are no contradictions** - rather, there's a clear **positive evolution** in Derek's performance assessment from struggling to demonstrating strong growth.\n\n### Timeline of Assessment Changes:\n\n**February 21, 2026 - Initial Struggle (Crisis Period)**\nDuring the Atlas Emergency Standup, the assessment was:\n- \"Derek Osman struggling to identify root cause without Priya's domain expertise\"\n- \"Derek needs additional support to handle the data remediation complexity\"\n- The team was even considering whether to recall Priya from Beacon to help\n\n**March 17, 2026 - Strong Growth Recognition (Recovery Period)**\nDuring the Atlas Recovery & Status Update, just ~3.5 weeks later:\n- \"Derek Osman handled much of the crisis independently before Priya's return\"\n- \"Derek's growth through the crisis demonstrates junior talent development\"\n- **Decision made**: \"Derek Osman to receive expanded responsibilities on Atlas going forward\"\n- He was assigned to present lessons learned at the next team meeting\n\n### Key Insight:\n\nThis represents a **remarkable turnaround** for a Junior Consultant. Derek went from struggling with complex data corruption issues to handling the crisis independently and earning expanded responsibilities - all within about a month. His profile notes he \"demonstrated resilience during Atlas crisis\" and showed \"strong independent growth.\"\n\nThe assessment didn't contradict itself; it evolved positively as Derek rose to the challenge. This is exactly the kind of growth trajectory that validates investing in junior talent during difficult situations.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name",
+        "get_entity_signals",
+        "list_meeting_documents",
+        "read_document",
+        "search_meeting_transcripts"
+      ],
+      "answer_length": 2332,
+      "has_error": false,
+      "error": null,
+      "duration_s": 61.9
+    }
+  },
+  {
+    "id": "FC-6",
+    "category": "find_contradictions",
+    "question": "Are there any conflicting signals about Tom Halstead's situation at the firm?",
+    "expected_tools": [
+      "find_contradictions",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find any conflicting signals about Tom Halstead. Let me start by looking up his entity information.Now let me check for any conflicting signals about Tom Halstead:The contradiction detection found no conflicting signals. Let me look at all the signals related to Tom Halstead to give you a complete picture:Based on my analysis, there are **no direct contradictions** in the signals about Tom Halstead - the system analyzed 3 signals and found no conflicting information. However, there is a notable **progression of events** that tells an important story:\n\n## Timeline of Tom Halstead's Situation:\n\n1. **January 20, 2026**: Positive performance\n   - \"Vanguard client satisfaction is high and Tom Halstead reports strong relationship\"\n   \n2. **February 14, 2026**: Concerns emerged\n   - \"Tom Halstead expressed concern about workload on Vanguard after scope expansion\"\n\n3. **March 3, 2026**: Leadership change\n   - \"Elena Voss appointed Vanguard engagement lead replacing Tom Halstead\"\n\n## Analysis:\n\nWhile these aren't technical contradictions (all three statements can be true simultaneously), they do show a **significant shift**:\n- Tom maintained strong client relationships and satisfaction\n- The scope expansion created workload concerns\n- Shortly after expressing those concerns, he was replaced as engagement lead by Elena Voss\n\nThis suggests the leadership change may have been related to capacity and workload management rather than performance issues with the client relationship itself. The signals indicate Tom was effective with clients but potentially overwhelmed by the expanded scope of work.\n\nWould you like me to look into more details about the Vanguard project or Elena Voss's takeover?",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "find_contradictions",
+        "get_entity_by_name",
+        "get_entity_signals"
+      ],
+      "answer_length": 1721,
+      "has_error": false,
+      "error": null,
+      "duration_s": 32.4
+    }
+  },
+  {
+    "id": "TBR-1",
+    "category": "temporal_blast_radius",
+    "question": "What is the blast radius of Tom Halstead's departure? What entities were affected when he left on February 28?",
+    "expected_tools": [
+      "temporal_blast_radius",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you understand the impact of Tom Halstead's departure. Let me first find his entity ID, then analyze what entities were connected to him at the time of his departure.Found Tom Halstead's entity. Now let me trace the blast radius of his departure on February 28, 2026.## Blast Radius of Tom Halstead's Departure (February 28, 2026)\n\nBased on the temporal graph analysis, Tom Halstead's departure created a significant blast radius affecting **22 entities** across multiple organizational layers:\n\n### **Direct Impact (Depth 1)**\n\n**Primary Account & Project:**\n- **Vanguard Group Account** - Tom was the account manager\n- **Vanguard Replatform Project** - Status: \"at_risk\" at the time of departure\n  - Focus areas: Platform modernization, API migration, mobile\n  - Technologies: TypeScript, React Native, Node.js, PostgreSQL\n\n**Team:**\n- **Team Beacon Squad** - Lost a team member\n\n**People Directly Connected (8 collaborators):**\n- **Jess Nolan** (VP Product, Vanguard Group) - Client-side stakeholder\n- **Marcus Chen** (Director Client Delivery / Interim Managing Partner) - Also managed the Vanguard account\n- **Nadia Reeves** (Managing Partner) - Also managed the Vanguard account (on sabbatical starting March 1)\n- **Elena Voss** (Senior Consultant) - Also worked on Vanguard Replatform\n- **Derek Osman** (Junior Consultant)\n- **Priya Kapoor** (Senior Consultant)\n- **Rachel Lin** (Finance & Operations Manager)\n- **Sam Okoro** (VP Sales)\n\n**Signals Directly Referencing Tom:**\n- His concern about workload on Vanguard after scope expansion (Feb 14)\n- His strong client relationship with Vanguard (Jan 20)\n\n### **Ripple Effects (Depth 2-3)**\n\n**Projects Affected Through Collaborator Networks:**\n- **Project Atlas** - Many of Tom's collaborators were working on this\n- **Project Beacon** - Connected through team members\n- **Polaris Onboarding** - Connected through collaborators\n\n**Key Organizational Decisions Around the Same Time:**\n- Derek Osman reassigned from Beacon to Atlas (Feb 14)\n- Priya Kapoor reassigned from Atlas to Beacon (Feb 14)\n- Nadia Reeves sabbatical and Marcus Chen appointed Interim Managing Partner (Feb 14)\n- Approved Vanguard scope expansion to include mobile modernization (Jan 20)\n\n### **Critical Context**\n\nTom's departure on February 28 came at a particularly vulnerable time:\n1. **Vanguard project was \"at_risk\"** status\n2. **Managing Partner Nadia Reeves went on sabbatical March 1** (just 1 day after Tom left)\n3. **Multiple team reassignments** had just occurred (Feb 14)\n4. **Tom had expressed concerns** about workload after the Vanguard scope expansion\n5. **Strong client relationship** could have been jeopardized\n\nThe timing suggests Tom's departure may have contributed to or been connected to broader organizational turbulence in mid-to-late February, with Marcus Chen having to assume both the Interim Managing Partner role AND pick up Tom's Vanguard account management responsibilities simultaneously.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "answer_length": 2960,
+      "has_error": false,
+      "error": null,
+      "duration_s": 37.3
+    }
+  },
+  {
+    "id": "TBR-2",
+    "category": "temporal_blast_radius",
+    "question": "What is the blast radius around Nadia Reeves as of March 5, 2026? What depends on her?",
+    "expected_tools": [
+      "temporal_blast_radius",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll find the blast radius around Nadia Reeves as of March 5, 2026. Let me start by looking up her entity ID.Now let me find the blast radius around Nadia Reeves as of March 5, 2026:## Blast Radius Around Nadia Reeves as of March 5, 2026\n\nAs of March 5, 2026, Nadia Reeves had **extensive dependencies** across Meridian Partners. Notably, she had just started her sabbatical on March 1, 2026, so this blast radius represents what had been depending on her and what needed transition coverage.\n\n### **Direct Dependencies (Depth 1)**\n\n**People Collaborating With Her (7):**\n- Derek Osman (Junior Consultant)\n- Sam Okoro (VP Sales)\n- Marcus Chen (Director Client Delivery / **Interim Managing Partner**)\n- Elena Voss (Senior Consultant)\n- Priya Kapoor (Senior Consultant)\n- Rachel Lin (Finance & Operations Manager)\n- Tom Halstead (not in immediate blast radius data but listed in collaborators)\n\n**Accounts She Managed (3):**\n- **Meridian Internal** - internal operations\n- **Northstar Retail** - client account\n- **Vanguard Group** - client account\n\n**Projects She Was Involved In (3):**\n- **Project Atlas** - status: on track\n- **Project Beacon** - status: paused\n- **Vanguard Replatform** - status: at risk\n\n**Team Membership:**\n- Leadership Team\n\n### **Secondary Dependencies (Depth 2)**\n\n**Additional Projects (via team connections):**\n- **Polaris Onboarding** - new engagement, active status\n\n**External Stakeholders:**\n- Kai Novak (CTO, Polaris Health)\n- Jess Nolan (VP Product, Vanguard Group)\n\n**Critical Decisions Referenced:**\n- **Nadia's sabbatical decision**: Confirmed March 1 start with Marcus Chen appointed as Interim Managing Partner (Feb 14 meeting)\n- Multiple staffing decisions made around her departure (Derek reassigned from Beacon to Atlas, Priya reassigned from Atlas to Beacon)\n- Vanguard scope expansion and leadership changes\n\n### **Key Impact Areas**\n\nWhat depended on Nadia:\n1. **Strategic Account Management**: Direct responsibility for 3 accounts including two major clients\n2. **Leadership Continuity**: Her absence required appointing Marcus Chen as interim leader\n3. **Project Oversight**: Direct involvement in 3 active projects at various risk levels\n4. **Team Coordination**: Central hub connecting 7+ team members across the organization\n5. **Client Relationships**: External stakeholders at Vanguard and connections to new business (Polaris)\n\nThe blast radius shows Nadia was a **critical central node** in the organization's operations, requiring careful transition planning before her sabbatical.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "answer_length": 2536,
+      "has_error": false,
+      "error": null,
+      "duration_s": 39.4
+    }
+  },
+  {
+    "id": "TBR-3",
+    "category": "temporal_blast_radius",
+    "question": "What entities are connected to Priya Kapoor as of March 10? Show me her impact radius.",
+    "expected_tools": [
+      "temporal_blast_radius",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the entities connected to Priya Kapoor as of March 10 and show her impact radius. Let me start by looking up her entity ID.Perfect! I found Priya Kapoor's entity. Now let me use the temporal blast radius tool to see what entities were connected to her as of March 10, 2026.Perfect! I now have a complete temporal blast radius showing all entities connected to Priya Kapoor as of March 10, 2026. Let me organize this by depth to show her impact radius clearly.\n\n## Priya Kapoor's Impact Radius (as of March 10, 2026)\n\n### **Direct Connections (Depth 1)**\n\n**People (7 collaborators):**\n1. **Derek Osman** - Junior Consultant, Atlas Squad\n2. **Elena Voss** - Senior Consultant, Atlas Squad  \n3. **Marcus Chen** - Director Client Delivery / Interim Managing Partner\n4. **Nadia Reeves** - Managing Partner\n5. **Rachel Lin** - Finance & Operations Manager\n6. **Sam Okoro** - VP Sales\n7. **Tom Halstead** - (collaboration noted)\n\n**Projects (4 active engagements):**\n1. **Project Atlas** - Status: on track\n2. **Project Beacon** - Status: paused\n3. **Polaris Onboarding** - Status: active (assessment phase)\n4. **Vanguard Replatform** - Status: at risk (co-occurrence relationship)\n\n**Signals directly referencing Priya (3 decisions):**\n- \u2705 **March 10**: Priya and Derek assigned to Polaris once Atlas stabilizes\n- \u2705 **March 7**: Priya temporarily reassigned to Atlas to assist with data remediation\n- \u2705 **Feb 14**: Priya reassigned from Atlas to Beacon effective immediately\n\n### **Second-Degree Connections (Depth 2)**\n\n**People (2 additional):**\n- **Kai Novak** - CTO, Polaris Health (connected via Sam Okoro)\n- **Jess Nolan** - VP Product, Vanguard Group (connected via Marcus Chen/Elena Voss)\n\n**Related Signals (11 decisions/key points affecting connected entities):**\n- Budget reallocation decisions (Beacon paused, Atlas recovery funded)\n- Leadership changes (Marcus appointed Interim Managing Partner, Elena appointed Vanguard lead)\n- Project status updates (Atlas ahead of schedule, Beacon deliverables on track)\n- Polaris Health assessment phase approval at $60K\n\n### **Summary**\nAs of March 10, 2026, Priya's impact radius included:\n- **9 people total** (7 direct collaborators + 2 second-degree)\n- **4 active projects** with varying statuses\n- **14 signals** (3 directly about her + 11 affecting her network)\n- **Teams:** Atlas Squad (primary), connections to Leadership Team through collaborators\n\nThe temporal analysis shows Priya was in a transitional state on March 10 - having just been temporarily reassigned back to Atlas for data remediation (March 7), with a future assignment to Polaris pending once Atlas stabilized.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "answer_length": 2653,
+      "has_error": false,
+      "error": null,
+      "duration_s": 43.2
+    }
+  },
+  {
+    "id": "TBR-4",
+    "category": "temporal_blast_radius",
+    "question": "What is the blast radius of Project Atlas as of February 21, the crisis point?",
+    "expected_tools": [
+      "temporal_blast_radius",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the blast radius of Project Atlas as of February 21, 2026. Let me first look up the entity ID for Project Atlas.Now let me find the blast radius as of February 21, 2026 (the crisis point):## Blast Radius of Project Atlas as of February 21, 2026 (Crisis Point)\n\nThe temporal blast radius analysis reveals **23 entities** connected to Project Atlas at the crisis point, spanning 3 degrees of separation:\n\n### **Immediate Impact Zone (Depth 1):**\n\n**People Directly Working on Atlas:**\n- **Elena Voss** - Senior Consultant\n- **Priya Kapoor** - Senior Consultant (being reassigned OUT on Feb 14)\n- **Derek Osman** - Junior Consultant (being reassigned IN on Feb 14)\n- **Marcus Chen** - Director (just appointed Interim Managing Partner on Feb 14)\n- **Nadia Reeves** - Managing Partner (announcing sabbatical starting March 1)\n\n**Connected Projects:**\n- **Project Beacon** - Internal project (receiving Priya, losing Derek)\n- **Vanguard Replatform** - Client project (scope recently expanded, workload concerns)\n- **Polaris Onboarding** - New client onboarding\n\n**Critical Signals from the Crisis Period:**\n- Feb 7: \"Atlas project is **ahead of schedule** with phase 2 launched on time and data remediation 70% complete\"\n- Feb 14: \"Derek Osman reassigned from Beacon to Atlas effective immediately\"\n- Feb 14: \"Priya Kapoor reassigned from Atlas to Beacon effective immediately\"\n\n### **Secondary Impact Zone (Depth 2):**\n\n**Additional People Affected:**\n- **Rachel Lin** - Finance & Operations Manager (on Beacon)\n- **Tom Halstead** - Engagement Lead for Vanguard (expressing workload concerns)\n- **Jess Nolan** - VP Product at Vanguard Group\n- **Sam Okoro** - VP Sales (managing Polaris)\n- **Kai Novak** - CTO at Polaris Health\n\n**Key Leadership & Organizational Signals:**\n- Feb 14: \"**Nadia Reeves confirmed sabbatical** starting March 1 and **Marcus Chen appointed Interim Managing Partner**\"\n- Feb 14: \"Tom Halstead expressed concern about workload on Vanguard after scope expansion\"\n- Feb 7: \"Northstar Retail approved Elena change management playbook\"\n- Jan 20: \"Approved exploration of Vanguard scope expansion to include mobile modernization\"\n\n### **Tertiary Impact (Depth 3):**\n- Vanguard client satisfaction signals\n- Sales pipeline signals from Sam Okoro\n\n---\n\n## **Crisis Context:**\n\nFebruary 21 sits just **one week after major organizational upheaval** on February 14 and **one week before** Nadia's departure. The blast radius reveals:\n\n1. **Leadership vacuum:** Managing Partner departing, new Interim Managing Partner just appointed\n2. **Resource juggling:** Staff being reassigned between Atlas and Beacon despite Atlas being \"ahead of schedule\"\n3. **Competing pressures:** Vanguard scope expanding with workload concerns, new Polaris client onboarding\n4. **Network interconnection:** 9 people, 4 projects, and multiple accounts all directly or indirectly affected\n\nThe crisis point represents a moment of maximum organizational vulnerability where Atlas success was dependent on a rapidly shifting leadership structure and resource base.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "answer_length": 3070,
+      "has_error": false,
+      "error": null,
+      "duration_s": 46.0
+    }
+  },
+  {
+    "id": "TBR-5",
+    "category": "temporal_blast_radius",
+    "question": "What is the blast radius around the Beacon project as of March 14 when it was paused?",
+    "expected_tools": [
+      "temporal_blast_radius",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the blast radius around the Beacon project as of March 14 when it was paused. Let me start by looking up the Beacon project to get its entity ID.Now let me find all entities that were connected to the Beacon project as of March 14, 2026 when it was paused.## Blast Radius Analysis: Project Beacon as of March 14, 2026\n\nThe temporal blast radius around Project Beacon when it was paused on March 14 reveals significant interconnections across Meridian Partners' portfolio. Here's what was directly and indirectly affected:\n\n### **Immediate Impact (Direct Connections)**\n\n**People Directly Affected:**\n- **Priya Kapoor** (Senior Consultant) - Was on Beacon, reassigned to Atlas temporarily for data remediation\n- **Rachel Lin** (Finance & Operations Manager) - Reporting Beacon deliverables on track despite budget overrun\n- **Derek Osman** (Junior Consultant) - Previously reassigned from Beacon to Atlas on Feb 14\n- **Nadia Reeves** (Managing Partner) - On sabbatical starting March 1, but had been working on Beacon\n\n**Financial Impact:**\n- **$30K reallocated** from Beacon to Atlas recovery\n- **$15K reallocated** from Beacon to Polaris assessment\n- Total: $45K budget shift on March 7\n\n**Key Decision**: The pause was decided on March 7 with effective date of March 14 to reallocate budget across the portfolio.\n\n### **Secondary Impact (Connected Entities)**\n\n**Project Atlas** (Depth 1):\n- Received $30K from Beacon's budget\n- Received Derek Osman and Priya Kapoor (temporarily) for data remediation\n- Connected through: Marcus Chen, Elena Voss, Priya Kapoor, Derek Osman\n\n**Project Vanguard Replatform** (Depth 1):\n- Status: At risk\n- Connected people: Marcus Chen, Elena Voss, Jess Nolan (VP Product at Vanguard Group)\n- Leadership change: Elena Voss appointed engagement lead on March 3, replacing Tom Halstead\n\n**Project Polaris Onboarding** (Depth 1):\n- Received $15K from Beacon's budget\n- Assessment phase approved March 17 at $60K total\n- Priya Kapoor and Derek Osman assigned once Atlas stabilizes (March 10 decision)\n- Connected people: Marcus Chen, Sam Okoro, Kai Novak (CTO Polaris Health)\n\n**Leadership Changes** (Depth 2):\n- **Marcus Chen** appointed Interim Managing Partner (Feb 14) while Nadia on sabbatical\n- Managing multiple accounts and projects affected by Beacon's pause\n\n### **Blast Radius Summary**\n\nThe Beacon pause on March 14 created a cascading effect across:\n- **3 other projects** (Atlas, Vanguard, Polaris)\n- **9 people** directly or indirectly connected\n- **$45K in budget reallocations**\n- **Multiple personnel reassignments** happening before and after the pause\n- **Leadership transitions** during a critical period\n\nThe pause was a strategic decision to stabilize Atlas (which had data issues) and fund the new Polaris opportunity, showing how interconnected Meridian's project portfolio was at that moment.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "temporal_blast_radius"
+      ],
+      "answer_length": 2867,
+      "has_error": false,
+      "error": null,
+      "duration_s": 40.5
+    }
+  },
+  {
+    "id": "ART-1",
+    "category": "active_relationships_at_time",
+    "question": "What relationships did Priya Kapoor have on January 15, 2026?",
+    "expected_tools": [
+      "active_relationships_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what relationships Priya Kapoor had on January 15, 2026. Let me start by looking up Priya Kapoor's entity ID.Now let me query what relationships Priya Kapoor had active on January 15, 2026.Based on the historical data, here are the relationships Priya Kapoor had active on **January 15, 2026**:\n\n## **Team Membership**\n- **Member of**: Atlas Squad\n\n## **Project Work** (3 projects)\n- Project Atlas\n- Project Beacon  \n- Polaris Onboarding\n\n## **Direct Collaborations** (7 people)\nPriya collaborated with:\n- Derek Osman\n- Elena Voss\n- Marcus Chen\n- Nadia Reeves\n- Rachel Lin\n- Sam Okoro\n- Tom Halstead\n\n## **Strongest Co-occurrence Patterns**\nBased on shared meeting attendance and document mentions:\n\n**High Collaboration** (strength 1.0):\n- **Marcus Chen** - 7 shared documents/meetings\n- **Elena Voss** - 6 shared documents/meetings\n- **Project Atlas** - 7 shared contexts (highest project engagement)\n\n**Moderate Collaboration** (strength 0.7):\n- **Derek Osman** - 5 shared contexts\n- **Project Beacon** - 4 shared contexts\n- **Rachel Lin** - 3 shared contexts\n- **Polaris Onboarding** - 3 shared contexts\n\n## **Account Connections**\nThrough meetings, Priya had co-occurrence relationships with:\n- Northstar Retail (5 shared contexts)\n- Meridian Internal (3 shared contexts)\n- Vanguard Group (2 shared contexts)\n- Polaris Health (1 shared context)\n\nAt this point in time, Priya was actively engaged across multiple projects with her strongest working relationships being with Marcus Chen and Elena Voss, particularly around Project Atlas work.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 1564,
+      "has_error": false,
+      "error": null,
+      "duration_s": 26.5
+    }
+  },
+  {
+    "id": "ART-2",
+    "category": "active_relationships_at_time",
+    "question": "What relationships did Priya Kapoor have on March 1, 2026? How did they change?",
+    "expected_tools": [
+      "active_relationships_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find Priya Kapoor's relationships on March 1, 2026 and see how they changed. Let me start by looking up Priya Kapoor's entity ID.Now let me check what relationships Priya had on March 1, 2026:Now let me see what changed for Priya since March 1, 2026:Based on the temporal data, here's what Priya Kapoor's relationships looked like on **March 1, 2026**:\n\n## Primary Relationships\n\n**Collaborations (7 people):**\n- Derek Osman\n- Tom Halstead\n- Sam Okoro\n- Marcus Chen\n- Nadia Reeves\n- Rachel Lin\n- Elena Voss\n\n**Project Assignments (3 projects):**\n- Project Atlas\n- Project Beacon\n- Polaris Onboarding\n\n**Team Membership:**\n- Atlas Squad\n\n**Strongest Working Relationships (based on meeting co-occurrence):**\n- **Marcus Chen** - highest strength (1.0) with 7 shared meetings\n- **Elena Voss** - highest strength (1.0) with 6 shared meetings\n- **Derek Osman** - strong (0.7) with 5 shared meetings\n\n## Changes Since March 1, 2026\n\n**No changes detected** - Priya's relationships have remained stable from March 1, 2026 through today (March 24, 2026). All the same collaborations, project assignments, and team memberships are still active.\n\n## Notable Context\n\nThere is a signal in the system indicating \"Priya Kapoor reassigned from Atlas to Beacon effective immediately\" dated February 14, 2026 - this reassignment had already taken place by March 1, which explains why she was working on both Project Atlas and Project Beacon at that time.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name",
+        "what_changed"
+      ],
+      "answer_length": 1452,
+      "has_error": false,
+      "error": null,
+      "duration_s": 31.4
+    }
+  },
+  {
+    "id": "ART-3",
+    "category": "active_relationships_at_time",
+    "question": "What relationships did Elena Voss have on March 10, 2026?",
+    "expected_tools": [
+      "active_relationships_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find what relationships Elena Voss had on March 10, 2026. Let me start by looking up Elena Voss to get her entity ID.Great! I found Elena Voss (ID: person-elena-voss). Now let me check what relationships she had active on March 10, 2026.Based on the temporal query for March 10, 2026, here are the relationships Elena Voss had at that time:\n\n## **Project Relationships**\n- **Works on Projects:** Project Atlas, Vanguard Replatform\n- **Co-occurrence with Projects:** Polaris Onboarding, Project Beacon\n\n## **Team Membership**\n- **Member of Team:** Atlas Squad\n\n## **Collaboration Relationships (People)**\nElena collaborated with 8 people:\n1. Derek Osman (strong: 6 shared documents)\n2. Marcus Chen (strong: 8 shared documents)\n3. Priya Kapoor (strong: 6 shared documents)\n4. Tom Halstead\n5. Sam Okoro\n6. Rachel Lin\n7. Nadia Reeves\n8. Jess Nolan\n\n## **Account Associations**\nThrough co-occurrence in meetings:\n- **Northstar Retail** (strong: 6 shared documents)\n- **Vanguard Group** (3 shared documents)\n- **Meridian Internal** (2 shared documents)\n- **Polaris Health** (1 shared document)\n\n## **Notable Context as of March 10, 2026**\nTwo significant signals were already active by this date:\n1. **Decision (Mar 3, 2026):** Elena was appointed as Vanguard engagement lead, replacing Tom Halstead\n2. **Key Point (Feb 7, 2026):** Northstar Retail had approved Elena's change management playbook\n\nElena's strongest collaborations at that time were with Marcus Chen, Derek Osman, and Priya Kapoor, and she was primarily focused on work with Northstar Retail and the Vanguard Group accounts.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 1598,
+      "has_error": false,
+      "error": null,
+      "duration_s": 28.6
+    }
+  },
+  {
+    "id": "ART-4",
+    "category": "active_relationships_at_time",
+    "question": "What relationships did Marcus Chen have on January 10 versus March 15? How did his role expand?",
+    "expected_tools": [
+      "active_relationships_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you understand how Marcus Chen's relationships and role evolved between those two dates. Let me start by finding his entity ID.Now let me check what changed in Marcus Chen's relationships between January 10 and March 15, 2026.Let me check his active relationships at each specific date to see the comparison.Now let me check his relationships on March 15, 2026:I can see the relationship data at both dates. The key finding is a new decision signal that appeared between those dates. Let me read Marcus Chen's profile to understand the full context of his role expansion.Based on my analysis of Marcus Chen's relationships at both time points, here's what I found:\n\n## **Relationships Comparison**\n\n### **January 10, 2026**\nMarcus Chen had stable, consistent relationships:\n- **Collaborations**: 9 people (Derek Osman, Elena Voss, Jess Nolan, Kai Novak, Nadia Reeves, Priya Kapoor, Rachel Lin, Sam Okoro, Tom Halstead)\n- **Account Management**: 3 accounts (Northstar Retail, Polaris Health, Vanguard Group)\n- **Project Involvement**: 3 projects (Atlas, Vanguard Replatform, Polaris Onboarding)\n- **Team Membership**: Atlas Squad, Leadership Team\n- **Role**: Director of Client Delivery\n\n### **March 15, 2026**\nAll previous relationships remained intact, **plus one critical new relationship**:\n- **New Decision Signal**: Connected to a decision made on February 14 stating: *\"Nadia Reeves confirmed sabbatical starting March 1 and Marcus Chen appointed Interim Managing Partner\"*\n\n## **How His Role Expanded**\n\nMarcus Chen's role expansion occurred between these dates:\n\n1. **January 10**: He was **Director of Client Delivery** - focused on technical delivery, leading the Atlas squad, and overseeing client engagements\n\n2. **February 14**: Decision made that he would become **Interim Managing Partner** to cover for Nadia Reeves' sabbatical\n\n3. **March 1** (effective date): He took on the **dual role of Director Client Delivery / Interim Managing Partner**\n\n### **What This Means:**\nMarcus Chen went from managing delivery and technical operations to **also assuming firm-wide leadership responsibilities**. He now oversees the entire organization while maintaining his existing project commitments across Atlas, Vanguard Replatform, and Polaris Onboarding - essentially doing two jobs simultaneously during what his profile describes as \"managing multiple concurrent crises while maintaining delivery quality.\"\n\nThe expansion represents a significant increase in scope from technical and delivery leadership to interim executive leadership of the entire firm.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name",
+        "read_document",
+        "what_changed_between"
+      ],
+      "answer_length": 2575,
+      "has_error": false,
+      "error": null,
+      "duration_s": 52.9
+    }
+  },
+  {
+    "id": "ART-5",
+    "category": "active_relationships_at_time",
+    "question": "What relationships did the Vanguard Group account have on February 1 versus March 5?",
+    "expected_tools": [
+      "active_relationships_at_time",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you compare the relationships for the Vanguard Group account between those two dates. Let me start by finding the entity.Now let me check what relationships were active on February 1, 2026:Now let me check what relationships were active on March 5, 2026:Based on the temporal relationship data, I can see that the Vanguard Group account had **very similar relationships** on both dates, with **one key addition** by March 5:\n\n## Relationships Present on Both Dates\n\n### Outgoing Relationships:\n- **MANAGED_BY**: Tom Halstead, Marcus Chen, Nadia Reeves\n- **HAS_PROJECTS**: Vanguard Replatform\n- **CO_OCCURRENCE** with 10 people: Tom Halstead, Marcus Chen, Rachel Lin, Elena Voss, Nadia Reeves, Priya Kapoor, Jess Nolan, Sam Okoro, Derek Osman\n- **CO_OCCURRENCE** with 4 projects: Vanguard Replatform, Project Beacon, Project Atlas, Polaris Onboarding\n\n### Incoming Relationships:\n- **MANAGES_ACCOUNTS**: from Tom Halstead, Marcus Chen, Nadia Reeves\n- **BELONGS_TO_ACCOUNT**: from Vanguard Replatform project\n- **CO_OCCURRENCE**: from Meridian Internal, Northstar Retail, and Polaris Health accounts\n- **REFERENCES_KEY_POINT**: \"Vanguard client satisfaction is high and Tom Halstead reports strong relationship\" (from Jan 20)\n- **REFERENCES_DECISION**: \"Approved exploration of Vanguard scope expansion to include mobile modernization\" (from Jan 20)\n\n## New Relationship Added by March 5\n\nOn **March 3, 2026** (between the two query dates), a new decision signal was created:\n\n- **REFERENCES_DECISION** (incoming): \"Weekly written status reports to Vanguard required every Monday\"\n\nThis was the **only change** between February 1 and March 5 - all other relationships (26 total) remained constant, while this new decision reference was added on March 3, bringing the total to 27 relationships by March 5.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "all_tools_used": [
+        "active_relationships_at_time",
+        "get_entity_by_name"
+      ],
+      "answer_length": 1812,
+      "has_error": false,
+      "error": null,
+      "duration_s": 40.9
+    }
+  },
+  {
+    "id": "GEP-1",
+    "category": "get_entity_provenance",
+    "question": "Where did information about Kai Novak come from? What are the original sources?",
+    "expected_tools": [
+      "get_entity_provenance",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you trace the provenance of information about Kai Novak. Let me first look up this entity and then get its source attribution.## Provenance of Kai Novak Information\n\nThe information about Kai Novak originated from **two meeting sources**:\n\n### 1. **Primary Source: Introductory Meeting (February 20, 2026)**\n   - **Meeting**: \"Polaris Health: Introductory Meeting\"\n   - **Meeting ID**: a1b2c3d4-0008-4000-8000-000000000001\n   - **Date**: February 20, 2026\n   - **Entity created**: This is when Kai Novak's entity was first created in the knowledge base (valid_from: 2026-02-20)\n   \n   **Information captured:**\n   - Role: CTO at Polaris Health\n   - Company: Polaris Health\n   - Department: Technology\n   - Key challenge: Managing consolidation of 3 legacy data systems\n   - Requirements: HIPAA compliance as non-negotiable\n   - Relationships: Collaborates with Sam Okoro and Marcus Chen\n\n### 2. **Secondary Source: Proposal Review Meeting (March 10, 2026)**\n   - **Meeting**: \"Polaris Health: Proposal Review\"\n   - **Meeting ID**: a1b2c3d4-0013-4000-8000-000000000001\n   - **Date**: March 10, 2026\n   - **Last seen**: Updated to 2026-03-10T10:00:00Z\n   \n   **Additional information captured:**\n   - Approval of assessment phase at $60K starting March 17\n   - Approval of HIPAA compliance framework\n   - Ongoing engagement with project \"Polaris Onboarding\"\n\n### Provenance Chain\nThe knowledge graph shows that Kai Novak is referenced through:\n- A key point about approving the HIPAA compliance framework (March 10, 2026)\n- Meeting transcript mentions from both sessions\n\nAll information about Kai Novak comes from **direct meeting participation** where Kai was a speaker, not from secondary sources or external data imports. The entity profile has been built entirely from observed meeting interactions.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance",
+        "list_meeting_documents",
+        "read_document"
+      ],
+      "answer_length": 1812,
+      "has_error": false,
+      "error": null,
+      "duration_s": 39.0
+    }
+  },
+  {
+    "id": "GEP-2",
+    "category": "get_entity_provenance",
+    "question": "What is the provenance trail for the Polaris Onboarding project? When was it first mentioned?",
+    "expected_tools": [
+      "get_entity_provenance",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the provenance trail for the Polaris Onboarding project. Let me first look up this project to get its entity ID.Perfect! I found the Polaris Onboarding project. Now let me retrieve its provenance trail to see when it was first mentioned and how it evolved.## Provenance Trail for Polaris Onboarding Project\n\nBased on the provenance data, here's the complete timeline of when the Polaris Onboarding project was first mentioned and how it evolved:\n\n### **First Mention: March 7, 2026**\nThe project was first referenced in the knowledge base on **March 7, 2026 at 10:30 AM**. The earliest provenance records show:\n\n1. **Initial budget allocation decision**: \"$30K reallocated from Beacon to Atlas recovery and 15K to Polaris assessment\"\n   - This indicates Polaris started as an assessment with $15K funding\n\n### **Subsequent Timeline:**\n\n**March 10, 2026:**\n- **Formal approval**: \"Polaris Health assessment phase approved starting March 17 at 60K\"\n  - Budget increased from $15K to $60K\n  - Official start date set for March 17, 2026\n- **Team assignment**: \"Priya Kapoor and Derek Osman assigned to Polaris once Atlas stabilizes\"\n\n**March 21, 2026:**\n- **Strategic prioritization**: \"Q2 priorities confirmed as stabilize Vanguard and complete Atlas and ramp Polaris and evaluate Beacon\"\n- **Financial tracking**: Mentioned in Q1 financial performance review showing 92% budget utilization across active projects\n\n### **Summary:**\nThe Polaris Onboarding project was **first mentioned on March 7, 2026** as part of a budget reallocation decision. It evolved from a $15K assessment to a $60K approved assessment phase within just 3 days, with formal kickoff scheduled for March 17, 2026. The project continues to be tracked as an active initiative with focus areas including data platform consolidation and HIPAA compliance.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "answer_length": 1839,
+      "has_error": false,
+      "error": null,
+      "duration_s": 26.1
+    }
+  },
+  {
+    "id": "GEP-3",
+    "category": "get_entity_provenance",
+    "question": "Where did information about Jess Nolan come from? What meetings mention her?",
+    "expected_tools": [
+      "get_entity_provenance",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you find the provenance of information about Jess Nolan and discover what meetings mention her.Based on the provenance data and meeting records, here's where information about **Jess Nolan** comes from:\n\n## Source Information\n\n**Entity Profile Created:** January 27, 2026 (valid_from date)\n\n**Provenance Trail:**\n1. **Key Point Signal** (March 3, 2026): \"Jess Nolan cautiously accepted recovery plan for API compatibility\"\n2. **Signal ID Reference**: a0a60747-770a-5eda-beb8-59bc690aa1dd - from the \"Leadership Transition & Vanguard Recovery\" meeting\n\n## Meetings Mentioning Jess Nolan\n\nJess Nolan appears as a participant in **3 meetings**:\n\n1. **\"Vanguard Replatform: Technical Deep Dive with Client\"**\n   - Meeting ID: a1b2c3d4-0004-4000-8000-000000000001\n   - Participants: Tom Halstead, Marcus Chen, Jess Nolan\n   - Duration: 60 minutes\n\n2. **\"Vanguard Check-in: Client Escalation\"**\n   - Meeting ID: a1b2c3d4-0010-4000-8000-000000000001\n   - Participants: Tom Halstead, Marcus Chen, Jess Nolan\n   - Duration: 60 minutes\n\n3. **\"Leadership Transition & Vanguard Recovery\"**\n   - Meeting ID: a1b2c3d4-0011-4000-8000-000000000001\n   - Participants: Marcus Chen, Elena Voss, Jess Nolan\n   - Duration: 60 minutes\n   - Date: March 3, 2026\n\n## Summary\n\nThe information about Jess Nolan (VP Product at Vanguard Group) has been captured from these three client meetings, with her first engagement recorded on January 27, 2026. The most recent documented activity was her cautious acceptance of a recovery plan for API compatibility issues during the March 3, 2026 leadership transition meeting.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance",
+        "get_entity_signals",
+        "list_meeting_documents",
+        "read_document"
+      ],
+      "answer_length": 1600,
+      "has_error": false,
+      "error": null,
+      "duration_s": 33.9
+    }
+  },
+  {
+    "id": "GEP-4",
+    "category": "get_entity_provenance",
+    "question": "What is the provenance of information about Derek Osman? How has our understanding of him evolved?",
+    "expected_tools": [
+      "get_entity_provenance",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you understand the provenance of information about Derek Osman and how our understanding of him has evolved. Let me start by looking up his entity.Now let me retrieve the provenance chain to see how information about Derek Osman was created and evolved over time.Let me also read Derek's full profile to provide more context about what we know about him now.## Provenance of Information About Derek Osman\n\nOur understanding of Derek Osman has evolved through **three key moments** captured in meeting signals, showing a clear narrative of growth and development:\n\n### 1. **February 14, 2026** - Initial Crisis Context\n- **Source**: Meeting decision (ID: 2334c6d2-dc32-5b1c-9f8b-03aa27e8d7d4)\n- **Key Decision**: \"Derek Osman reassigned from Beacon to Atlas effective immediately\"\n- **Context**: Derek was moved from Project Beacon to Atlas during a restructuring period, likely in response to a crisis situation\n\n### 2. **March 10, 2026** - Future Planning\n- **Source**: Meeting decision (ID: 73b0cdd4-08cf-53c0-9db7-36746e629c7e)  \n- **Key Decision**: \"Priya Kapoor and Derek Osman assigned to Polaris once Atlas stabilizes\"\n- **Context**: Leadership began planning Derek's next assignment, pairing him with senior consultant Priya Kapoor for the Polaris project\n\n### 3. **March 17, 2026** - Recognition of Growth\n- **Source**: Meeting observation (ID: 96514596-d400-5079-bfeb-54be8590e611)\n- **Key Point**: \"Derek Osman demonstrated strong growth handling Atlas crisis independently\"\n- **Context**: A pivotal observation noting Derek's development and ability to handle challenges without constant supervision\n\n## Evolution of Understanding\n\nThe provenance reveals a **compelling arc** over approximately 5 weeks:\n\n1. **Crisis Assignment** (Feb 14) \u2192 Derek was initially seen as a resource to be moved during restructuring\n2. **Strategic Planning** (Mar 10) \u2192 Leadership began viewing him as someone worth investing in for future projects\n3. **Performance Recognition** (Mar 17) \u2192 Derek proved himself by handling the Atlas crisis independently, transforming from a junior consultant being shuffled around to someone demonstrating \"strong growth\"\n\nThe current profile reflects this evolution, noting he \"struggled initially with data corruption debugging without Priya's expertise but demonstrated strong independent growth through the crisis\" - suggesting he overcame early challenges to emerge as a more capable contributor.\n\n**Source Attribution**: All information derives from meeting signals and decisions made between February-March 2026, with his entity record valid from January 6, 2026. The narrative shows real-time organizational learning about Derek's capabilities through observed performance rather than static role definitions.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance",
+        "read_document"
+      ],
+      "answer_length": 2754,
+      "has_error": false,
+      "error": null,
+      "duration_s": 33.8
+    }
+  },
+  {
+    "id": "GEP-5",
+    "category": "get_entity_provenance",
+    "question": "Where did the information about the Atlas project come from? Trace its sources.",
+    "expected_tools": [
+      "get_entity_provenance",
+      "get_entity_by_name"
+    ],
+    "answer": "I'll help you trace the sources of information about the Atlas project. Let me start by finding the Atlas project in the knowledge graph.Found it! The project is called \"Coral Islands Atlas\". Now let me trace its provenance to see where the information came from.The provenance history is empty, but I can see from the metadata that the Atlas project information came from a meeting. Let me read the entity document and check the meeting it references.Let me check the meeting document where this project was discussed.",
+    "evaluation": {
+      "passed": true,
+      "temporal_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance"
+      ],
+      "all_tools_used": [
+        "get_entity_by_name",
+        "get_entity_provenance",
+        "get_entity_relationships",
+        "get_entity_signals",
+        "list_meeting_documents",
+        "query_graph_cypher",
+        "read_document",
+        "search_knowledge_graph",
+        "search_meeting_transcripts"
+      ],
+      "answer_length": 519,
+      "has_error": false,
+      "error": null,
+      "duration_s": 65.1
+    }
+  }
+]

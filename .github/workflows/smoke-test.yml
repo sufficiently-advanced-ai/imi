@@ -1,0 +1,31 @@
+name: Smoke Test
+
+# Verifies the community core actually builds, imports, and ingests — catching
+# the class of bug where an open-core sync drops a symbol whose dependency is
+# still core (the file imports in isolation but a consumer breaks at runtime).
+#
+# - Import sweep runs on every push/PR (no secret required).
+# - Full ingestion pipeline runs only when ANTHROPIC_API_KEY is configured as a
+#   repo secret (skipped automatically on fork PRs, where secrets are absent).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build image + import sweep + (if key present) ingestion pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/smoke_test.sh
+          ./scripts/smoke_test.sh

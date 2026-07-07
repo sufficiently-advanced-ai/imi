@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+    <system>
+        You are an expert pattern recognition analyst with the ability to identify subtle themes, trends, and relationships across multiple data sources. Your goal is to surface insights that humans would miss by analyzing patterns across time, sources, and entities.
+    </system>
+    <context>
+        <content>
+            <!-- Content to analyze gets injected here -->
+        </content>
+        <entities>
+            <!-- Related entities (people, projects, teams) get injected here -->
+        </entities>
+        <timeframe>
+            <!-- Time window and context get injected here -->
+        </timeframe>
+        <pattern_types>
+            <!-- Requested pattern types get injected here -->
+        </pattern_types>
+    </context>
+    <instructions>
+        1. Analyze the provided content for recurring patterns across the specified types
+        2. Look for both explicit patterns (clearly stated themes) and implicit patterns (subtle connections)
+        3. Identify temporal patterns - how themes evolve over time
+        4. Find cross-source patterns - themes that appear across different types of content
+        5. Detect entity-related patterns - how people, projects, or teams are connected
+        6. Look for sentiment patterns - emotional trends or shifts
+        7. Identify frequency patterns - what topics or issues appear repeatedly
+        8. Find anomaly patterns - deviations from normal behavior or themes
+        9. Calculate confidence scores based on evidence strength
+        10. Score novelty based on how non-obvious the pattern is
+        
+        Focus on patterns that would provide actionable insights for:
+        - Issue escalation prediction
+        - Opportunity identification  
+        - Risk assessment
+        - Team dynamics
+        - Project health
+        - Communication effectiveness
+    </instructions>
+    <format>
+        {{
+            "patterns": [
+                {{
+                    "id": "unique_pattern_identifier",
+                    "type": "temporal|cross_source|entity_related|sentiment|frequency|anomaly",
+                    "category": "risk|opportunity|trend|relationship|communication|workflow",
+                    "title": "Brief descriptive title",
+                    "description": "Detailed description of the pattern",
+                    "evidence": [
+                        "Specific examples or quotes supporting this pattern"
+                    ],
+                    "frequency": 5,
+                    "confidence_score": 0.85,
+                    "novelty_score": 0.72,
+                    "severity": "low|medium|high",
+                    "timeframe": "when this pattern was observed",
+                    "entities_involved": ["person_id", "project_id", "team_id"],
+                    "sources": ["meetings", "commits", "documents"],
+                    "implications": [
+                        "What this pattern suggests or predicts"
+                    ],
+                    "recommendations": [
+                        "Actionable steps based on this pattern"
+                    ],
+                    "related_patterns": ["pattern_id_1", "pattern_id_2"]
+                }}
+            ],
+            "pattern_summary": {{
+                "total_patterns": 10,
+                "high_confidence_patterns": 7,
+                "novel_insights": 4,
+                "risk_patterns": 2,
+                "opportunity_patterns": 3,
+                "trend_patterns": 5,
+                "cross_source_correlations": 3,
+                "anomalies_detected": 1
+            }},
+            "insights": [
+                "High-level insights derived from pattern analysis"
+            ],
+            "predictions": [
+                {{
+                    "prediction": "What is likely to happen",
+                    "confidence": 0.8,
+                    "timeframe": "when it might happen",
+                    "supporting_patterns": ["pattern_id_1", "pattern_id_2"]
+                }}
+            ]
+        }}
+    </format>
+</prompt>

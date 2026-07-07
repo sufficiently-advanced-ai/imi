@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <transcript>{transcript_content}</transcript>
+  {existing_entities_context}
+  {entity_types_context}
+  <instructions>
+    Analyze the transcript and extract organizational entities with salience labels. The labels decide what becomes a knowledge-graph node, so accuracy matters more than coverage.
+
+    ENTITY TYPES TO EXTRACT:
+    {entity_type_list}
+
+    For each entity return:
+    - "type": one of the entity types listed above
+    - "name_heard": the surface form exactly as it appears in the transcript
+    - "canonical_name": the fullest, properly-cased form of the name heard anywhere in the transcript (for speakers, the full name from the "**Full Name**:" headers)
+    - "aliases_heard": other surface forms of the SAME entity heard in this transcript (e.g. ["Bright Path", "Brightpath"] when both appear) — empty list if none
+    - "salience": one of
+        * "participant" — a speaker, or an organization represented in the room
+        * "subject" — discussed substantively: decisions, work, status, or commitments pertain to it
+        * "mention" — named in passing: comparisons, anecdotes, tooling, citations
+    - "role": for account/organization entities only, one of "client", "vendor", "prospect", "reference"; null otherwise
+    - "confidence": 0.0-1.0 that this is a real entity of this type
+    - "evidence": a short quote from the transcript supporting the salience label
+
+    SALIENCE RULES with examples:
+    - A client whose project status, renewal, or deliverables are discussed → "subject"
+    - A vendor named once for comparison ("their previous vendor quoted more") → "mention"
+    - A former employer in an anecdote ("when I was at Disney") → "mention"
+    - Tooling used to do the work ("we track it in Jira", "logged it in Salesforce") → "mention"
+    - An analyst firm or publication cited ("a Gartner note said") → "mention"
+    - A speaker's own company or the meeting's client organization → "participant"
+
+    DO NOT EXTRACT AT ALL:
+    - AI products (ChatGPT, Claude, Gemini, GPT-4, Copilot) — never as any entity type
+    - Generic role words: "the client", "the account manager", "procurement", "leadership", "the team", "their IT", "steering committee" — these are references, not entities
+    - Hypothetical or parked ideas ("we could rewrite it in Rust") — the technology or idea is not a project
+    - Personal activities (someone's marathon, vacation, hobby) — not projects
+    - Work activities described in a sentence are NOT project entities: "the BrightPath data migration work" is the BrightPath account being discussed, not a project named "BrightPath data migration" — only extract a project when the transcript treats a NAMED initiative as a thing ("Atlas", "Pulse Analytics", "Phase 2")
+
+    OTHER RULES:
+    1. Use full speaker names from "**Full Name**:" headers; "Jordan" in conversation with "Jordan Reyes" in headers → canonical_name "Jordan Reyes"
+    2. Emit each real-world entity ONCE: name variants of the same entity belong in aliases_heard of a single record, never as separate records
+    3. Use existing entities (if provided) to keep canonical names consistent with the knowledge base
+    4. When unsure whether something is a person vs. a product, do not extract it as a person
+    5. When unsure between "subject" and "mention", choose "mention" — a missed promotion is recoverable, graph pollution is not
+
+    VERIFY before responding (do not include this checklist in the output):
+    - No AI products, generic role words, or activity-phrases were extracted
+    - Every name variant of the same entity is folded into one record's aliases_heard
+    - Every "subject" or "participant" label is justified by the evidence quote
+
+    RETURN FORMAT — a single JSON object, no markdown fences, no commentary:
+    {{
+      "meeting_title": "a specific title for this meeting, at most 8 words, naming the dominant topic, client, or project — never 'Untitled Meeting' or a generic label",
+      "entities": [
+        {{"type": "person", "name_heard": "Jordan", "canonical_name": "Jordan Reyes", "aliases_heard": [], "salience": "participant", "role": null, "confidence": 0.98, "evidence": "**Jordan Reyes**: ..."}},
+        {{"type": "account", "name_heard": "Bright Path", "canonical_name": "BrightPath", "aliases_heard": ["Brightpath"], "salience": "subject", "role": "client", "confidence": 0.95, "evidence": "the BrightPath renewal closes this month"}}
+      ]
+    }}
+  </instructions>
+</prompt>

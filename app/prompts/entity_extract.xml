@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <document>
+{content}
+  </document>
+  {known_entities_section}
+  <instructions>
+    Analyze this document and extract all organizational entities mentioned. You should identify:
+    
+    PEOPLE:
+    - Any person mentioned by name (full or partial)
+    - References like "the CTO", "our lawyer", "the new hire"
+    - Include role/title context if available
+    
+    PROJECTS:
+    - Named initiatives, projects, or programs
+    - Examples: "Q4 migration", "API v2", "Chicago office move", "customer portal redesign"
+    - Include any project with a specific name or clear identifier
+    
+    TEAMS:
+    - Departments, groups, or organizational units
+    - Examples: "legal team", "engineering", "sales ops", "the board", "leadership team"
+    - Include both formal and informal team references
+    
+    YOU MUST RETURN YOUR RESPONSE IN THIS EXACT YAML FORMAT, INCLUDING THE YAML BLOCK MARKERS:
+    ```yaml
+    people:
+      - id: "person-sarah-chen"
+        name: "Sarah Chen"
+        role: "Marketing Lead"
+      - id: "person-mark"
+        name: "Mark (Sales)"
+        role: "Sales Representative"
+    projects:
+      - id: "project-q4-migration"
+        name: "Q4 Migration"
+        type: "infrastructure"
+      - id: "project-api-v2"
+        name: "API v2"
+        type: "development"
+    teams:
+      - id: "team-engineering"
+        name: "Engineering"
+        type: "department"
+      - id: "team-sales-ops"
+        name: "Sales Ops"
+        type: "group"
+    ```
+    
+    IMPORTANT RULES:
+    1. Always start with ```yaml on a new line
+    2. Always end with ``` on a new line
+    3. Always include all three root keys: people, projects, teams (even if empty)
+    4. Always use the correct prefix for IDs:
+       - People: "person-" prefix
+       - Projects: "project-" prefix  
+       - Teams: "team-" prefix
+    5. Use lowercase hyphenated format for all IDs
+    6. Include every entity mentioned - when in doubt, include it
+    7. For people, remove role information from the ID but keep it in the name field
+    8. For projects/teams, remove generic suffixes like "project", "team", "department" from the ID
+  </instructions>
+</prompt>

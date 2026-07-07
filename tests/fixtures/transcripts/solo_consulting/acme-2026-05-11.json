@@ -1,0 +1,8 @@
+{
+  "provider": "otter",
+  "title": "Acme Corp — carbon baseline kickoff",
+  "external_id": "otter-acme-2026-05-11",
+  "recorded_at": "2026-05-11T15:00:00+00:00",
+  "participants": ["Jane Okoye", "Consultant"],
+  "transcript": "Jane (Acme Corp, Head of Sustainability): We need the Scope 1 and 2 baseline before the board meeting on June 6. Consultant: I'll deliver the baseline report by June 2, and we decided to defer Scope 3 to phase two. Jane: Agreed. Consultant: One thing worth flagging as a broader lesson — procurement data quality is the single biggest blocker to baselining across almost every client I work with. Jane: Noted. Let's also schedule the supplier survey. Consultant: I'll send the supplier survey template by May 18. Jane: Perfect. Consultant: We also decided that the primary emission factor source will be the GHG Protocol database rather than custom factors for now. Jane: That keeps us consistent with what our auditors expect."
+}

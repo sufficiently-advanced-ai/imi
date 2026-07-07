@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <existing_profile>{{existing_profile}}</existing_profile>
+  <trigger_files>{{trigger_files}}</trigger_files>
+  <recent_digests>{{recent_digests}}</recent_digests>
+  <grounded_facts>{{grounded_facts}}</grounded_facts>
+  <instructions>
+    You are updating a team profile for: {{entity_id}}
+    
+    Based on the existing profile (if any), new information from trigger files, and recent organizational context from digests, create an updated team profile.
+    
+    The profile should capture the team's composition, activities, and organizational impact - like an organizational analyst's view of how the team operates and evolves.
+    
+    REQUIRED STRUCTURE:
+    
+    1. Start with YAML frontmatter in standard format (enclosed in --- delimiters) containing:
+       - name: Full team name
+       - department: Parent department or division (if applicable)
+       - lead: Person ID of team lead (e.g., "person-john-smith")
+       - members: List of person IDs who are team members
+       - projects: List of project IDs the team is involved in
+       - collaborates_with: List of other team IDs this team works closely with
+       - last_updated: Today's date
+    
+    2. Then include these sections:
+       
+       # [Team Name]
+       
+       ## Team Composition
+       Current team structure, roles, and any recent changes to team membership.
+       Note leadership changes or reorganizations.
+       
+       ## Active Projects & Initiatives
+       List of projects the team is currently working on with their role in each.
+       Example: "- Q4 Migration Project: Leading technical implementation"
+       
+       ## Recent Activities
+       Bullet points of significant team activities, decisions, or accomplishments
+       grounded to THIS team via the &lt;grounded_facts&gt; block or an explicit
+       statement. A meeting may involve many teams — do not attribute another
+       team's work here. Focus on team-level actions, not individual contributions.
+       
+       ## Key Responsibilities
+       The team's core responsibilities and mandate within the organization.
+       Any changes or expansions to their scope.
+       
+       ## Cross-Team Collaboration
+       How this team interacts with other teams, including:
+       - Regular collaboration patterns
+       - Dependencies and handoffs
+       - Joint initiatives
+       
+       ## Team Dynamics & Culture
+       Notable aspects of how the team operates, makes decisions, or approaches work.
+       Any cultural shifts or process changes.
+       
+       ## Challenges & Opportunities
+       Current challenges the team faces and potential opportunities for improvement or growth.
+    
+    IMPORTANT GUIDELINES:
+    - CORRECTIONS OVERRIDE EVERYTHING: if the &lt;grounded_facts&gt; block contains
+      a "Corrections (authoritative …)" section, treat each correction as the
+      final truth. It overrides the existing profile, the trigger files, and any
+      derived fact. Never re-introduce a fact a correction contradicts.
+    - ATTRIBUTION IS CRITICAL: this profile is for {{entity_id}} ONLY. Trigger
+      files are shared meetings covering many teams and people. Attribute an
+      activity, project, or member to this team ONLY when grounded in
+      &lt;grounded_facts&gt; or an explicit statement — never from mere
+      co-occurrence in the same meeting. Prefer omission over a guess.
+    - Focus on team-level information, not individual performance
+    - Track how the team evolves over time
+    - Note significant decisions and their impact
+    - Preserve important historical context
+    - Use clear, professional language
+    - Reference people and projects by their proper IDs in frontmatter
+    - Highlight organizational dependencies and impact
+    - Capture both formal structure and informal dynamics
+  </instructions>
+</prompt>

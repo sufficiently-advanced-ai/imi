@@ -1,0 +1,61 @@
+[project]
+name = "imi"
+version = "0.1.0"
+description = "Self-hosted knowledge engine: ingest anything, build a knowledge graph, query it over MCP"
+license = "MIT"
+requires-python = ">=3.11"
+
+[tool.ruff]
+# MVP/POC configuration - focus on catching real issues, not style nitpicks
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "E731",  # lambda assignments (common in demos)
+    "B008",  # function calls in argument defaults
+    "B904",  # raise without from (not critical for MVP)
+    "UP042", # (str, Enum) -> StrEnum changes str() semantics; deliberate migration only
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E712", "E711"]  # Allow comparison to True/False in tests
+"scripts/*" = ["T201"]  # Allow print statements in scripts
+
+[tool.ruff.format]
+# Use default formatting
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_any_generics = false
+
+# Pydantic plugin for model validation
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+# Default discovery (test_*.py / *_test.py) misses the issue-NNN_test_*.py and
+# sprint*_test_*.py naming used throughout tests/ — *_test_*.py collects them.
+python_files = ["test_*.py", "*_test.py", "*_test_*.py"]
+# Per-test hang guard: cross-test contamination (a lingering background task)
+# once wedged a multi-file run for hours; no individual test needs > 120s.
+timeout = 120
+markers = [
+    "integration: Integration tests that test real implementations without mocks (except ClaudeClient)",
+    "requires_neo4j: needs a reachable Neo4j instance; auto-skipped when NEO4J_URI is unreachable",
+]

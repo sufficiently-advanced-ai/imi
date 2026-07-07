@@ -1,0 +1,44 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "imi-docs",
+  "appState": { "viewBackgroundColor": "#ffffff" },
+  "elements": [
+    { "id": "title", "type": "text", "x": 0, "y": -60, "width": 1000, "text": "Entity lifecycle — extraction, resolution, write-through", "fontSize": 22, "fontWeight": "bold", "textAlign": "center", "strokeColor": "#1e1e1e" },
+
+    { "id": "surface", "type": "rectangle", "x": 0, "y": 60, "width": 200, "height": 90, "strokeColor": "#1e1e1e", "backgroundColor": "#f1f3f5", "roundness": {"type": 3}, "boundElements": [{"id": "surfaceT", "type": "text"}] },
+    { "id": "surfaceT", "type": "text", "containerId": "surface", "x": 10, "y": 80, "text": "surface forms\n\"Jordan\", \"Acme\",\n\"ACME Corp.\"", "fontSize": 13 },
+
+    { "id": "resolver", "type": "rectangle", "x": 280, "y": 20, "width": 280, "height": 190, "strokeColor": "#1971c2", "backgroundColor": "#d0ebff", "roundness": {"type": 3}, "boundElements": [{"id": "resolverT", "type": "text"}] },
+    { "id": "resolverT", "type": "text", "containerId": "resolver", "x": 290, "y": 40, "text": "EntityResolver\n(entity_resolver.py, pure)\n\n1. exact  — slug match\n2. alias  — normalized form\n3. fuzzy  — per-type threshold\n4. new    — mint a slug", "fontSize": 13 },
+
+    { "id": "ner", "type": "rectangle", "x": 0, "y": 190, "width": 200, "height": 78, "strokeColor": "#e8590c", "backgroundColor": "#ffe8cc", "roundness": {"type": 3}, "boundElements": [{"id": "nerT", "type": "text"}] },
+    { "id": "nerT", "type": "text", "containerId": "ner", "x": 10, "y": 205, "text": "NER + LLM extraction\nsteered by ner_labels /\nner_exclude", "fontSize": 12 },
+
+    { "id": "schema", "type": "rectangle", "x": 300, "y": 280, "width": 240, "height": 64, "strokeColor": "#7048e8", "backgroundColor": "#e5dbff", "roundness": {"type": 3}, "boundElements": [{"id": "schemaT", "type": "text"}] },
+    { "id": "schemaT", "type": "text", "containerId": "schema", "x": 310, "y": 295, "text": "domain schema validates\nentity & relationship types", "fontSize": 13 },
+
+    { "id": "write", "type": "rectangle", "x": 650, "y": 60, "width": 240, "height": 110, "strokeColor": "#2f9e44", "backgroundColor": "#d3f9d8", "roundness": {"type": 3}, "boundElements": [{"id": "writeT", "type": "text"}] },
+    { "id": "writeT", "type": "text", "containerId": "write", "x": 660, "y": 85, "text": "graph write\nMERGE (:Entity:Type {id})\n+ relationship edges", "fontSize": 13 },
+
+    { "id": "neo", "type": "rectangle", "x": 620, "y": 240, "width": 140, "height": 84, "strokeColor": "#868e96", "backgroundColor": "#f1f3f5", "roundness": {"type": 3}, "boundElements": [{"id": "neoT", "type": "text"}] },
+    { "id": "neoT", "type": "text", "containerId": "neo", "x": 630, "y": 265, "text": "Neo4j\nnode", "fontSize": 13 },
+    { "id": "md", "type": "rectangle", "x": 800, "y": 240, "width": 190, "height": 84, "strokeColor": "#868e96", "backgroundColor": "#f1f3f5", "roundness": {"type": 3}, "boundElements": [{"id": "mdT", "type": "text"}] },
+    { "id": "mdT", "type": "text", "containerId": "md", "x": 810, "y": 255, "text": "markdown file\n+ frontmatter\n(source of truth)", "fontSize": 13 },
+
+    { "id": "curate", "type": "rectangle", "x": 650, "y": -40, "width": 340, "height": 64, "strokeColor": "#e03131", "backgroundColor": "#ffe3e3", "roundness": {"type": 3}, "boundElements": [{"id": "curateT", "type": "text"}] },
+    { "id": "curateT", "type": "text", "containerId": "curate", "x": 660, "y": -25, "text": "curation: merge / aliases / archive\nREST /api/entities · MCP graph_* tools", "fontSize": 13 },
+
+    { "id": "a1", "type": "arrow", "x": 200, "y": 105, "points": [[0, 0], [80, 10]], "strokeColor": "#1e1e1e" },
+    { "id": "aner", "type": "arrow", "x": 100, "y": 190, "points": [[0, 0], [0, -40]], "strokeColor": "#e8590c" },
+    { "id": "a2", "type": "arrow", "x": 560, "y": 115, "points": [[0, 0], [90, 0]], "strokeColor": "#1e1e1e" },
+    { "id": "a2lbl", "type": "text", "x": 555, "y": 88, "width": 100, "text": "resolved id", "fontSize": 12, "textAlign": "center", "strokeColor": "#868e96" },
+    { "id": "aschema", "type": "arrow", "x": 540, "y": 300, "points": [[0, 0], [170, -140]], "strokeColor": "#7048e8", "strokeStyle": "dashed" },
+    { "id": "a3", "type": "arrow", "x": 720, "y": 170, "points": [[0, 0], [-25, 70]], "strokeColor": "#2f9e44" },
+    { "id": "a4", "type": "arrow", "x": 820, "y": 170, "points": [[0, 0], [55, 70]], "strokeColor": "#2f9e44" },
+    { "id": "a4lbl", "type": "text", "x": 700, "y": 336, "width": 280, "text": "write-through: file is source of truth;\nNeo4j rolls back if the file write fails", "fontSize": 12, "textAlign": "center", "strokeColor": "#868e96" },
+    { "id": "acur", "type": "arrow", "x": 800, "y": 24, "points": [[0, 0], [-25, 36]], "strokeColor": "#e03131" },
+
+    { "id": "reg", "type": "text", "x": 280, "y": 370, "width": 460, "text": "unknown types become \"provisional\" in the type registry — promote or prune later", "fontSize": 12, "textAlign": "center", "strokeColor": "#868e96" }
+  ]
+}

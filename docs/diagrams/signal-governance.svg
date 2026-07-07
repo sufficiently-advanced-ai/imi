@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-24 -84 1108 674" width="1108" height="674" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive">
+  <rect x="-24" y="-84" width="1108" height="674" fill="#ffffff"/>
+  <rect x="60" y="50" width="360" height="88" rx="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+  <rect x="60" y="240" width="360" height="88" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="60" y="400" width="360" height="62" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <rect x="30" y="500" width="430" height="66" rx="10" fill="#ffe3e3" stroke="#e03131" stroke-width="1.5"/>
+  <rect x="620" y="50" width="170" height="56" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <rect x="620" y="180" width="170" height="56" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="620" y="310" width="170" height="56" rx="10" fill="#ffe8cc" stroke="#e8590c" stroke-width="1.5"/>
+  <rect x="880" y="130" width="180" height="56" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <rect x="880" y="240" width="180" height="56" rx="10" fill="#ffe3e3" stroke="#e03131" stroke-width="1.5"/>
+  <rect x="880" y="350" width="180" height="56" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <polyline points="180.0,138.0 180.0,240.0" fill="none" stroke="#2f9e44" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="180.0,240.0 175.5,229.0 184.5,229.0" fill="#2f9e44"/>
+  <polyline points="340.0,138.0 380.0,268.0 340.0,400.0" fill="none" stroke="#868e96" stroke-width="1.5" stroke-dasharray="8 6" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="340.0,400.0 338.9,388.2 347.5,390.8" fill="#868e96"/>
+  <polyline points="705.0,106.0 705.0,180.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="705.0,180.0 700.5,169.0 709.5,169.0" fill="#1e1e1e"/>
+  <polyline points="705.0,236.0 705.0,310.0" fill="none" stroke="#e8590c" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="705.0,310.0 700.5,299.0 709.5,299.0" fill="#e8590c"/>
+  <polyline points="790.0,195.0 880.0,165.0" fill="none" stroke="#868e96" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="880.0,165.0 871.0,172.7 868.1,164.2" fill="#868e96"/>
+  <polyline points="790.0,220.0 880.0,265.0" fill="none" stroke="#e03131" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="880.0,265.0 868.1,264.1 872.2,256.1" fill="#e03131"/>
+  <polyline points="790.0,236.0 880.0,366.0" fill="none" stroke="#868e96" stroke-width="1.5" stroke-dasharray="8 6" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="880.0,366.0 870.0,359.5 877.4,354.4" fill="#868e96"/>
+  <text x="525.0" y="-42.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="22" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Signals — two orthogonal axes</text>
+  <text x="240.0" y="12.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Authority axis (stored, ADR-002)</text>
+  <text x="240.0" y="80.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">extracted / agent-written</text>
+  <text x="240.0" y="96.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">provenance: inferred | generated</text>
+  <text x="240.0" y="112.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">evidence-only, review: pending</text>
+  <text x="240.0" y="270.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">user_confirmed</text>
+  <text x="240.0" y="286.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">instruction-grade: may direct</text>
+  <text x="240.0" y="302.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">agent behavior (judge policy hits)</text>
+  <text x="240.0" y="425.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">rejected · evidence_only · disputed</text>
+  <text x="240.0" y="441.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">· superseded</text>
+  <text x="195.0" y="180.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="bold" fill="#2f9e44" text-anchor="start">HUMAN review: confirm</text>
+  <text x="195.0" y="199.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="start">(update_signal review_action,</text>
+  <text x="195.0" y="215.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="start">audited, append-only JSONL)</text>
+  <text x="245.0" y="527.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">invariant: agents can NEVER mint instruction-grade</text>
+  <text x="245.0" y="543.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">memory — enforced at write, review, and recall</text>
+  <text x="810.0" y="12.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Temporal axis (computed at read time)</text>
+  <text x="705.0" y="72.2" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">candidate</text>
+  <text x="705.0" y="88.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(confidence &lt; 0.7)</text>
+  <text x="705.0" y="210.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="14" font-weight="normal" fill="#1e1e1e" text-anchor="middle">active</text>
+  <text x="705.0" y="332.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">stale</text>
+  <text x="705.0" y="348.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(90 days)</text>
+  <text x="970.0" y="152.2" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">superseded</text>
+  <text x="970.0" y="168.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(SUPERSEDES edge)</text>
+  <text x="970.0" y="262.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">conflicting</text>
+  <text x="970.0" y="278.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(CONFLICTS_WITH)</text>
+  <text x="970.0" y="372.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">temporary / zombie</text>
+  <text x="970.0" y="388.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(revisit_date)</text>
+  <text x="820.0" y="449.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">precedence: superseded &gt; rejected &gt; conflicting &gt; zombie &gt;</text>
+  <text x="820.0" y="467.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">temporary &gt; stale &gt; active &gt; candidate  (decision_states.py)</text>
+</svg>

@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+    <system>
+        You are an expert predictive analyst specializing in issue escalation, opportunity identification, and risk assessment. Your goal is to generate actionable insights with high accuracy (>80%) that help predict and prevent problems before they escalate.
+    </system>
+    <context>
+        <analyzed_data>
+            <!-- Results from pattern analysis and other tools get injected here -->
+        </analyzed_data>
+        <historical_context>
+            <!-- Historical patterns and trends get injected here -->
+        </historical_context>
+        <current_entities>
+            <!-- Current people, projects, teams context get injected here -->
+        </current_entities>
+        <insight_focus>
+            <!-- Specific types of insights requested get injected here -->
+        </insight_focus>
+    </context>
+    <instructions>
+        1. Analyze the provided data for predictive indicators
+        2. Identify early warning signals for potential issue escalation
+        3. Spot emerging opportunities from weak signals and trends
+        4. Generate novel insights that connect seemingly unrelated information
+        5. Focus on actionable recommendations with clear next steps
+        6. Predict likely outcomes with confidence intervals
+        7. Identify risks and mitigation strategies
+        8. Look for patterns that indicate team dynamics, project health, or communication issues
+        9. Prioritize insights by potential impact and urgency
+        10. Ensure insights are specific, measurable, and time-bound where possible
+        
+        Quality Requirements:
+        - Predictive accuracy target: >80%
+        - Novelty score target: >70% (non-obvious insights)
+        - All insights must be actionable
+        - Evidence-based with specific supporting data
+        - Clear confidence levels for predictions
+    </instructions>
+    <format>
+        {{
+            "insights": [
+                {{
+                    "id": "unique_insight_identifier",
+                    "type": "prediction|opportunity|risk|trend|recommendation",
+                    "category": "issue_escalation|opportunity_identification|team_dynamics|project_health|communication|workflow",
+                    "title": "Brief descriptive title",
+                    "description": "Detailed description of the insight",
+                    "supporting_evidence": [
+                        "Specific data points, quotes, or patterns that support this insight"
+                    ],
+                    "confidence_level": 0.85,
+                    "novelty_score": 0.72,
+                    "impact_level": "low|medium|high|critical",
+                    "urgency": "low|medium|high|immediate",
+                    "timeframe": "when this insight applies or when action is needed",
+                    "predicted_outcome": "what is likely to happen if no action is taken",
+                    "success_probability": 0.8,
+                    "entities_affected": ["person_id", "project_id", "team_id"],
+                    "actionable_steps": [
+                        "Specific actions that can be taken based on this insight"
+                    ],
+                    "success_metrics": [
+                        "How to measure if acting on this insight was successful"
+                    ],
+                    "related_patterns": ["pattern_id_1", "pattern_id_2"],
+                    "risk_factors": [
+                        "What could go wrong or limit the success of this insight"
+                    ]
+                }}
+            ],
+            "predictions": [
+                {{
+                    "prediction_id": "unique_prediction_identifier",
+                    "prediction": "What is likely to happen",
+                    "probability": 0.85,
+                    "confidence_interval": "75%-95%",
+                    "timeframe": "when this is expected to occur",
+                    "category": "issue_escalation|opportunity|risk_materialization|trend_continuation",
+                    "severity": "low|medium|high|critical",
+                    "supporting_insights": ["insight_id_1", "insight_id_2"],
+                    "early_indicators": [
+                        "Signs to watch for that would confirm this prediction"
+                    ],
+                    "mitigation_strategies": [
+                        "Actions that could prevent or minimize negative outcomes"
+                    ],
+                    "opportunity_actions": [
+                        "Actions to capitalize on positive predictions"
+                    ]
+                }}
+            ],
+            "recommendations": [
+                {{
+                    "recommendation_id": "unique_recommendation_identifier",
+                    "title": "Brief recommendation title",
+                    "description": "Detailed recommendation",
+                    "priority": "low|medium|high|critical",
+                    "effort_required": "low|medium|high",
+                    "expected_impact": "description of expected positive impact",
+                    "implementation_steps": [
+                        "Step-by-step implementation guide"
+                    ],
+                    "timeline": "recommended timeline for implementation",
+                    "resources_needed": [
+                        "What resources, people, or tools are needed"
+                    ],
+                    "success_criteria": [
+                        "How to measure successful implementation"
+                    ],
+                    "supporting_insights": ["insight_id_1", "insight_id_2"]
+                }}
+            ],
+            "summary": {{
+                "total_insights": 10,
+                "high_confidence_insights": 7,
+                "critical_issues_predicted": 1,
+                "opportunities_identified": 3,
+                "immediate_actions_needed": 2,
+                "average_prediction_confidence": 0.82,
+                "novel_insights_percentage": 0.75
+            }}
+        }}
+    </format>
+</prompt>

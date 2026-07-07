@@ -1,0 +1,268 @@
+{
+  "generated_from_run": "2026-07-07T13-18-31",
+  "git_sha": "641b4b4",
+  "prompt_shas": {
+    "entities": "cffc75b67004f390b60b3e58f89245d7c71ba5b49e318ff9b935ea5e477bed20",
+    "relationships": "883a27de843e4de6e1315f9eb9c3ca3fe5f92590e8725ba8aa449d1cd226c90d",
+    "signals": "872f943d961057e1980459f88e31bb705afda4799892297022f985a483f31dbf",
+    "summary": "4bc9e41661d859f39511fee3c8998f6225dcc2037576c0d7e93b800169ea2667",
+    "profiles": "671cf3a1c6648576965cf86f41ea8198890b22d7f9d2b030aaec9eeef0efedc0"
+  },
+  "fixture_hashes": {
+    "001_kickoff_passing_mentions": "799945117c81a23ec73acd9922a5c26dbfc341412fee1a08483249e5af13d65c",
+    "002_standup_name_variants": "fddff7d02cabe9d4fbf4cd1b0ba9e7e10d99374a01cf02e299b29364590a7831",
+    "003_org_chart_phrasings": "22161bb42e12fff60fa129cd89c4ce4d1c33f64cb1703d42853b070c0b0c734a",
+    "004_decisions_vs_opinions": "2cc64033a49de62c287a6a0331f1f71f3c49e448031efb7b21be74f2885167d1",
+    "005_client_review_acme": "08a68f11af8c486ca53b47bafece226edf51b54b3eeff5f2b3828884e9edccf1",
+    "006_cross_meeting_aliases": "8fe6014dc140c44ce3f98253061fb144b404081dfe9f2185ce16c9be34133b60",
+    "007_dense_mixed": "a52a509b7a5fdb3fe70a8755689af9013bb7c75e85f0389c37b94e8a0f3db097",
+    "008_profile_attribution": "fab1b4cfec86bbe42c2431b0f602cae3edae469b174868cee69d7e0ca68489a8"
+  },
+  "tasks": {
+    "entities": {
+      "micro": {
+        "precision": 0.9302325581395349,
+        "recall": 0.975609756097561,
+        "tp": 40,
+        "fp": 3,
+        "fn": 1,
+        "trap_hits": 0,
+        "duplicate_emissions": 0,
+        "canonicalization_rate": 1.0
+      },
+      "per_fixture": {
+        "001_kickoff_passing_mentions": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "002_standup_name_variants": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "003_org_chart_phrasings": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 7,
+          "fp": 0,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "004_decisions_vs_opinions": {
+          "precision": 0.6666666666666666,
+          "recall": 1.0,
+          "tp": 4,
+          "fp": 2,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "005_client_review_acme": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 0,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "006_cross_meeting_aliases": {
+          "precision": 0.8333333333333334,
+          "recall": 0.8333333333333334,
+          "tp": 5,
+          "fp": 1,
+          "fn": 1,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        },
+        "007_dense_mixed": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 7,
+          "fp": 0,
+          "fn": 0,
+          "canonicalization_rate": 1.0,
+          "duplicate_emissions": 0,
+          "trap_hits": 0
+        }
+      }
+    },
+    "relationships": {
+      "micro": {
+        "precision": 0.8461538461538461,
+        "recall": 1.0,
+        "tp": 11,
+        "fp": 2,
+        "fn": 0,
+        "trap_hits": 0,
+        "unknown_predicates": 0,
+        "consistency_violations": 0
+      },
+      "per_fixture": {
+        "003_org_chart_phrasings": {
+          "precision": 0.7142857142857143,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 2,
+          "fn": 0,
+          "trap_hits": 0,
+          "unknown_predicates": 0,
+          "consistency_violations": 0
+        },
+        "007_dense_mixed": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "trap_hits": 0,
+          "unknown_predicates": 0,
+          "consistency_violations": 0
+        }
+      }
+    },
+    "signals": {
+      "micro": {
+        "precision": 0.8043478260869565,
+        "recall": 0.9736842105263158,
+        "tp": 37,
+        "fp": 9,
+        "fn": 1,
+        "trap_hits": 0,
+        "type_errors": 1,
+        "consistency_violations": 2
+      },
+      "per_fixture": {
+        "001_kickoff_passing_mentions": {
+          "precision": 0.7142857142857143,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 2,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 0
+        },
+        "002_standup_name_variants": {
+          "precision": 0.6666666666666666,
+          "recall": 0.8,
+          "tp": 4,
+          "fp": 2,
+          "fn": 1,
+          "type_errors": 1,
+          "trap_hits": 0,
+          "consistency_violations": 0
+        },
+        "003_org_chart_phrasings": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 1,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 0
+        },
+        "004_decisions_vs_opinions": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 1,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 0
+        },
+        "005_client_review_acme": {
+          "precision": 0.75,
+          "recall": 1.0,
+          "tp": 6,
+          "fp": 2,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 1
+        },
+        "006_cross_meeting_aliases": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 7,
+          "fp": 0,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 1
+        },
+        "007_dense_mixed": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "tp": 5,
+          "fp": 1,
+          "fn": 0,
+          "type_errors": 0,
+          "trap_hits": 0,
+          "consistency_violations": 0
+        }
+      }
+    },
+    "summary": {
+      "micro": {
+        "must_pass_rate": 1.0,
+        "should_pass_rate": 1.0,
+        "consistency_violations": 4
+      },
+      "per_fixture": {
+        "001_kickoff_passing_mentions": {
+          "must_pass_rate": 1.0,
+          "consistency_violations": 1,
+          "should_pass_rate": 1.0
+        },
+        "004_decisions_vs_opinions": {
+          "must_pass_rate": 1.0,
+          "consistency_violations": 1,
+          "should_pass_rate": 1.0
+        },
+        "005_client_review_acme": {
+          "must_pass_rate": 1.0,
+          "consistency_violations": 1,
+          "should_pass_rate": 1.0
+        },
+        "007_dense_mixed": {
+          "must_pass_rate": 1.0,
+          "consistency_violations": 1,
+          "should_pass_rate": 1.0
+        }
+      }
+    },
+    "profiles": {
+      "micro": {
+        "must_pass_rate": 0.75,
+        "should_pass_rate": 1.0,
+        "attribution_violations": 1
+      },
+      "per_fixture": {
+        "008_profile_attribution": {
+          "must_pass_rate": 0.75,
+          "attribution_violations": 1,
+          "should_pass_rate": 1.0
+        }
+      }
+    }
+  }
+}

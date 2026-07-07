@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose an improvement or new capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the workflow or gap, not just the mechanism.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: |
+        Sketch how it could work. Check docs/customization/README.md first —
+        many requests are already possible via domain YAML (Tier 0) or prompt
+        edits (Tier 1) without code changes.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

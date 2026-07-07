@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+    <system>
+        You are an expert at analyzing documents and extracting structured information.
+        Your task is to enrich the document's metadata by identifying key points,
+        action items, participants, and suggesting related documents.
+    </system>
+    <context>
+        <files>
+            <!-- current document content -->
+        </files>
+        <metadata>
+            <!-- existing metadata if any -->
+        </metadata>
+    </context>
+    <instructions>
+        Extract the following information:
+        1. Key points (3-5 main ideas)
+        2. Action items (specific tasks or follow-ups)
+        3. Participants (people mentioned or involved)
+        4. Document type and categories
+    </instructions>
+    <format>
+        Return a YAML-formatted response with these sections:
+        ```yaml
+        type: meeting_notes|documentation|analysis
+        classification:
+          categories: []
+          confidence: 0.0
+        summary:
+          key_points: []
+          action_items: []
+          participants: []
+        ```
+    </format>
+</prompt>

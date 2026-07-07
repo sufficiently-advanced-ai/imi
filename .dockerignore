@@ -1,0 +1,39 @@
+# Node.js stuff we don't need in Docker
+imi-frontend/node_modules
+imi-frontend/.next
+# Allow .env.production for build-time variables
+imi-frontend/.env.local
+imi-frontend/.env.development
+
+# Python bytecode and cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Common IDE and OS files
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Repo clone directory (we don't want the local repo in the container)
+repo/

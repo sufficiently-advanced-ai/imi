@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-24 -84 1048 493" width="1048" height="493" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive">
+  <rect x="-24" y="-84" width="1048" height="493" fill="#ffffff"/>
+  <rect x="0" y="60" width="200" height="90" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="1.5"/>
+  <rect x="280" y="20" width="280" height="190" rx="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+  <rect x="0" y="190" width="200" height="78" rx="10" fill="#ffe8cc" stroke="#e8590c" stroke-width="1.5"/>
+  <rect x="300" y="280" width="240" height="64" rx="10" fill="#e5dbff" stroke="#7048e8" stroke-width="1.5"/>
+  <rect x="650" y="60" width="240" height="110" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="620" y="240" width="140" height="84" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <rect x="800" y="240" width="190" height="84" rx="10" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+  <rect x="650" y="-40" width="340" height="64" rx="10" fill="#ffe3e3" stroke="#e03131" stroke-width="1.5"/>
+  <polyline points="200.0,105.0 280.0,115.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="280.0,115.0 268.5,118.1 269.6,109.2" fill="#1e1e1e"/>
+  <polyline points="100.0,190.0 100.0,150.0" fill="none" stroke="#e8590c" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="100.0,150.0 104.5,161.0 95.5,161.0" fill="#e8590c"/>
+  <polyline points="560.0,115.0 650.0,115.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="650.0,115.0 639.0,119.5 639.0,110.5" fill="#1e1e1e"/>
+  <polyline points="540.0,300.0 710.0,160.0" fill="none" stroke="#7048e8" stroke-width="1.5" stroke-dasharray="8 6" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="710.0,160.0 704.4,170.5 698.6,163.5" fill="#7048e8"/>
+  <polyline points="720.0,170.0 695.0,240.0" fill="none" stroke="#2f9e44" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="695.0,240.0 694.5,228.1 702.9,231.2" fill="#2f9e44"/>
+  <polyline points="820.0,170.0 875.0,240.0" fill="none" stroke="#2f9e44" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="875.0,240.0 864.7,234.1 871.7,228.6" fill="#2f9e44"/>
+  <polyline points="800.0,24.0 775.0,60.0" fill="none" stroke="#e03131" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="775.0,60.0 777.6,48.4 785.0,53.5" fill="#e03131"/>
+  <text x="500.0" y="-42.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="22" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Entity lifecycle — extraction, resolution, write-through</text>
+  <text x="100.0" y="91.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">surface forms</text>
+  <text x="100.0" y="107.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">&quot;Jordan&quot;, &quot;Acme&quot;,</text>
+  <text x="100.0" y="123.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">&quot;ACME Corp.&quot;</text>
+  <text x="420.0" y="68.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">EntityResolver</text>
+  <text x="420.0" y="84.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(entity_resolver.py, pure)</text>
+  <text x="420.0" y="101.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle"></text>
+  <text x="420.0" y="117.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">1. exact  — slug match</text>
+  <text x="420.0" y="133.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">2. alias  — normalized form</text>
+  <text x="420.0" y="149.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">3. fuzzy  — per-type threshold</text>
+  <text x="420.0" y="166.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">4. new    — mint a slug</text>
+  <text x="100.0" y="216.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#1e1e1e" text-anchor="middle">NER + LLM extraction</text>
+  <text x="100.0" y="231.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#1e1e1e" text-anchor="middle">steered by ner_labels /</text>
+  <text x="100.0" y="246.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#1e1e1e" text-anchor="middle">ner_exclude</text>
+  <text x="420.0" y="306.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">domain schema validates</text>
+  <text x="420.0" y="322.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">entity &amp; relationship types</text>
+  <text x="770.0" y="101.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">graph write</text>
+  <text x="770.0" y="117.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">MERGE (:Entity:Type {id})</text>
+  <text x="770.0" y="133.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">+ relationship edges</text>
+  <text x="690.0" y="276.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Neo4j</text>
+  <text x="690.0" y="292.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">node</text>
+  <text x="895.0" y="268.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">markdown file</text>
+  <text x="895.0" y="284.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">+ frontmatter</text>
+  <text x="895.0" y="300.5" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(source of truth)</text>
+  <text x="820.0" y="-13.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">curation: merge / aliases / archive</text>
+  <text x="820.0" y="2.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#1e1e1e" text-anchor="middle">REST /api/entities · MCP graph_* tools</text>
+  <text x="605.0" y="97.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">resolved id</text>
+  <text x="840.0" y="345.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">write-through: file is source of truth;</text>
+  <text x="840.0" y="360.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">Neo4j rolls back if the file write fails</text>
+  <text x="510.0" y="379.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="12" font-weight="normal" fill="#868e96" text-anchor="middle">unknown types become &quot;provisional&quot; in the type registry — promote or prune later</text>
+</svg>

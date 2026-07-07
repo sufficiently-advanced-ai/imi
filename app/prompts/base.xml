@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+    <system>
+        You are Claude, an AI assistant with access to a git repository of markdown files.
+        Your task is to provide accurate, helpful responses based on the content of these files.
+    </system>
+    <context>
+        <files>
+            <!-- file content gets injected here -->
+        </files>
+        <query>
+            <!-- user question goes here -->
+        </query>
+    </context>
+    <instructions>
+        <!-- prompt-specific instructions -->
+    </instructions>
+    <format>
+        <!-- expected response format -->
+    </format>
+</prompt>

@@ -1,0 +1,274 @@
+[
+  {
+    "id": "pair-01",
+    "expected_contradiction": true,
+    "a": {
+      "content": "All client work runs through the staging review gate before deploy. No exceptions — every change, including hotfixes, must pass staging sign-off.",
+      "meeting_title": "Engineering Process Review",
+      "speaker": "Dana Okafor",
+      "timestamp": "2026-05-01T10:00:00+00:00"
+    },
+    "b": {
+      "content": "Ship client hotfixes straight to production, review after the fact. Speed matters more than process when a client is down.",
+      "meeting_title": "Incident Retrospective",
+      "speaker": "Marcus Webb",
+      "timestamp": "2026-05-20T10:00:00+00:00"
+    },
+    "note": "Cross-person, different phrasing: mandatory pre-deploy review vs bypass-and-review-after. Cannot follow both."
+  },
+  {
+    "id": "pair-02",
+    "expected_contradiction": true,
+    "a": {
+      "content": "We are moving to a flat monthly fee for all clients — predictable revenue, easier for clients to budget. No usage-based component.",
+      "meeting_title": "Pricing Strategy Session",
+      "speaker": "Priya Sharma",
+      "timestamp": "2026-05-03T14:00:00+00:00"
+    },
+    "b": {
+      "content": "Pricing should track actual consumption: clients pay per API call. A flat fee creates a subsidy problem for heavy users.",
+      "meeting_title": "Commercial Model Review",
+      "speaker": "Leo Tran",
+      "timestamp": "2026-05-18T09:30:00+00:00"
+    },
+    "note": "Cross-person: flat-fee model vs per-usage model for the same product. Mutually exclusive billing structures."
+  },
+  {
+    "id": "pair-03",
+    "expected_contradiction": true,
+    "a": {
+      "content": "We will bring in two contractors to accelerate the Q3 build. The budget is approved and postings go out this week.",
+      "meeting_title": "Q3 Planning",
+      "speaker": "Yuki Brennan",
+      "timestamp": "2026-05-05T11:00:00+00:00"
+    },
+    "b": {
+      "content": "No external spend for the rest of the fiscal year — that includes contractors, agencies, and tooling subscriptions. Strict freeze.",
+      "meeting_title": "Finance Alignment",
+      "speaker": "Omar Castillo",
+      "timestamp": "2026-05-22T16:00:00+00:00"
+    },
+    "note": "Cross-person: approved contractor hire vs blanket external spend freeze. Cannot execute both."
+  },
+  {
+    "id": "pair-04",
+    "expected_contradiction": true,
+    "a": {
+      "content": "Purge all user data after 30 days of inactivity. GDPR compliance requires we minimise what we retain.",
+      "meeting_title": "Data Governance Workshop",
+      "speaker": "Isabelle Nguyen",
+      "timestamp": "2026-05-06T13:00:00+00:00"
+    },
+    "b": {
+      "content": "Retain everything indefinitely — legal says we need a full audit trail and cannot delete records without a formal legal hold review.",
+      "meeting_title": "Legal & Compliance Sync",
+      "speaker": "Raj Anand",
+      "timestamp": "2026-05-21T10:00:00+00:00"
+    },
+    "note": "Cross-person: purge-after-30d vs retain-everything. Mutually exclusive data retention policies."
+  },
+  {
+    "id": "pair-05",
+    "expected_contradiction": true,
+    "a": {
+      "content": "The weekly all-hands is a core ritual — we are keeping it and making it better, not shorter. It is where alignment happens.",
+      "meeting_title": "Culture Review",
+      "speaker": "Fatima Al-Hassan",
+      "timestamp": "2026-05-07T15:00:00+00:00"
+    },
+    "b": {
+      "content": "Kill the weekly all-hands entirely. It wastes 40 person-hours and most of it is just status updates that belong in Slack.",
+      "meeting_title": "Operational Efficiency Session",
+      "speaker": "Tom Osei",
+      "timestamp": "2026-05-23T11:30:00+00:00"
+    },
+    "note": "Cross-person: keep the weekly all-hands vs eliminate it. Cannot do both."
+  },
+  {
+    "id": "pair-06",
+    "expected_contradiction": true,
+    "a": {
+      "content": "The unified data layer will use PostgreSQL. We already have the expertise and the licensing. Decision is final.",
+      "meeting_title": "Backend Architecture Decision",
+      "speaker": "Chloe Park",
+      "timestamp": "2026-05-08T10:00:00+00:00"
+    },
+    "b": {
+      "content": "We are standardising on MongoDB for the unified data layer. Document model fits our schema better and the team knows it.",
+      "meeting_title": "Platform Architecture Review",
+      "speaker": "James Okonkwo",
+      "timestamp": "2026-05-24T09:00:00+00:00"
+    },
+    "note": "Cross-person: Postgres vs Mongo for the same system. Mutually exclusive database choices."
+  },
+  {
+    "id": "pair-07",
+    "expected_contradiction": true,
+    "a": {
+      "content": "The company is fully remote-first. We will not require anyone to come into the office — ever. Hire anywhere.",
+      "meeting_title": "People Strategy Off-site",
+      "speaker": "Nina Kovacs",
+      "timestamp": "2026-05-09T14:00:00+00:00"
+    },
+    "b": {
+      "content": "Starting Q3 all employees must be within commuting distance of a hub office and attend in person three days per week.",
+      "meeting_title": "Leadership Return-to-Office Decision",
+      "speaker": "David Marsh",
+      "timestamp": "2026-05-25T16:00:00+00:00"
+    },
+    "note": "Cross-person: remote-first with no office requirement vs mandatory in-person attendance."
+  },
+  {
+    "id": "pair-08",
+    "expected_contradiction": true,
+    "a": {
+      "content": "Sunset the legacy reporting product by end of year. No new features, wind down existing clients, and close the line.",
+      "meeting_title": "Product Portfolio Review",
+      "speaker": "Amara Diallo",
+      "timestamp": "2026-05-10T11:00:00+00:00"
+    },
+    "b": {
+      "content": "Double down on the reporting product — it is our highest-margin line and we are putting it at the centre of the 2027 roadmap.",
+      "meeting_title": "Annual Strategy Summit",
+      "speaker": "Chris Wolfe",
+      "timestamp": "2026-05-26T10:00:00+00:00"
+    },
+    "note": "Cross-person: sunset the product vs double-down on it as the flagship. Cannot do both."
+  },
+  {
+    "id": "pair-09",
+    "expected_contradiction": false,
+    "a": {
+      "content": "All production deploys require a peer code review before merge.",
+      "meeting_title": "Engineering Standards Review",
+      "speaker": "Dana Okafor",
+      "timestamp": "2026-05-01T10:00:00+00:00"
+    },
+    "b": {
+      "content": "All production deploys require a peer code review before merge, and additionally a QA sign-off for changes touching the payments module.",
+      "meeting_title": "Payments Risk Sync",
+      "speaker": "Dana Okafor",
+      "timestamp": "2026-05-15T10:00:00+00:00"
+    },
+    "note": "Refinement: B adds a scope-narrowed extra requirement on top of A. They are compatible — B extends A."
+  },
+  {
+    "id": "pair-10",
+    "expected_contradiction": false,
+    "a": {
+      "content": "We will move all internal tooling to the cloud by Q4.",
+      "meeting_title": "Infrastructure Roadmap",
+      "speaker": "Priya Sharma",
+      "timestamp": "2026-05-03T14:00:00+00:00"
+    },
+    "b": {
+      "content": "We will migrate the CI/CD pipeline to cloud infrastructure by September as the first step.",
+      "meeting_title": "DevOps Planning",
+      "speaker": "Leo Tran",
+      "timestamp": "2026-05-18T09:30:00+00:00"
+    },
+    "note": "Scope-narrowing: B is a subset (CI/CD only) of A (all tooling). They are compatible — B describes an implementation step."
+  },
+  {
+    "id": "pair-11",
+    "expected_contradiction": false,
+    "a": {
+      "content": "Going forward, client onboarding is handled by the solutions engineering team.",
+      "meeting_title": "Customer Success Restructure",
+      "speaker": "Yuki Brennan",
+      "timestamp": "2026-05-05T11:00:00+00:00"
+    },
+    "b": {
+      "content": "Solutions engineering owns the onboarding process for all new clients end to end.",
+      "meeting_title": "Team Roles Alignment",
+      "speaker": "Omar Castillo",
+      "timestamp": "2026-05-20T16:00:00+00:00"
+    },
+    "note": "Restatement: same decision expressed in different words by different speakers. Not a conflict."
+  },
+  {
+    "id": "pair-12",
+    "expected_contradiction": false,
+    "a": {
+      "content": "The API gateway will enforce rate limiting at 1000 requests per minute per tenant.",
+      "meeting_title": "API Design Session",
+      "speaker": "Isabelle Nguyen",
+      "timestamp": "2026-05-06T13:00:00+00:00"
+    },
+    "b": {
+      "content": "The data pipeline will use batch processing with a maximum of 500 records per job to avoid overloading downstream systems.",
+      "meeting_title": "Data Engineering Sync",
+      "speaker": "Raj Anand",
+      "timestamp": "2026-05-21T10:00:00+00:00"
+    },
+    "note": "Complementary decisions: A governs the API gateway, B governs the data pipeline. Different subsystems — both can be in force."
+  },
+  {
+    "id": "pair-13",
+    "expected_contradiction": false,
+    "a": {
+      "content": "First, we stabilise the current platform and resolve all P0 bugs. Then, in Q4, we begin the migration to the new architecture.",
+      "meeting_title": "Roadmap Prioritisation",
+      "speaker": "Fatima Al-Hassan",
+      "timestamp": "2026-05-07T15:00:00+00:00"
+    },
+    "b": {
+      "content": "The migration to the new architecture is scheduled to begin in Q4, once the platform stabilisation work is complete.",
+      "meeting_title": "Architecture Planning",
+      "speaker": "Tom Osei",
+      "timestamp": "2026-05-22T11:30:00+00:00"
+    },
+    "note": "Sequencing / restatement: both describe the same phased plan (stabilise then migrate). No conflict."
+  },
+  {
+    "id": "pair-14",
+    "expected_contradiction": false,
+    "a": {
+      "content": "We used to use a shared staging environment for all teams, but we moved to per-team ephemeral environments last year. That is now our standard.",
+      "meeting_title": "DevOps Retrospective",
+      "speaker": "Chloe Park",
+      "timestamp": "2026-05-08T10:00:00+00:00"
+    },
+    "b": {
+      "content": "All teams use per-team ephemeral environments for staging. The shared environment has been deprecated.",
+      "meeting_title": "Onboarding Guide Update",
+      "speaker": "James Okonkwo",
+      "timestamp": "2026-05-24T09:00:00+00:00"
+    },
+    "note": "Supersession-as-evolution: A describes the transition (shared → ephemeral), B states the current standard. Both reflect the same state."
+  },
+  {
+    "id": "pair-15",
+    "expected_contradiction": false,
+    "a": {
+      "content": "The customer analytics dashboard will use Looker for visualisation.",
+      "meeting_title": "Analytics Platform Decision",
+      "speaker": "Nina Kovacs",
+      "timestamp": "2026-05-09T14:00:00+00:00"
+    },
+    "b": {
+      "content": "The internal operations reporting tool will be built with Metabase.",
+      "meeting_title": "Internal Tools Planning",
+      "speaker": "David Marsh",
+      "timestamp": "2026-05-25T16:00:00+00:00"
+    },
+    "note": "Different projects: A is for customer-facing analytics, B is for internal ops reporting. Tooling choices for different systems — both valid."
+  },
+  {
+    "id": "pair-16",
+    "expected_contradiction": false,
+    "a": {
+      "content": "We will adopt a zero-downtime deployment strategy using blue-green deployments.",
+      "meeting_title": "Release Engineering Decision",
+      "speaker": "Amara Diallo",
+      "timestamp": "2026-05-10T11:00:00+00:00"
+    },
+    "b": {
+      "content": "Set up the blue-green deployment pipeline in the staging environment by end of sprint.",
+      "meeting_title": "Sprint Planning",
+      "speaker": "Chris Wolfe",
+      "timestamp": "2026-05-17T10:00:00+00:00"
+    },
+    "note": "Decision + implementing action item: A is the strategic decision, B is the action item to implement it. Not a conflict."
+  }
+]

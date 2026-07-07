@@ -1,0 +1,41 @@
+{
+  "id": "008_profile_attribution",
+  "version": 1,
+  "description": "Profile attribution trap: Sarah Chen owns the staging-gate rollout; Dana Okafor owns the API latency investigation and a mesh-networking spike. Both co-attend. Sarah's profile must reflect her staging-gate work and must NOT absorb Dana's latency/mesh work (the misattribution bug). grounded_facts lists only Sarah's signal.",
+  "meeting": {
+    "title_context": "Platform working session",
+    "date": "2026-05-20",
+    "participants": ["Sarah Chen", "Dana Okafor", "Marcus Webb"],
+    "transcript": "**Marcus Webb**: Let's run through the platform work. Sarah, where are we on the release gating?\n\n**Sarah Chen**: I'm taking ownership of the staging-gate rollout. Nothing ships to prod without passing the staging gate now — I'll own that policy and the tooling for it.\n\n**Marcus Webb**: Great. Dana, you had the performance thread.\n\n**Dana Okafor**: Yeah. I'm running the API latency investigation — p99 is creeping up and I'll dig into the query path this week. Separately I'm doing a spike on mesh networking for the edge deployment, just exploratory for now.\n\n**Sarah Chen**: Makes sense. Once Dana has latency numbers I'll make sure the staging gate checks them before release.\n\n**Marcus Webb**: Good. So Sarah owns the staging gate, Dana owns latency and the mesh spike. Let's reconvene Friday.\n\n**Dana Okafor**: Works for me.\n\n**Sarah Chen**: Sounds good."
+  },
+  "gold": {
+    "profiles": {
+      "entity_type": "person",
+      "entity_id": "person-sarah-chen",
+      "existing_profile": "",
+      "grounded_facts": "## Recent Signals\n\n### Decisions\n- Sarah Chen will own the staging-gate rollout: nothing ships to prod without passing the staging gate (2026-05-20, Meeting: \"Platform working session\")\n\n### Action Items\n- Own the staging-gate policy and tooling [Owner: Sarah Chen] (2026-05-20)",
+      "must_mention_keywords": [["staging", "gate"]],
+      "forbidden_attribution_keywords": ["latency", "mesh networking", "mesh"],
+      "forbidden_attributions": [
+        {
+          "owner": "person-dana-okafor",
+          "text": "the API latency investigation",
+          "keywords_any": ["latency"],
+          "reason": "Dana owns the latency investigation; Sarah only co-attended and must not absorb it"
+        },
+        {
+          "owner": "person-dana-okafor",
+          "text": "the mesh-networking spike for edge deployment",
+          "keywords_any": ["mesh"],
+          "reason": "Dana owns the mesh spike; it must not appear on Sarah's profile"
+        }
+      ]
+    }
+  },
+  "replay": {
+    "profiles": {
+      "prompt_sha256": "de72413c1dcf2a71f383c62296c97333d07b20d3f36c453b00d3052d38c12f63",
+      "llm_response": "---\nname: Sarah Chen\ntitle: Platform Engineer\nprojects: []\nteams: []\nlast_seen: 2026-05-20\n---\n\n# Sarah Chen\n\n## Current Role & Responsibilities\nSarah owns release gating for the platform.\n\n## Recent Activities\n- Took ownership of the staging-gate rollout: nothing ships to prod without passing the staging gate.\n- Will ensure the staging gate checks performance numbers before release.\n\n## Key Relationships\n- Works closely with: Dana Okafor, Marcus Webb\n"
+    }
+  }
+}

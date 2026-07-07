@@ -1,0 +1,8 @@
+{
+  "provider": "grain",
+  "title": "Acme Corp — interim baseline review",
+  "external_id": "grain-acme-2026-05-22",
+  "recorded_at": "2026-05-22T16:00:00+00:00",
+  "participants": ["Jane Okoye", "Consultant"],
+  "transcript": "Jane (Acme Corp, Head of Sustainability): We've reviewed the draft Scope 1 and 2 figures. The natural gas numbers look higher than expected. Consultant: The spike is real — it correlates with the new warehouse HVAC system installed in Q3 2025. We decided to present the pre- and post-warehouse figures separately in the baseline narrative to avoid understating progress on legacy operations. Jane: That's a smart framing. Consultant: I'll revise the baseline report with split figures and a narrative explanation by June 2 — that date still holds. Jane: Good. What about the external verification? Consultant: I'll brief the verification auditor by May 29 so they can plan their field visit. Jane: Works for me. Consultant: A general observation: companies that separate capital-project-driven emission jumps from operational trends get much better engagement from ESG analysts — it shows analytical maturity rather than just reporting numbers."
+}

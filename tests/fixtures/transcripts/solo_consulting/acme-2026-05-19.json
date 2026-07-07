@@ -1,0 +1,8 @@
+{
+  "provider": "fathom",
+  "title": "Acme Corp — supplier survey review",
+  "external_id": "fathom-acme-2026-05-19",
+  "recorded_at": "2026-05-19T14:00:00+00:00",
+  "participants": ["Jane Okoye", "Marcus Webb", "Consultant"],
+  "transcript": "Jane (Acme Corp, Head of Sustainability): We got responses from 40 percent of suppliers. Some data gaps on refrigerant usage. Marcus (Acme Corp, Procurement Director): Our tier-2 suppliers are the weakest link — most don't track emissions at all. Consultant: I'll prepare a gap analysis and remediation plan by June 5. Jane: That works ahead of the board date. Consultant: We decided that for non-responding suppliers we'll use industry-average emission factors flagged with a low-confidence marker. Marcus: Agreed — that's more defensible than leaving a blank. Consultant: The broader insight here is that supplier engagement requires executive sponsorship at the buying firm to move the needle — procurement staff alone can't drive it. Jane: That's consistent with what we've seen internally."
+}

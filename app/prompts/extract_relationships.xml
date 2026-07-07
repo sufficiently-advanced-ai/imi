@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <!-- Relationship inference prompt for InferRelationshipsTool.
+       Domain-constrained: {relationship_schema} is generated from the active
+       domain config so only schema-valid typed edges can be produced.
+       Placeholders: {entity_list}, {content}, {relationship_schema}.
+       Edit here; the tool loads this file via app/services/prompt_loader.py. -->
+  <instructions>
+Identify relationships between these entities based on the content below.
+
+&lt;entities&gt;
+{entity_list}
+&lt;/entities&gt;
+
+&lt;content&gt;
+{content}
+&lt;/content&gt;
+
+ALLOWED RELATIONSHIP TYPES (source type -> target type):
+{relationship_schema}
+
+Return ONLY a YAML block — no preamble, no commentary:
+
+```yaml
+relationships:
+  - source: "entity-id-1"
+    target: "entity-id-2"
+    type: "reports_to"
+    confidence: 0.9
+    description: "Barry reports to Stephen"
+    evidence: "Since I report to Stephen it keeps the escalation path simple"
+```
+
+Rules:
+- source and target MUST be entity IDs from the entities list above
+- type MUST be one of the allowed relationship types, and the source/target
+  entity types MUST match that relationship's signature — a person works_on a
+  project, never an account
+- Direction matters: "X reports_to Y" means X is the subordinate. "Y is X's
+  manager" also means X reports_to Y. Never emit the reversed edge.
+- Use the MOST SPECIFIC type that fits: a reporting relationship is
+  reports_to, NOT collaborates_with; an account run by a person is
+  managed_by, NOT works_on
+- evidence: a short quote from the content that states the relationship.
+  Only include relationships the content actually states or unambiguously
+  implies — no inferences from mere co-occurrence in the same meeting
+- confidence: 0.0-1.0. Below 0.7 means the content does not clearly state
+  the relationship — prefer omitting it
+- Do NOT emit relationships for: former employers or anecdotes, hypothetical
+  staffing, skip-level chains (if X reports to Y and Y reports to Z, do not
+  emit X reports_to Z), or joke/banter topics
+- Emit each relationship exactly once — NEVER also emit its inverse
+  (belongs_to_account and has_projects are the same edge; pick the direction
+  listed in the allowed types and move on)
+- collaborates_with requires evidence of people actually working together on
+  shared work. Speaking in the same meeting, running the agenda, or asking
+  someone for a status update is NOT collaboration
+- A reporting or management relationship is NEVER also collaborates_with —
+  emit only the hierarchical edge
+- If a relationship you observe has no allowed type, OMIT it — never
+  substitute a looser type
+- If no relationships found, return: relationships: []
+- Quote all string values
+
+Verify before responding: every triple's source/target types match the
+relationship signature, every evidence quote appears in the content, and no
+reversed reporting edges exist.
+  </instructions>
+</prompt>

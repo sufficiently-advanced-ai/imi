@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <!-- Final meeting summarization prompt for StateSync.finalize_meeting_with_transcript.
+       Emits a strict JSON envelope so titles and sections parse deterministically
+       (the previous free-text prompt produced 61% "Untitled Meeting" and
+       inconsistent section formats). The eval suite (scripts/run_evals.py
+       - -task summary) measures this prompt; parsing lives in
+       app/services/meeting/state_sync.py::parse_finalization_response.
+       Placeholders: {current_state_body}, {full_transcript}. -->
+  <instructions>
+Create a meeting summary from the transcript below.
+
+Current meeting state:
+{current_state_body}
+
+Full meeting transcript:
+{full_transcript}
+
+Return ONLY a JSON object (no markdown fences, no commentary) shaped exactly like:
+
+{{
+  "title": "NationSwell Phase 2 staffing and deploy gate",
+  "purpose": "One sentence stating why this meeting happened.",
+  "summary_markdown": "## Summary\n2-6 sentence narrative overview.\n\n## Key Discussion Points\n- ...\n\n## Decisions\n- ...\n\n## Action Items\n- [owner] task (deadline if stated)\n\n## Next Steps\n- ...\n\n## Insights\n- ...",
+  "entities_mentioned": [
+    {{"type": "person", "name": "Full Name"}},
+    {{"type": "account", "name": "Client Name"}}
+  ]
+}}
+
+Rules for "title":
+- At most 8 words, specific to THIS meeting: name the dominant topic, client, or project
+- Derive it from the content even when the meeting state says "Untitled Meeting" — never output "Untitled Meeting", "Meeting Summary", or a generic label like "Weekly Sync" alone
+- No trailing punctuation
+
+Rules for "summary_markdown":
+- Exactly these H2 sections, in this order: Summary, Key Discussion Points, Decisions, Action Items, Next Steps, Insights
+- A section with no content contains exactly "None" (never omit the heading)
+- Summary opens with a 2-6 sentence narrative, not bullet fragments
+- Decisions: only work-relevant choices with a named decision-maker or clear group agreement and commitment language. Opinions, hypotheticals, parked ideas, scheduling trivia, and personal/banter commitments are NEVER decisions
+- Action Items: name the owner when the transcript states one
+- Insights: synthesis (implications, risks, connections), not restated discussion points
+- Personal or banter content (jokes, appearance, hobbies) appears nowhere in Decisions or Action Items
+- Do not carry anecdotes, former employers, or personal stories into any section — state the work-relevant conclusion without the anecdote ("the client's data team is small, plan for enablement", not the story about a previous job)
+- entities_mentioned: people, client accounts, projects, and teams that are participants or substantively discussed — not tools, anecdotes, or passing comparisons
+
+Verify before responding (do not include this checklist in the output):
+- The title is specific and at most 8 words
+- All six H2 sections present, in order, with "None" where empty
+- Every decision listed is supported by the transcript
+- The output is a single valid JSON object
+  </instructions>
+</prompt>

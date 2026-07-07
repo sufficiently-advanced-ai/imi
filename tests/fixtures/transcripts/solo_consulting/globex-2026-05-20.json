@@ -1,0 +1,8 @@
+{
+  "provider": "otter",
+  "title": "Globex — TCFD scenario analysis kickoff",
+  "external_id": "otter-globex-2026-05-20",
+  "recorded_at": "2026-05-20T09:30:00+00:00",
+  "participants": ["Sofia Reinholt", "Dani Ferreira", "Consultant"],
+  "transcript": "Sofia (Globex, VP Regulatory Affairs): We want to run two climate scenarios — 1.5°C and 3°C — for the TCFD disclosure. Consultant: We decided to use the NGFS Current Policies and Net Zero 2050 scenarios as the baseline pair, since they're well-recognised by institutional investors. Dani (Globex, CFO): What's the timeline? Consultant: I'll deliver the scenario narrative and risk register by June 9. Dani: Can we compress that? Consultant: Not without compromising quality — six scenarios variables need cross-functional input. I'll send a data request template by May 26 so your team can start gathering inputs in parallel. Dani: Fair enough. Consultant: A key insight from running these analyses across multiple companies — physical risk is almost always underweighted relative to transition risk in early assessments, but it's physical risk that ends up dominating long-term capex decisions."
+}

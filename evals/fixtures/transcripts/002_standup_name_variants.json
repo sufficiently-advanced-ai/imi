@@ -1,0 +1,132 @@
+{
+  "id": "002_standup_name_variants",
+  "version": 1,
+  "description": "Stresses entity canonicalization: the same account appears as 'North Wind', 'Northwind', and 'NorthWind'; another as 'Bright Forge' and 'BrightForge'; a project appears under two surface forms. An ideal extraction emits ONE entity per canonical_id. Shares canonical_ids with 006_cross_meeting_aliases for cross-meeting consistency checks.",
+  "meeting": {
+    "title_context": "Delivery standup",
+    "date": "2026-05-19",
+    "participants": ["Priya Raman", "Tom Eckhart", "Maya Goldstein"],
+    "transcript": "**Priya Raman**: Quick standup, usual order. Tom, go ahead.\n\n**Tom Eckhart**: Yesterday I was heads-down on the North Wind data migration. The export from their legacy CRM finished overnight, so today I'm loading it into the new schema. No blockers.\n\n**Priya Raman**: How clean is the Northwind data looking so far?\n\n**Tom Eckhart**: Better than expected. Maybe five percent of records need manual review. I'll have numbers for the NorthWind steering call Thursday.\n\n**Priya Raman**: Good. Maya?\n\n**Maya Goldstein**: I'm on the Bright Forge dashboard work. Their success team asked for two new widgets — cohort completion and time-to-certificate. I sketched both yesterday and I'm building the cohort one today.\n\n**Priya Raman**: Is BrightForge still expecting the demo next Wednesday?\n\n**Maya Goldstein**: Yes, Wednesday. It's tight but doable if the API contract doesn't change again.\n\n**Priya Raman**: Okay. I'm splitting my time between the Atlas migration plan and hiring screens. The Atlas project kickoff doc goes out to the team today. Tom, I'll need your schema notes for it.\n\n**Tom Eckhart**: I'll send them over after lunch.\n\n**Priya Raman**: That's everyone. One reminder — timesheets close tomorrow, don't make finance chase you.\n\n**Maya Goldstein**: Noted, mom.\n\n**Priya Raman**: See you all Thursday."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-priya-raman",
+        "canonical_name": "Priya Raman",
+        "type": "person",
+        "aliases": ["Priya"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-tom-eckhart",
+        "canonical_name": "Tom Eckhart",
+        "type": "person",
+        "aliases": ["Tom"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-maya-goldstein",
+        "canonical_name": "Maya Goldstein",
+        "type": "person",
+        "aliases": ["Maya"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-northwind",
+        "canonical_name": "NorthWind",
+        "type": "account",
+        "aliases": ["North Wind", "Northwind"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-brightforge",
+        "canonical_name": "BrightForge",
+        "type": "account",
+        "aliases": ["Bright Forge", "bright-forge"],
+        "required": true
+      },
+      {
+        "canonical_id": "project-atlas-migration",
+        "canonical_name": "Atlas Migration",
+        "type": "project",
+        "aliases": ["Atlas migration plan", "the Atlas project", "Atlas"],
+        "required": true
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "finance",
+        "type": "team",
+        "reason": "generic department word in a throwaway reminder, not a tracked team entity"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": [
+      {
+        "gold_id": "sig-schema-notes",
+        "type": "action_item",
+        "keywords_all": ["schema notes"],
+        "keywords_any": ["Tom", "send"],
+        "owner": "Tom Eckhart",
+        "required": true
+      },
+      {
+        "gold_id": "sig-brightforge-demo",
+        "type": "key_point",
+        "keywords_all": ["demo"],
+        "keywords_any": ["Wednesday", "Exec"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-migration-status",
+        "type": "key_point",
+        "keywords_any": ["manual review", "export", "five percent", "5%", "data quality"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-load-crm-data",
+        "type": "action_item",
+        "keywords_all": ["legacy CRM"],
+        "keywords_any": ["load", "schema", "Thursday"],
+        "owner": "Tom Eckhart",
+        "required": false
+      },
+      {
+        "gold_id": "sig-cohort-widget",
+        "type": "action_item",
+        "keywords_all": ["widget"],
+        "keywords_any": ["cohort", "Wednesday", "dashboard"],
+        "owner": "Maya Goldstein",
+        "required": false
+      },
+      {
+        "gold_id": "sig-api-contract-risk",
+        "type": "insight",
+        "keywords_all": ["API contract"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-kickoff-doc",
+        "type": "action_item",
+        "keywords_all": ["kickoff"],
+        "keywords_any": ["doc", "Atlas", "today"],
+        "owner": "Priya Raman",
+        "required": false
+      }
+    ],
+    "forbidden_signals": [
+      {
+        "keywords_all": ["timesheet"],
+        "reason": "administrative housekeeping reminder, not a substantive signal"
+      }
+    ],
+    "summary": null
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "id": "006_cross_meeting_aliases",
+  "version": 1,
+  "description": "Cross-meeting canonicalization companion to 002_standup_name_variants: the SAME canonical entities (account-northwind, account-brightforge, project-atlas-migration, the three delivery people) appear under DIFFERENT surface forms ('the NorthWind account', 'BRIGHT FORGE', 'Atlas'). The entities report flags when 002 and 006 extractions normalize differently.",
+  "meeting": {
+    "title_context": "Delivery review",
+    "date": "2026-05-28",
+    "participants": ["Priya Raman", "Tom Eckhart", "Maya Goldstein"],
+    "transcript": "**Priya Raman**: Delivery review, three items: the NorthWind account, BRIGHT FORGE, and Atlas. Tom first.\n\n**Tom Eckhart**: The Northwind migration finished Sunday night. All records loaded, the manual-review pile came in under three percent. Their steering committee saw the numbers Thursday and they're happy.\n\n**Priya Raman**: Great outcome. Anything left on that account?\n\n**Tom Eckhart**: Just the decommission of the legacy CRM, which their IT owns, not us. I'll stay on it as a watcher.\n\n**Priya Raman**: Maya, BRIGHT FORGE?\n\n**Maya Goldstein**: Demo went well. The cohort completion widget landed, time-to-certificate slipped to this sprint. Their success team already wants a third widget — funnel drop-off. I told them we'd scope it after the current two ship.\n\n**Priya Raman**: Good call, don't let the scope creep in sideways. And Atlas — kickoff happened Monday, the schema notes Tom sent were exactly what the doc needed. First milestone is the staging environment by June 15th. Tom, you own that one.\n\n**Tom Eckhart**: Yep, staging env by the fifteenth, it's on my board.\n\n**Maya Goldstein**: One more thing — I'm out the last week of June, planning around the widget delivery.\n\n**Priya Raman**: Noted. Okay: NorthWind wrapped pending decommission watch, BrightForge widget two in flight, Atlas staging by June 15th. Thanks both."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-priya-raman",
+        "canonical_name": "Priya Raman",
+        "type": "person",
+        "aliases": ["Priya"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-tom-eckhart",
+        "canonical_name": "Tom Eckhart",
+        "type": "person",
+        "aliases": ["Tom"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-maya-goldstein",
+        "canonical_name": "Maya Goldstein",
+        "type": "person",
+        "aliases": ["Maya"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-northwind",
+        "canonical_name": "NorthWind",
+        "type": "account",
+        "aliases": ["North Wind", "Northwind", "the NorthWind account"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-brightforge",
+        "canonical_name": "BrightForge",
+        "type": "account",
+        "aliases": ["Bright Forge", "BRIGHT FORGE", "bright-forge"],
+        "required": true
+      },
+      {
+        "canonical_id": "project-atlas-migration",
+        "canonical_name": "Atlas Migration",
+        "type": "project",
+        "aliases": ["Atlas", "the Atlas project", "Atlas migration plan"],
+        "required": true
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "IT",
+        "type": "team",
+        "reason": "the client's IT department, not one of our teams"
+      },
+      {
+        "name": "steering committee",
+        "type": "team",
+        "reason": "generic governance body of the client, not a tracked team"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": [
+      {
+        "gold_id": "sig-migration-done",
+        "type": "key_point",
+        "keywords_all": ["migration"],
+        "keywords_any": ["finished", "Sunday", "three percent", "complete"],
+        "required": true
+      },
+      {
+        "gold_id": "sig-staging-milestone",
+        "type": "action_item",
+        "keywords_all": ["staging"],
+        "keywords_any": ["June 15", "fifteenth", "milestone"],
+        "owner": "Tom Eckhart",
+        "required": true
+      },
+      {
+        "gold_id": "sig-third-widget-deferred",
+        "type": "decision",
+        "keywords_all": ["widget"],
+        "keywords_any": ["scope", "after", "ship", "defer"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-decommission-watch",
+        "type": "action_item",
+        "keywords_all": ["decommission"],
+        "owner": "Tom Eckhart",
+        "required": false
+      },
+      {
+        "gold_id": "sig-atlas-kickoff-done",
+        "type": "key_point",
+        "keywords_all": ["kickoff"],
+        "keywords_any": ["Monday", "Atlas", "schema"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-widget-slip",
+        "type": "key_point",
+        "keywords_all": ["time-to-certificate"],
+        "keywords_any": ["slipped", "sprint"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-maya-out",
+        "type": "key_point",
+        "keywords_all": ["June"],
+        "keywords_any": ["out", "unavailable", "last week"],
+        "required": false
+      }
+    ],
+    "forbidden_signals": [],
+    "summary": null
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

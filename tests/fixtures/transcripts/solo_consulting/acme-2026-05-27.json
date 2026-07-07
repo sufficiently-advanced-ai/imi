@@ -1,0 +1,8 @@
+{
+  "provider": "otter",
+  "title": "Acme Corp — final pre-board review",
+  "external_id": "otter-acme-2026-05-27",
+  "recorded_at": "2026-05-27T15:30:00+00:00",
+  "participants": ["Jane Okoye", "Reema Sharma", "Victor Lin", "Omar Haddad", "Laura Pace", "Consultant"],
+  "transcript": "Reema (Acme Corp, COO): The board meets June 6 and we cannot slip that date. Where do we stand? Consultant: On the emission factors — we decided to revert to the GHG Protocol factors after all. The custom factors we floated on Monday won't pass the auditor's review before June 6, so reverting is the safe call. Omar (Acme Corp, Data & Analytics Lead): Agreed, revert. I'd rather be defensible than precise right now. Laura (Acme Corp, General Counsel): And the disclosure language has to be conservative — I will not sign off on any forward-looking commitment we can't defend if challenged. Consultant: Understood, we'll keep the claims tight. One open risk: still no data from Ken's plant, so I've used estimated figures flagged low-confidence for that site. Reema: I'll have Grace escalate that today. Victor (Acme Corp, CFO): For what it's worth, I'm fully aligned now — let's get it done. Consultant: Good. I'll deliver the final baseline report by June 2 so it's in the board pack with time to spare. The pressure is real but the date holds."
+}

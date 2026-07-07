@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-24 -24 928 720" width="928" height="720" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive">
+  <rect x="-24" y="-24" width="928" height="720" fill="#ffffff"/>
+  <rect x="0" y="64" width="202" height="64" rx="10" fill="#f1f3f5" stroke="#495057" stroke-width="1.5"/>
+  <rect x="218" y="64" width="202" height="64" rx="10" fill="#f1f3f5" stroke="#495057" stroke-width="1.5"/>
+  <rect x="436" y="64" width="202" height="64" rx="10" fill="#f1f3f5" stroke="#495057" stroke-width="1.5"/>
+  <rect x="654" y="64" width="202" height="64" rx="10" fill="#f1f3f5" stroke="#495057" stroke-width="1.5"/>
+  <rect x="210" y="178" width="460" height="130" rx="10" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+  <rect x="0" y="201" width="185" height="84" rx="10" fill="#ffe8cc" stroke="#e8590c" stroke-width="1.5"/>
+  <rect x="695" y="189" width="185" height="108" rx="10" fill="#e5dbff" stroke="#7048e8" stroke-width="1.5"/>
+  <rect x="80" y="348" width="720" height="140" rx="10" fill="#ebfbee" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="96" y="392" width="220" height="80" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="330" y="392" width="220" height="80" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="564" y="392" width="220" height="80" rx="10" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.5"/>
+  <rect x="80" y="532" width="720" height="140" rx="10" fill="#e3fafc" stroke="#0b7285" stroke-width="1.5"/>
+  <rect x="96" y="576" width="220" height="80" rx="10" fill="#c5f6fa" stroke="#0b7285" stroke-width="1.5"/>
+  <rect x="330" y="576" width="220" height="80" rx="10" fill="#c5f6fa" stroke="#0b7285" stroke-width="1.5"/>
+  <rect x="564" y="576" width="220" height="80" rx="10" fill="#c5f6fa" stroke="#0b7285" stroke-width="1.5"/>
+  <polyline points="101.0,128.0 101.0,150.0 270.0,178.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="270.0,178.0 258.4,180.6 259.9,171.8" fill="#1e1e1e"/>
+  <polyline points="319.0,128.0 319.0,178.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="319.0,178.0 314.5,167.0 323.5,167.0" fill="#1e1e1e"/>
+  <polyline points="537.0,128.0 537.0,178.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="537.0,178.0 532.5,167.0 541.5,167.0" fill="#1e1e1e"/>
+  <polyline points="755.0,128.0 755.0,150.0 610.0,178.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="610.0,178.0 619.9,171.5 621.7,180.3" fill="#1e1e1e"/>
+  <polyline points="185.0,243.0 210.0,243.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="210.0,243.0 199.0,247.5 199.0,238.5" fill="#1e1e1e"/>
+  <polyline points="695.0,243.0 670.0,243.0" fill="none" stroke="#1e1e1e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="670.0,243.0 681.0,238.5 681.0,247.5" fill="#1e1e1e"/>
+  <polyline points="440.0,308.0 440.0,348.0" fill="none" stroke="#1e1e1e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="440.0,348.0 435.5,337.0 444.5,337.0" fill="#1e1e1e"/>
+  <polyline points="440.0,488.0 440.0,532.0" fill="none" stroke="#1e1e1e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <polygon points="440.0,532.0 435.5,521.0 444.5,521.0" fill="#1e1e1e"/>
+  <text x="440.0" y="20.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="26" font-weight="bold" fill="#1e1e1e" text-anchor="middle">imi — system overview</text>
+  <text x="101.0" y="89.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Documents</text>
+  <text x="101.0" y="108.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">&amp; uploads</text>
+  <text x="319.0" y="89.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Call transcripts</text>
+  <text x="319.0" y="108.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">recorders · Zapier</text>
+  <text x="537.0" y="89.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">GitHub</text>
+  <text x="537.0" y="108.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">webhooks</text>
+  <text x="755.0" y="89.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Thought captures</text>
+  <text x="755.0" y="108.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">&amp; pull connectors</text>
+  <text x="440.0" y="215.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Ingestion pipeline — IngestOrchestrator</text>
+  <text x="440.0" y="235.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="normal" fill="#1e1e1e" text-anchor="middle"></text>
+  <text x="440.0" y="255.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="normal" fill="#1e1e1e" text-anchor="middle">classify · extract entities · resolve</text>
+  <text x="440.0" y="275.8" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="16" font-weight="normal" fill="#1e1e1e" text-anchor="middle">promote signals · detect conflicts</text>
+  <text x="92.5" y="226.9" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Claude</text>
+  <text x="92.5" y="245.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">inference registry</text>
+  <text x="92.5" y="264.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">app/prompts/*.xml</text>
+  <text x="787.5" y="208.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Domain schema</text>
+  <text x="787.5" y="226.9" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">config/domains/*.yaml</text>
+  <text x="787.5" y="245.6" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle"></text>
+  <text x="787.5" y="264.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">shapes extraction,</text>
+  <text x="787.5" y="283.1" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">validation, UI labels</text>
+  <text x="96.0" y="368.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="bold" fill="#2b8a3e" text-anchor="start">Three synchronized stores</text>
+  <text x="206.0" y="425.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Neo4j graph</text>
+  <text x="206.0" y="444.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">+ in-memory fallback</text>
+  <text x="440.0" y="425.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Git corpus (markdown)</text>
+  <text x="440.0" y="444.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">source of truth</text>
+  <text x="674.0" y="425.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Signals &amp; memory</text>
+  <text x="674.0" y="444.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">+ vector index</text>
+  <text x="458.0" y="510.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#495057" text-anchor="start">every surface reads every store</text>
+  <text x="96.0" y="552.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="bold" fill="#0b7285" text-anchor="start">Query surfaces</text>
+  <text x="784.0" y="552.4" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="13" font-weight="normal" fill="#495057" text-anchor="end">agents write evidence — humans grant instruction grade (ADR-002)</text>
+  <text x="206.0" y="609.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">MCP server — ~30 tools</text>
+  <text x="206.0" y="628.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">/api/mcp/sse</text>
+  <text x="440.0" y="609.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">REST API</text>
+  <text x="440.0" y="628.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">/openapi.json</text>
+  <text x="674.0" y="609.3" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">Web UI</text>
+  <text x="674.0" y="628.0" font-family="Virgil, 'Segoe Print', 'Comic Sans MS', 'Marker Felt', cursive" font-size="15" font-weight="normal" fill="#1e1e1e" text-anchor="middle">(Next.js)</text>
+</svg>

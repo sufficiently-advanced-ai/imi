@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <existing_profile>{{existing_profile}}</existing_profile>
+  <trigger_files>{{trigger_files}}</trigger_files>
+  <recent_digests>{{recent_digests}}</recent_digests>
+  <grounded_facts>{{grounded_facts}}</grounded_facts>
+  <instructions>
+    You are updating a project profile for: {{entity_id}}
+    
+    Based on the existing profile (if any), new information from trigger files, and recent organizational context from digests, create an updated project profile.
+    
+    The profile should be written like a project manager's notebook - factual but insightful, tracking the narrative evolution of the project over time.
+    
+    REQUIRED STRUCTURE:
+    
+    1. Start with YAML frontmatter in standard format (enclosed in --- delimiters) containing:
+       - name: Full project name
+       - status: active/on-hold/completed/cancelled
+       - timeline: Expected or actual timeline (e.g., "2024-Q4", "Jan-Mar 2024")
+       - key_people: List of person IDs involved (e.g., ["person-sarah-chen", "person-john-doe"])
+       - teams: List of team IDs involved (e.g., ["team-engineering", "team-sales"])
+       - dependencies: List of other project IDs this depends on
+       - last_updated: Today's date
+       
+       Format the frontmatter like this:
+       ---
+       name: Project Name
+       status: active
+       ...
+       ---
+    
+    2. Then include these sections:
+       
+       # [Project Name]
+       
+       ## Current Status
+       A concise paragraph describing the current state of the project, including any recent changes or decisions.
+       
+       ## Recent Developments
+       Chronological bullet points of developments actually about THIS project.
+       The &lt;grounded_facts&gt; block (Recent Signals + typed relationships) is
+       the authoritative source. A meeting may touch many projects — do NOT
+       record a development here unless it is tied to this project (a signal/
+       decision about it, or an explicit statement). Prefer omission over guessing.
+
+       ## Key People & Roles
+       List people involved and their roles ONLY when grounded in a typed
+       relationship (e.g. works_on, leads) or an explicit statement — not merely
+       because they attended a meeting where this project came up.
+       Example: "- Sarah Chen: Technical lead, driving architecture decisions"
+       
+       ## Teams Involved
+       List the teams and their responsibilities within the project.
+       
+       ## Dependencies & Blockers
+       Any identified dependencies on other projects, systems, or external factors.
+       Current blockers or risks that could impact timeline or success.
+       
+       ## Timeline & Milestones
+       Key dates, phases, and milestones (both planned and completed).
+       Note any timeline changes and their reasons.
+       
+       ## Scope & Objectives
+       What the project aims to achieve and any changes to scope over time.
+    
+    IMPORTANT GUIDELINES:
+    - CORRECTIONS OVERRIDE EVERYTHING: if the &lt;grounded_facts&gt; block contains
+      a "Corrections (authoritative …)" section, treat each correction as the
+      final truth. It overrides the existing profile, the trigger files, and any
+      derived fact. Never re-introduce a fact a correction contradicts.
+    - ATTRIBUTION IS CRITICAL: this profile is for {{entity_id}} ONLY. Trigger
+      files are shared meetings covering many projects and people. Attribute a
+      development, decision, or person's role to this project ONLY when grounded
+      in &lt;grounded_facts&gt; or an explicit statement — never from mere
+      co-occurrence in the same meeting. Prefer omission over a guess.
+    - Focus on facts and developments, not speculation
+    - Preserve important historical context from the existing profile
+    - Integrate new information naturally without duplication
+    - Use clear, professional language
+    - Reference specific people and teams by their proper IDs in frontmatter
+    - Track how the project narrative evolves over time
+    - Note important decisions and their rationale
+    - Highlight cross-project dependencies and organizational impact
+  </instructions>
+</prompt>

@@ -1,0 +1,134 @@
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.trial
+ui/.env
+
+# Per-instance MCP client config — rendered from .mcp.json.example by
+# dev-hot.sh using $DEV_PORT. Tracking it would force every clone to share
+# one port (broke profservdemo when it inherited main's 8085).
+.mcp.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+#lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# Git repo directory used by the API (graph data lives in Neo4j now, not in repo)
+repo/
+app/repo
+
+# Data directory for persistent storage
+data/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Eval run reports (timestamped local artifacts; baseline.json IS committed)
+evals/results/
+
+
+# Claude configuration
+.claude/*.json
+.claude/commands/
+.claude/worktrees/
+
+.epic-mgr/
+
+# Deployment specs with credentials
+app-spec.yaml
+app-spec.yml
+scripts/trial/output/
+
+# Runtime config (may contain resolved secrets)
+config/app_config.json
+
+# Backup files
+*.backup-*
+*.bak
+
+# Temporary analysis and planning documents
+AGENT_BATCH_PROCESSING_PLAN.md
+AGENT_SESSION_CACHING_FIX_PLAN.md
+CENTRAL_AGENT_CONNECTION_ISSUE_ANALYSIS.md
+CONTAINER_COMPATIBILITY_ANALYSIS.md
+EPIC_*_COMPLETION_PLAN.md
+WEBHOOK_FREQUENCY_ANALYSIS.md
+test_container_compatibility.py
+# UV package manager
+uv.lock
+
+# Node modules (all locations)
+node_modules/
+imi-frontend/node_modules/
+puppeteer-tests/node_modules/
+
+# Python linter cache
+.ruff_cache/
+
+# Next.js build artifacts
+.next/
+out/
+
+# Local tool state (development tools)
+.serena/cache/
+.serena/memories/
+
+# Generated plan files
+/root/.claude/plans/
+.venv/
+test_output/
+
+# Development screenshots
+/*.png
+
+# Playwright MCP state
+.playwright-mcp/
+
+# Ad-hoc archives
+/Archive.zip
+
+# Local dev data
+*.db
+*.sqlite
+*.sqlite3
+
+# Local compose overrides (may contain instance-specific hosts/secrets)
+docker-compose.override.yml

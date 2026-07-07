@@ -1,0 +1,251 @@
+{
+  "id": "007_dense_mixed",
+  "version": 1,
+  "description": "Hardest case — every failure mode in one meeting: account name variants (NorthWind/North Wind, Acme/Acme Corp), reporting phrasing, banter commitment (marathon), unagreed opinion (rewrite in Rust), analyst-firm passing mention (Gartner), AI product mention (Claude), generic role words, plus real decisions/action items and summary labels. Labeled for all four tasks.",
+  "meeting": {
+    "title_context": "Portfolio review",
+    "date": "2026-06-02",
+    "participants": ["Noah Bergman", "Priya Raman", "Sofia Andersson", "Tom Eckhart"],
+    "transcript": "**Noah Bergman**: Portfolio review — NorthWind, Acme, then risks. Priya, NorthWind first.\n\n**Priya Raman**: North Wind is in great shape. Migration closed out, adoption is climbing, and their steering committee approved the Phase 2 proposal yesterday. We are officially go on Phase 2 — contract is signed.\n\n**Noah Bergman**: Excellent. Staffing for Phase 2?\n\n**Priya Raman**: Tom anchors it. He's my direct report, so the line is clean — Tom runs delivery day-to-day and raises anything structural to me.\n\n**Tom Eckhart**: Happy to. First milestone plan goes to NorthWind by next Friday — I'll own that.\n\n**Noah Bergman**: Good. Sofia, Acme?\n\n**Sofia Andersson**: Acme Corp renewal is in legal. I saw a Gartner note this week saying consolidation in their sector is accelerating, which actually strengthens our retention story. My read is the renewal lands by end of month.\n\n**Noah Bergman**: Any risk on the Acme services attach?\n\n**Sofia Andersson**: Some. Their new VP of Ops is skeptical of consultants. I'm setting up a working session with her — I'll get it scheduled before the renewal signature date.\n\n**Noah Bergman**: Good. Risks, open floor.\n\n**Tom Eckhart**: Honestly, I think we should rewrite the ingestion service in Rust at some point. The Python version keeps tipping over at peak.\n\n**Priya Raman**: That's a conversation for the platform roadmap, not this meeting. Park it.\n\n**Tom Eckhart**: Parked. Also — I used Claude to draft the Phase 2 milestone skeleton, saved me half a day. Will share the doc.\n\n**Sofia Andersson**: Nice. Unrelated — I signed up for the Berlin marathon, so I'm dragging you all into my training schedule. Who's in?\n\n**Noah Bergman**: Absolutely not. But good luck. To close: NorthWind Phase 2 is go with Tom anchoring under Priya, milestone plan to the client by next Friday, Acme renewal expected end of month with Sofia working the VP of Ops session. The account manager assignments stay as they are.\n\n**Priya Raman**: One correction for the record — the milestone plan goes to Northwind's steering committee, not their ops team. Friday still holds.\n\n**Noah Bergman**: Noted. Thanks all."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-noah-bergman",
+        "canonical_name": "Noah Bergman",
+        "type": "person",
+        "aliases": ["Noah"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-priya-raman",
+        "canonical_name": "Priya Raman",
+        "type": "person",
+        "aliases": ["Priya"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-sofia-andersson",
+        "canonical_name": "Sofia Andersson",
+        "type": "person",
+        "aliases": ["Sofia"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-tom-eckhart",
+        "canonical_name": "Tom Eckhart",
+        "type": "person",
+        "aliases": ["Tom"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-northwind",
+        "canonical_name": "NorthWind",
+        "type": "account",
+        "aliases": ["North Wind", "Northwind"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-acme",
+        "canonical_name": "Acme",
+        "type": "account",
+        "aliases": ["Acme Corp", "Acme Corporation"],
+        "required": true
+      },
+      {
+        "canonical_id": "project-northwind-phase-2",
+        "canonical_name": "NorthWind Phase 2",
+        "type": "project",
+        "aliases": ["Phase 2"],
+        "required": false
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Gartner",
+        "type": "account",
+        "reason": "analyst firm cited in passing — not a client account"
+      },
+      {
+        "name": "Claude",
+        "type": "person",
+        "reason": "AI product must never be extracted as a person"
+      },
+      {
+        "name": "Rust",
+        "type": "project",
+        "reason": "hypothetical rewrite idea, explicitly parked"
+      },
+      {
+        "name": "account manager",
+        "type": "person",
+        "reason": "generic role words ('the account manager assignments') — not an entity"
+      },
+      {
+        "name": "Berlin marathon",
+        "type": "project",
+        "reason": "personal activity, not an engagement"
+      }
+    ],
+    "relationships": [
+      {
+        "subject": "person-tom-eckhart",
+        "predicate": "reports_to",
+        "object": "person-priya-raman",
+        "evidence": "He's my direct report, so the line is clean",
+        "required": true
+      },
+      {
+        "subject": "person-tom-eckhart",
+        "predicate": "works_on",
+        "object": "project-northwind-phase-2",
+        "evidence": "Tom anchors it ... runs delivery day-to-day",
+        "required": false
+      },
+      {
+        "subject": "project-northwind-phase-2",
+        "predicate": "belongs_to_account",
+        "object": "account-northwind",
+        "evidence": "NorthWind Phase 2",
+        "required": false
+      },
+      {
+        "subject": "project-northwind-phase-2",
+        "predicate": "managed_by",
+        "object": "person-tom-eckhart",
+        "evidence": "Tom anchors it ... runs delivery day-to-day",
+        "required": false
+      },
+      {
+        "subject": "account-acme",
+        "predicate": "managed_by",
+        "object": "person-sofia-andersson",
+        "evidence": "Sofia owns the renewal and the VP of Ops session",
+        "required": false
+      },
+      {
+        "subject": "account-northwind",
+        "predicate": "managed_by",
+        "object": "person-priya-raman",
+        "evidence": "Priya reports on and staffs the NorthWind engagement",
+        "required": false
+      }
+    ],
+    "forbidden_relationships": [
+      {
+        "subject": "person-tom-eckhart",
+        "predicate": "collaborates_with",
+        "object": "person-priya-raman",
+        "reason": "reporting relationship downgraded to collaboration — the production coercion bug"
+      },
+      {
+        "subject": "person-priya-raman",
+        "predicate": "reports_to",
+        "object": "person-tom-eckhart",
+        "reason": "reversed reporting direction"
+      }
+    ],
+    "signals": [
+      {
+        "gold_id": "sig-phase2-go",
+        "type": "decision",
+        "keywords_all": ["Phase 2"],
+        "keywords_any": ["go", "approved", "signed"],
+        "required": true
+      },
+      {
+        "gold_id": "sig-milestone-plan",
+        "type": "action_item",
+        "keywords_all": ["milestone"],
+        "keywords_any": ["Friday", "plan"],
+        "owner": "Tom Eckhart",
+        "required": true
+      },
+      {
+        "gold_id": "sig-vp-ops-session",
+        "type": "action_item",
+        "keywords_all": ["VP of Ops"],
+        "keywords_any": ["session", "schedule", "working"],
+        "owner": "Sofia Andersson",
+        "required": true
+      },
+      {
+        "gold_id": "sig-renewal-outlook",
+        "type": "key_point",
+        "keywords_all": ["renewal"],
+        "keywords_any": ["legal", "end of month"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-vp-skeptical",
+        "type": "key_point",
+        "keywords_all": ["VP of Ops"],
+        "keywords_any": ["skeptical", "risk"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-tom-staffing",
+        "type": "decision",
+        "keywords_all": ["Tom"],
+        "keywords_any": ["anchor", "staffing", "delivery"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-share-skeleton",
+        "type": "action_item",
+        "keywords_all": ["doc"],
+        "keywords_any": ["share", "skeleton", "milestone"],
+        "owner": "Tom Eckhart",
+        "required": false
+      },
+      {
+        "gold_id": "sig-retention-story",
+        "type": "insight",
+        "keywords_all": ["consolidation"],
+        "keywords_any": ["retention", "strengthens"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-correction-steering",
+        "type": "key_point",
+        "keywords_all": ["steering committee"],
+        "keywords_any": ["correction", "not their ops", "milestone"],
+        "required": false
+      }
+    ],
+    "forbidden_signals": [
+      {
+        "type": "decision",
+        "keywords_all": ["marathon"],
+        "reason": "personal banter must not become a decision"
+      },
+      {
+        "type": "action_item",
+        "keywords_all": ["marathon"],
+        "reason": "personal banter must not become an action item"
+      },
+      {
+        "type": "decision",
+        "keywords_all": ["Rust"],
+        "reason": "unagreed opinion explicitly parked"
+      },
+      {
+        "type": "action_item",
+        "keywords_all": ["Rust"],
+        "reason": "parked idea must not become an action item"
+      }
+    ],
+    "summary": {
+      "must_mention_keywords": [["Phase 2"], ["NorthWind", "North Wind"], ["Acme"], ["renewal"]],
+      "must_not_mention_keywords": ["marathon", "Rust"],
+      "title_max_words": 10,
+      "title_must_contain_any": ["portfolio", "NorthWind", "Acme", "review"]
+    }
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

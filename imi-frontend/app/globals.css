@@ -1,0 +1,434 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  :root {
+    /* Light mode - clean grayscale with purple accents */
+    --background: 0 0% 98%;
+    --foreground: 260 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 260 10% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 260 10% 10%;
+    --primary: 262 60% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 260 10% 94%;
+    --secondary-foreground: 260 10% 10%;
+    --muted: 260 10% 94%;
+    --muted-foreground: 260 10% 45%;
+    --accent: 262 50% 92%;
+    --accent-foreground: 262 60% 35%;
+    --destructive: 350 89% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 260 10% 88%;
+    --input: 260 10% 88%;
+    --ring: 262 60% 52%;
+
+    --radius: 0.625rem;
+
+    /* Sidebar tokens - light mode */
+    --sidebar-bg: 260 15% 97%;
+    --sidebar-border: 260 10% 90%;
+    --sidebar-item-hover: 262 30% 94%;
+    --sidebar-item-active: 262 60% 90%;
+    --sidebar-item-active-text: 262 83% 45%;
+    --sidebar-group-text: 260 10% 50%;
+
+    /* Component Tokens */
+    --filter-control-gap: 1rem;
+    --card-padding: 1rem;
+    --header-max-width: 80rem;
+  }
+
+  .dark {
+    /* Dark mode - refined, desaturated purple tones */
+    --background: 260 10% 7%;
+    --foreground: 0 0% 93%;
+    --card: 260 10% 10%;
+    --card-foreground: 0 0% 93%;
+    --popover: 260 10% 10%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 262 50% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 260 8% 15%;
+    --secondary-foreground: 0 0% 93%;
+    --muted: 260 8% 13%;
+    --muted-foreground: 260 5% 55%;
+    --accent: 262 30% 22%;
+    --accent-foreground: 262 50% 82%;
+    --destructive: 350 70% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 260 8% 16%;
+    --input: 260 8% 19%;
+    --ring: 262 50% 60%;
+
+    /* Sidebar tokens - dark mode */
+    --sidebar-bg: 260 12% 6%;
+    --sidebar-border: 260 10% 13%;
+    --sidebar-item-hover: 262 20% 13%;
+    --sidebar-item-active: 262 35% 18%;
+    --sidebar-item-active-text: 262 50% 72%;
+    --sidebar-group-text: 260 8% 50%;
+  }
+}
+
+/* Define these classes directly since Tailwind is being stubborn */
+.border-border {
+  border-color: hsl(var(--border));
+}
+
+.bg-background {
+  background-color: hsl(var(--background));
+}
+
+.text-foreground {
+  color: hsl(var(--foreground));
+}
+
+/* Sidebar color utilities */
+.bg-sidebar {
+  background-color: hsl(var(--sidebar-bg));
+}
+
+.border-sidebar {
+  border-color: hsl(var(--sidebar-border));
+}
+
+.bg-sidebar-item-hover {
+  background-color: hsl(var(--sidebar-item-hover));
+}
+
+.bg-sidebar-item-active {
+  background-color: hsl(var(--sidebar-item-active));
+}
+
+.text-sidebar-item-active {
+  color: hsl(var(--sidebar-item-active-text));
+}
+
+.text-sidebar-group {
+  color: hsl(var(--sidebar-group-text));
+}
+
+/* Now use them */
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+}
+
+/* Markdown Viewer Styles */
+@layer components {
+  .prose {
+    @apply text-sm leading-7;
+    color: hsl(var(--foreground));
+  }
+
+  .prose h1 {
+    @apply text-2xl font-bold mb-4 mt-6;
+    color: hsl(var(--foreground));
+  }
+
+  .prose h2 {
+    @apply text-xl font-semibold mb-3 mt-5;
+    color: hsl(var(--foreground));
+  }
+
+  .prose h3 {
+    @apply text-lg font-medium mb-2 mt-4;
+    color: hsl(var(--foreground));
+  }
+
+  .prose h4 {
+    @apply text-base font-medium mb-2 mt-4;
+    color: hsl(var(--foreground));
+  }
+
+  .prose p {
+    @apply mb-4;
+  }
+
+  .prose ul {
+    @apply list-disc pl-5 mb-4;
+  }
+
+  .prose ol {
+    @apply list-decimal pl-5 mb-4;
+  }
+
+  .prose li {
+    @apply mb-1;
+  }
+
+  .prose a {
+    color: hsl(var(--primary));
+    @apply hover:underline;
+  }
+
+  .prose blockquote {
+    @apply pl-4 italic my-4;
+    border-left: 4px solid hsl(var(--border));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .prose pre {
+    @apply p-4 rounded-md overflow-x-auto my-4;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .dark .prose pre {
+    background-color: hsl(260 15% 12%);
+  }
+
+  .prose code {
+    @apply font-mono text-sm px-1 py-0.5 rounded;
+    background-color: hsl(var(--muted));
+  }
+
+  .prose pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+
+  .prose img {
+    @apply max-w-full h-auto rounded-md my-4;
+  }
+
+  .prose hr {
+    @apply my-6;
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  .prose table {
+    @apply w-full border-collapse my-4;
+  }
+
+  .prose th {
+    @apply px-4 py-2 text-left font-medium;
+    border: 1px solid hsl(var(--border));
+    background-color: hsl(var(--muted));
+  }
+
+  .prose td {
+    @apply px-4 py-2;
+    border: 1px solid hsl(var(--border));
+  }
+
+  /* Meeting Item Styles (used inside Card components) */
+  .meeting-item {
+    @apply py-4;
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    align-items: start;
+    gap: 16px;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .meeting-item:last-child {
+    border-bottom: none;
+  }
+
+  .meeting-item:hover {
+    background-color: hsl(var(--accent) / 0.3);
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  /* Time column */
+  .meeting-time-column {
+    @apply flex flex-col gap-1;
+  }
+
+  .meeting-time {
+    @apply font-semibold text-sm;
+    color: hsl(var(--foreground));
+  }
+
+  .meeting-relative-time {
+    @apply flex items-center gap-1 text-xs font-medium;
+    color: hsl(var(--primary));
+  }
+
+  /* Details column */
+  .meeting-details {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .meeting-title-row {
+    @apply flex items-center;
+  }
+
+  .meeting-title {
+    @apply font-medium text-base;
+    color: hsl(var(--foreground));
+  }
+
+  .meeting-meta {
+    @apply flex items-center flex-wrap gap-x-3 gap-y-1 text-sm;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .meeting-meta-separator {
+    @apply text-muted-foreground/40;
+  }
+
+  .meeting-meta-attendees {
+    @apply inline-flex items-center;
+  }
+
+  .bot-controls {
+    @apply flex items-center gap-3;
+  }
+
+  /* Past meeting styles */
+  .past-meeting {
+    @apply opacity-60;
+  }
+
+  .past-meeting .meeting-time {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .past-meeting .meeting-title {
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Mobile responsiveness for meetings */
+  @media (max-width: 768px) {
+    .meeting-item {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .meeting-item:hover {
+      margin-left: 0;
+      margin-right: 0;
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .meeting-time-column {
+      @apply flex-row items-center gap-3;
+    }
+
+    .bot-controls {
+      @apply justify-start flex-wrap;
+    }
+
+    .meeting-meta {
+      gap: 8px;
+    }
+  }
+}
+
+/* Smooth theme transitions */
+* {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* Prevent transition on page load */
+.no-transitions * {
+  transition: none !important;
+}
+
+/* ==================== Custom Scrollbar Styling ==================== */
+
+/* Webkit browsers (Chrome, Safari, Edge) - Default */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(260 10% 25%);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(262 50% 55%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Light mode scrollbar */
+:root:not(.dark) ::-webkit-scrollbar-thumb {
+  background: hsl(260 10% 75%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:root:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: hsl(262 50% 55%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Firefox */
+@supports (scrollbar-color: auto) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(260 10% 25%) transparent;
+  }
+
+  :root:not(.dark) * {
+    scrollbar-color: hsl(260 10% 75%) transparent;
+  }
+}
+
+/* Chat-specific scrollbar - thinner and more subtle */
+.chat-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 8px 0;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(260 15% 20%);
+  border-radius: 3px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(262 60% 50%);
+}
+
+:root:not(.dark) .chat-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(260 10% 80%);
+}
+
+:root:not(.dark) .chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(262 60% 60%);
+}
+
+/* Hide scrollbar until hover (optional - for cleaner look) */
+.scrollbar-hidden::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.scrollbar-hidden:hover::-webkit-scrollbar-thumb {
+  background: hsl(260 15% 20%);
+}
+
+:root:not(.dark) .scrollbar-hidden:hover::-webkit-scrollbar-thumb {
+  background: hsl(260 10% 80%);
+}

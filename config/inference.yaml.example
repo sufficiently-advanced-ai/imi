@@ -1,0 +1,97 @@
+# Inference endpoint routing (optional).
+#
+# Copy to config/inference.yaml to route single-shot LLM calls to endpoints
+# other than the Anthropic default — e.g. a self-hosted OpenAI-compatible model
+# on a tailnet, or AWS Bedrock inside a client DMZ.
+#
+# If this file is ABSENT, every call goes to the Anthropic API using
+# ANTHROPIC_API_KEY (and optional ANTHROPIC_BASE_URL) — identical to the
+# behaviour before this feature existed.
+#
+# Routing is FAIL-CLOSED: a routed endpoint that errors surfaces the error; it
+# is never silently retried against Anthropic. An endpoint name referenced by an
+# alias/operation but not defined under `endpoints` is a config error at load.
+#
+# Selection precedence per call:  operations[operation] > aliases[model] > default
+# where `model` is the tier string the call site passed
+# (settings.CLAUDE_HAIKU_MODEL / CLAUDE_SONNET_MODEL / CLAUDE_AGENT_MODEL) and
+# `operation` is the call's operation label (e.g. "metadata_extraction", "chat").
+
+endpoints:
+  # The Anthropic default. `type: anthropic` uses the native Anthropic SDK
+  # (full feature support incl. tool use). base_url is optional.
+  anthropic-default:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    base_url: null
+
+  # Self-hosted, OpenAI-compatible (vLLM / Ollama / TGI / LM Studio) on a tailnet.
+  # Goes through LiteLLM. `litellm_model` carries the provider prefix:
+  #   hosted_vllm/<model>   for vLLM
+  #   ollama/<model>        for Ollama
+  #   openai/<model>        for a generic OpenAI-compatible server
+  # Plain generation only — tool use is rejected here (fail-closed).
+  tailnet-vllm:
+    type: openai
+    litellm_model: hosted_vllm/qwen2.5-7b-instruct
+    base_url: http://llm.tailnet.example:8000/v1
+    api_key_env: TAILNET_LLM_KEY        # may be a dummy value for unauthenticated servers
+    allow_tools: false
+    pricing:                            # optional; self-hosted has no metered cost
+      input: 0.0                        # USD per 1M input tokens
+      output: 0.0                       # USD per 1M output tokens
+
+  # DigitalOcean serverless inference (OpenAI-compatible, many models behind one
+  # base URL). `type: digitalocean` is a convenience over `type: openai`: it
+  # defaults base_url to https://inference.do-ai.run/v1 and wraps the bare model
+  # id in LiteLLM's generic `openai/` route, so you only write a model id + key.
+  # Plain generation only — tool use is rejected (fail-closed). The key env var
+  # is REQUIRED; a missing/empty value is a config error at resolve time.
+  # IMPORTANT: set `pricing` to DO's per-MTok rates. Without it, metered cost is
+  # unknown (LiteLLM cannot price a custom endpoint) and silently records as $0.
+  # Define one endpoint per DO model so operations can be pinned individually
+  # (e.g. add a `do-deepseek` with model: deepseek-4-flash for a different op).
+  do-gemma:
+    type: digitalocean
+    model: gemma-4-31B-it                 # bare DO model id (see GET /v1/models)
+    api_key_env: DIGITALOCEAN_MODEL_ACCESS_KEY
+    # base_url: https://inference.do-ai.run/v1   # optional; this is the default
+    # REQUIRED — replace with the model's CURRENT DO rates before deploying.
+    # These are illustrative, not authoritative; DO does not bill $0, and leaving
+    # a real rate stale (or 0.0) silently corrupts cost telemetry and routing.
+    pricing:                              # USD per 1M tokens
+      input: 0.18
+      output: 0.50
+
+  # AWS Bedrock inside a client DMZ. Auth is via the container's AWS creds
+  # (IAM role / env), NOT an api_key. Requires `boto3` to be installed.
+  client-dmz-bedrock:
+    type: bedrock
+    litellm_model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+    aws_region: us-east-1
+    allow_tools: false
+
+# Map model-tier strings to endpoint names. Keys are the literal values of
+# CLAUDE_HAIKU_MODEL / CLAUDE_SONNET_MODEL / CLAUDE_AGENT_MODEL in this
+# deployment. Anything not listed falls through to `default`.
+aliases:
+  "claude-haiku-4-5-20251001": tailnet-vllm       # run the cheap/background tier locally
+  "claude-sonnet-4-5-20250929": anthropic-default
+
+# Optional per-operation overrides. These WIN over aliases, so you can pin a
+# specific workload to an endpoint regardless of which tier it requests.
+#
+# RECOMMENDED PATTERN for DigitalOcean: pin only cheap, tool-free, error-tolerant
+# operations (extraction/classification/digests). Operations that pass tools=
+# (e.g. chat_agent, central_agent) must NOT be pinned to a DO endpoint — they
+# fail closed. Known tool-free operation labels include: metadata_extraction,
+# entity_extraction, salient_entity_extraction, signal_extraction,
+# ingest_classify, weak_signal_detection, decision_extraction,
+# commitment_extraction, insight_generation, statement_comparison.
+operations:
+  metadata_extraction: do-gemma
+  entity_extraction: do-gemma
+  ingest_classify: do-gemma
+
+# Endpoint used when neither an operation override nor an alias matches.
+default: anthropic-default

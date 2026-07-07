@@ -1,0 +1,129 @@
+name: Tests
+
+# Backend pytest + frontend jest. Complements smoke-test.yml (which verifies
+# the Docker build, import sweep, and ingestion pipeline).
+#
+# - Backend runs against a Neo4j service container; tests marked
+#   `requires_neo4j` are skipped automatically when it's absent (see
+#   tests/conftest.py), so contributors can also run `pytest` bare.
+# - The suite runs in file segments (fresh interpreter per segment): a single
+#   process over the full suite accumulates enough state to OOM small hosts,
+#   and per-test `timeout = 120` (pytest-timeout) guards against hangs from
+#   cross-test contamination.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Ruff (backend)
+        uses: astral-sh/ruff-action@v3
+        with:
+          # `src` scopes the check; leaving it default appends the repo root
+          # to the args and lints everything.
+          src: "./app"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: imi-frontend/package-lock.json
+
+      - name: ESLint (frontend)
+        working-directory: imi-frontend
+        run: |
+          npm ci --legacy-peer-deps
+          npx eslint .
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/ci-test-password
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-test-password 'RETURN 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+    env:
+      ANTHROPIC_API_KEY: ci-test-key
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ci-test-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        # Retries + generous timeout: the pinned PyTorch extra index
+        # (download.pytorch.org) has caused transient SSL failures in CI.
+        run: pip install --retries 10 --timeout 60 -r requirements.txt
+
+      - name: Run pytest (segmented)
+        run: |
+          set -euo pipefail
+          # Passing explicit paths bypasses conftest collect_ignore, so filter
+          # the ignored legacy files out of the segment lists ourselves.
+          python - <<'PY'
+          import re
+          src = open("tests/conftest.py").read()
+          block = re.search(r"collect_ignore = \[(.*?)\]", src, re.S).group(1)
+          names = re.findall(r'"([^"]+\.py)"', block)
+          open("/tmp/ignore.txt", "w").write("\n".join("tests/" + n for n in names))
+          PY
+          shopt -s globstar
+          ls tests/*.py tests/**/*.py 2>/dev/null \
+            | grep -vE "conftest|tests/manual" \
+            | grep -vxF -f /tmp/ignore.txt | sort -u > /tmp/all_tests.txt
+          split -n l/4 /tmp/all_tests.txt /tmp/seg_
+          rc=0
+          for seg in /tmp/seg_*; do
+            echo "::group::pytest segment $seg ($(wc -l < "$seg") files)"
+            python -m pytest $(tr '\n' ' ' < "$seg") -q -p no:cacheprovider || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: imi-frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: imi-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run jest
+        run: npx jest --ci

@@ -1,0 +1,104 @@
+# OpenTelemetry Collector configuration for development
+# Provides local telemetry processing with debugging capabilities
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Health check receiver
+  prometheus/internal:
+    config:
+      scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['0.0.0.0:8888']
+
+processors:
+  # Batch processor for efficiency
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    limit_mib: 256
+
+  # Resource processor to add development labels
+  resource:
+    attributes:
+      - key: environment
+        value: development
+        action: upsert
+      - key: collector.version
+        from_attribute: service.version
+        action: insert
+
+  # Attribute processor for PII protection in development
+  attributes:
+    actions:
+      # Remove potentially sensitive headers
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      # Sanitize URLs
+      - key: http.url
+        from_attribute: http.url
+        action: update
+
+exporters:
+  # Console exporter for development debugging
+  logging:
+    loglevel: debug
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # Jaeger exporter for trace visualization
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  # Prometheus exporter for metrics
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    send_timestamps: true
+    metric_expiration: 180m
+
+  # File exporter for local debugging (optional)
+  file:
+    path: /var/log/otel/telemetry.json
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:8889
+
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging, jaeger]
+
+    metrics:
+      receivers: [otlp, prometheus/internal]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging, prometheus]
+
+  telemetry:
+    logs:
+      level: debug
+      development: true
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

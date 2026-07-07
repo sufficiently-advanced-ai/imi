@@ -1,0 +1,112 @@
+# Hot-reload development compose
+#
+# Usage:
+#   ./dev-hot.sh              # First time (builds image, then starts with hot-reload)
+#   ./dev-hot.sh --no-build   # Skip build, just start (use after initial build)
+#
+# Backend Python changes reload automatically (~1s via uvicorn --reload).
+# Frontend React/TS changes hot-reload via Turbopack (~instant).
+#
+# When you still need a full rebuild:
+#   - requirements.txt changes (new Python packages)
+#   - package.json changes (new npm packages)
+#   - Dockerfile.dev changes
+#   - nginx config changes
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: "${INSTANCE_NAME:-imi}-neo4j"
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required — set it in .env}
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+    volumes:
+      - neo4j-data:/data
+    ports:
+      - "127.0.0.1:${NEO4J_BROWSER_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 10s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  app:
+    container_name: "${INSTANCE_NAME:-imi}-dev"
+    image: "${INSTANCE_NAME:-imi}"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        - NEXT_PUBLIC_BASE_PATH=
+        - NEXT_PUBLIC_API_URL=/api
+        - NEXT_PUBLIC_AUTH_MODE=none
+    ports:
+      - "127.0.0.1:${DEV_PORT:-8080}:8080"
+    environment:
+      # Required
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required — set it in .env}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?NEO4J_PASSWORD is required — set it in .env}
+
+      # Git configuration (optional)
+      - GIT_REPO_URL=${GIT_REPO_URL:-}
+      - GITHUB_ACCESS_TOKEN=${GITHUB_ACCESS_TOKEN:-}
+      - REPO_NAME=${REPO_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-imi-bot@example.com}
+      - GIT_USER_NAME=${GIT_USER_NAME:-imi Bot}
+
+      # Instance identification
+      - INSTANCE_NAME=${INSTANCE_NAME:-imi}
+
+      # Domain configuration
+      - DOMAIN_CONFIG_DIR=/app/config/domains
+      - ACTIVE_DOMAIN=${ACTIVE_DOMAIN:-consulting_firm}
+
+      # Neo4j configuration
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_REBUILD_ON_STARTUP=${NEO4J_REBUILD_ON_STARTUP:-true}
+
+      # Vector store backend (faiss | sqlite | pgvector)
+      - VECTOR_BACKEND=${VECTOR_BACKEND:-sqlite}
+
+      # Auth mode (none for community dev)
+      - AUTH_MODE=${AUTH_MODE:-none}
+      - NEXT_PUBLIC_AUTH_MODE=${AUTH_MODE:-none}
+
+      # MCP
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+
+      # Optional observability — set OTEL_EXPORTER_OTLP_ENDPOINT in .env to the
+      # OTLP/HTTP URL of an existing collector (e.g. http://host:4318). Left
+      # unset, the exporter is disabled and the app runs without telemetry.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Telemetry identity — populates client_name / service.instance.id labels
+      # for dashboards to filter and template on.
+      - CLIENT_NAME=${CLIENT_NAME:-imi-dev}
+      - OTEL_SERVICE_INSTANCE_ID=${OTEL_SERVICE_INSTANCE_ID:-${INSTANCE_NAME:-imi}}
+
+    volumes:
+      - ./repo:/app/repo
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      # === HOT-RELOAD MOUNTS ===
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./imi-frontend/app:/app/imi-frontend/app
+      - ./imi-frontend/components:/app/imi-frontend/components
+      - ./imi-frontend/lib:/app/imi-frontend/lib
+      - ./imi-frontend/contexts:/app/imi-frontend/contexts
+      - ./imi-frontend/public:/app/imi-frontend/public
+      - ./deployment/supervisord.dev-hot.conf:/etc/supervisor/conf.d/supervisord.conf:ro
+    restart: unless-stopped
+
+volumes:
+  neo4j-data:
+    name: ${INSTANCE_NAME:-imi}-neo4j-data

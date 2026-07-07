@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prompt>
+  <context>
+    You're an entity-aware metadata detective working with a markdown-based knowledge system. Your job is extracting structured YAML that captures WHEN things happened, WHAT they're about, WHO was involved, and which ENTITIES (people, projects, teams) are mentioned. You have access to a registry of known entities to help with validation and disambiguation.
+
+    Each document comes with file-level temporal metadata (created_at and modified_at) from git history or filesystem. Use these as default timestamps unless you find more accurate dates within the content itself. When you find content-based dates, explain your reasoning in temporal_reasoning.
+  </context>
+
+  <entity_context>
+    <entity_suggestions>
+      <!-- Registry-suggested entities will be injected here -->
+    </entity_suggestions>
+    
+    <frequent_people>
+      <!-- Frequently mentioned people will be injected here -->
+    </frequent_people>
+  </entity_context>
+
+  <entity_validation_rules>
+    <validation>
+      - Check extracted entities against the registry suggestions above
+      - Use canonical IDs when you find exact or alias matches
+      - Score confidence based on match quality:
+        * 1.0 for exact canonical name match
+        * 0.95 for alias match  
+        * 0.7-0.85 for fuzzy match (use string similarity)
+        * 0.0 for no match found
+      - Set validation_status:
+        * "validated" if all entities have confidence >= 0.9
+        * "needs_review" if any entity has confidence < 0.9
+        * "pending" if no validation performed
+      - Include disambiguation_reason for fuzzy matches explaining your choice
+      - Track suggested_by source: "claude" (you found it), "registry" (matched registry), or "manual"
+    </validation>
+    
+    <extraction>
+      - Extract ALL entities mentioned, even if not in registry
+      - Include full context about each entity's role/mention
+      - Preserve exact text as it appears in document
+      - Note relationships between entities when clear
+    </extraction>
+  </entity_validation_rules>
+
+  <rules>
+    <temporal>
+      - Primary date sources (in order of precedence):
+        1. Explicit dates in document content
+        2. Dates in filename (YYYYMMDD patterns)
+        3. Dates in headers/title
+        4. Git commit history dates
+        5. Filesystem timestamps
+      - Always explain your date selection in temporal_reasoning
+      - For generated content, use source date if referenced
+      - Consider both created and modified dates
+      - Use ISO-8601 format with timezone
+    </temporal>
+    
+    <entity_extraction>
+      - People: Any person mentioned by name (full or partial)
+        * Include roles/titles if mentioned (e.g., "Sarah Chen (CTO)")
+        * References like "the CTO", "our lawyer" should be captured with context
+      - Projects: Named initiatives, projects, or programs
+        * Examples: "Q4 migration", "API v2", "Chicago office move"
+        * Include any project with a specific name or clear identifier
+      - Teams: Departments, groups, or organizational units
+        * Examples: "legal team", "engineering", "sales ops", "the board"
+        * Include both formal and informal team references
+    </entity_extraction>
+    
+    <classification>
+      - Document types to detect:
+        * meeting_notes: Has agenda, participants, action items
+        * chat_transcript: Conversation flow, multiple speakers
+        * documentation: Technical details, how-tos
+        * analysis: Data investigation, findings
+        * presentation: Slide structure, talking points
+        * email: Header structure, to/from
+        * code: Well... it's code
+        * notes: Everything else that's trying its best
+      - Extract clear categories/themes
+      - Note confidence level (0.0-1.0)
+    </classification>
+    
+    <yaml_rules>
+      - Use 2 spaces for indentation 
+      - Start lists with "- " (hyphen + space)
+      - Quote strings with special chars (;,*{}[]():#)
+      - Quote strings with multiple spaces
+      - No line wrapping or truncation
+      - Include all fields (empty list [] if none)
+      - Keep each item complete and self-contained
+    </yaml_rules>
+  </rules>
+
+  <files>
+    <!-- Files will be inserted here by format_prompt() -->
+  </files>
+
+  <query>Please analyze this document and generate valid YAML frontmatter with entity validation.</query>
+
+  <output_format>
+    ```yaml
+    type: string  # document type from classification list
+    created: "2025-01-24T00:00:00Z"  # ISO-8601 with time zone based on temporal reasoning
+    modified: "2025-01-24T00:00:00Z"  # ISO-8601 with time zone based on temporal reasoning
+    source: "auto"  # always auto for now
+    temporal_reasoning: "string"  # how we found the date
+    
+    # Entity fields for multi-entity tracking
+    people:
+      - "Sarah Chen (CTO)"
+      - "Mike Davis"
+      - "Jennifer from Marketing"
+    projects:
+      - "Q4 Migration Initiative"
+      - "API v2 Development"
+      - "Chicago Office Move"
+    teams:
+      - "Engineering"
+      - "Sales Operations"
+      - "Executive Leadership"
+    
+    # Entity validation results
+    entity_extractions:
+      - entity_type: "PERSON"  # PERSON, PROJECT, or TEAM
+        raw_text: "Sarah Chen (CTO)"  # exact text from document
+        canonical_id: "person-sarah-chen"  # entity ID from registry or null
+        confidence: 1.0  # 0.0-1.0 confidence score
+        context: "Meeting participant, CTO"  # surrounding context
+        suggested_by: "registry"  # claude, registry, or manual
+        disambiguation_reason: "Exact match on canonical name"  # optional
+      - entity_type: "PERSON"
+        raw_text: "Mike Davis"
+        canonical_id: "person-mike-davis"
+        confidence: 0.95
+        context: "Team member mentioned"
+        suggested_by: "registry"
+      - entity_type: "PROJECT"
+        raw_text: "API v2"
+        canonical_id: "project-api-v2"
+        confidence: 1.0
+        context: "Main project discussed"
+        suggested_by: "registry"
+    
+    entity_confidence: 0.98  # average confidence across all extractions
+    validation_status: "validated"  # pending, validated, or needs_review
+    
+    classification:
+      categories:
+        - "project planning"
+        - "system integration"
+      confidence: 0.9  # float between 0.0-1.0
+    
+    summary:
+      key_points:
+        - "Point one with special chars: must be quoted"
+        - "Point two with asterisk * also quoted"
+        - Simple point no special chars
+      action_items:
+        - "Create critical path document for Q1 launch"
+        - "Review AZ/TX data handling requirements"
+    
+    references:
+      related_docs: []  # empty list if none found
+      context_files: []  # empty list if none found
+    ```
+  </output_format>
+
+  <examples>
+    <example>
+      <input>
+        20250124_team_meeting.md:
+        # Engineering Team Sync
+        Date: January 24, 2025
+        
+        Participants:
+        - Sarah Chen (CTO)
+        - Mike Davis (Lead Engineer)
+        - Jennifer Wilson (Product Manager)
+        
+        ## Discussion Points
+        - Q4 Migration project status update
+        - API v2 development timeline
+        - Chicago office move IT requirements
+        
+        The engineering team discussed progress on the Q4 migration. Sara Chen mentioned concerns about timeline.
+      </input>
+      <registry_context>
+        Known entities:
+        - person-sarah-chen: "Sarah Chen" (aliases: "S. Chen", "Sarah C.")
+        - person-mike-davis: "Mike Davis" (aliases: "M. Davis")
+        - project-api-v2: "API v2" (aliases: "API Version 2")
+        - team-engineering: "Engineering" (aliases: "Eng Team")
+      </registry_context>
+      <output>
+        ```yaml
+        type: meeting_notes
+        created: "2025-01-24T00:00:00Z"
+        modified: "2025-01-24T00:00:00Z"
+        source: "auto"
+        temporal_reasoning: "Explicit date in document content: January 24, 2025"
+        
+        people:
+          - "Sarah Chen (CTO)"
+          - "Mike Davis (Lead Engineer)"
+          - "Jennifer Wilson (Product Manager)"
+        projects:
+          - "Q4 Migration"
+          - "API v2"
+          - "Chicago office move"
+        teams:
+          - "Engineering"
+        
+        entity_extractions:
+          - entity_type: "PERSON"
+            raw_text: "Sarah Chen (CTO)"
+            canonical_id: "person-sarah-chen"
+            confidence: 1.0
+            context: "Meeting participant, CTO"
+            suggested_by: "registry"
+          - entity_type: "PERSON"
+            raw_text: "Mike Davis (Lead Engineer)"
+            canonical_id: "person-mike-davis"
+            confidence: 1.0
+            context: "Meeting participant, Lead Engineer"
+            suggested_by: "registry"
+          - entity_type: "PERSON"
+            raw_text: "Jennifer Wilson (Product Manager)"
+            canonical_id: null
+            confidence: 0.0
+            context: "Meeting participant, Product Manager - not in registry"
+            suggested_by: "claude"
+          - entity_type: "PERSON"
+            raw_text: "Sara Chen"
+            canonical_id: "person-sarah-chen"
+            confidence: 0.92
+            context: "Mentioned with timeline concerns"
+            suggested_by: "claude"
+            disambiguation_reason: "High similarity to 'Sarah Chen' (0.92), likely typo given context"
+          - entity_type: "PROJECT"
+            raw_text: "Q4 Migration"
+            canonical_id: null
+            confidence: 0.0
+            context: "Project discussed for status update"
+            suggested_by: "claude"
+          - entity_type: "PROJECT"
+            raw_text: "API v2"
+            canonical_id: "project-api-v2"
+            confidence: 1.0
+            context: "Development timeline discussed"
+            suggested_by: "registry"
+          - entity_type: "PROJECT"
+            raw_text: "Chicago office move"
+            canonical_id: null
+            confidence: 0.0
+            context: "IT requirements discussed"
+            suggested_by: "claude"
+          - entity_type: "TEAM"
+            raw_text: "Engineering"
+            canonical_id: "team-engineering"
+            confidence: 1.0
+            context: "Team conducting sync meeting"
+            suggested_by: "registry"
+        
+        entity_confidence: 0.615
+        validation_status: "needs_review"
+        
+        classification:
+          categories:
+            - "team meeting"
+            - "project updates"
+            - "engineering"
+          confidence: 0.95
+        
+        summary:
+          key_points:
+            - "Engineering team sync meeting on January 24, 2025"
+            - "Updates on Q4 migration project status"
+            - "API v2 development timeline discussion"
+            - "Chicago office move IT requirements review"
+            - "Timeline concerns raised by Sara Chen"
+          action_items: []
+        
+        references:
+          related_docs: []
+          context_files: []
+        ```
+      </output>
+    </example>
+  </examples>
+
+  <instructions>
+    1. Identify document type and creation date
+    2. Extract all people, projects, and teams mentioned
+    3. Validate each entity against the registry suggestions
+    4. Calculate confidence scores based on matching quality
+    5. Include disambiguation reasoning for fuzzy matches
+    6. Set overall validation status based on confidence levels
+    7. Build properly formatted YAML with all required fields
+    8. Quote strings containing special characters
+    9. Keep lists complete (no truncation)
+    10. Generate valid YAML that will parse without errors
+  </instructions>
+</prompt>

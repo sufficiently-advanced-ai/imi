@@ -1,0 +1,41 @@
+name: Bug report
+description: Something broke — an error, wrong extraction, a crashed container
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: |
+        I POSTed a transcript to /api/ingest and the job stuck at phase ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps (commands, sample payload) to reproduce.
+      placeholder: |
+        1. docker compose up -d --build
+        2. curl -X POST localhost:8080/api/ingest -d ...
+        3. See error in `docker logs imi-app`
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, deployment method, relevant .env settings (NEVER paste keys/tokens).
+      placeholder: |
+        - OS: Ubuntu 24.04 / macOS 15
+        - Deploy: docker compose (stock) / dev-hot.sh
+        - ACTIVE_DOMAIN: consulting_firm
+        - VECTOR_BACKEND: sqlite
+        - commit: (git rev-parse --short HEAD)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker logs imi-app` excerpt around the failure. Redact anything sensitive."
+      render: shell

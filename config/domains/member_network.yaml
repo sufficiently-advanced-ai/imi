@@ -1,0 +1,146 @@
+domain:
+  id: member_network
+  name: "Member Network"
+  version: "1.0.0"
+  ui:
+    app_name: "Network Intelligence"
+    entity_label: "Members & Focus Areas"
+    graph_label: "Relationship Graph"
+    nav_groups:
+      knowledge_base:
+        label: "Network"
+        items:
+          /entities:
+            label: "Members & Focus Areas"
+            description: "Browse network members and their focus areas"
+          /domain-graph-enhanced:
+            label: "Relationship Graph"
+            description: "Interactive visualization of member connections"
+      intelligence:
+        label: "Intelligence"
+        items:
+          /feed:
+            label: "Network Activity"
+            description: "Recent member activity and connection opportunities"
+          /chat:
+            label: "Ask the Network"
+            description: "Query institutional knowledge with @kb"
+    terminology:
+      entity: "member"
+      signal: "insight"
+  entities:
+    member:
+      id: member
+      name: member
+      label: Member
+      icon: user
+      description: "Network members - leaders across sectors and geographies"
+      plural: members
+      plural_label: Members
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: role
+          type: string
+        - name: organization
+          type: string
+        - name: geography
+          type: string
+        - name: sector
+          type: string
+        - name: cohort
+          type: string
+        - name: member_since
+          type: date
+        - name: status
+          type: enum
+          enum: ["active", "inactive", "alumni"]
+      relationships:
+        - type: focus_areas
+          target: focus_area
+          cardinality: many_to_many
+          inverse_name: has_members
+        - type: people
+          target: member
+          cardinality: many_to_many
+          inverse_name: people
+        - type: cohort
+          target: cohort
+          cardinality: many_to_one
+          inverse_name: has_members
+    focus_area:
+      id: focus_area
+      name: focus_area
+      label: Focus Area
+      icon: target
+      description: "Thematic focus areas that members work on"
+      plural: focus_areas
+      plural_label: Focus Areas
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: description
+          type: string
+      relationships:
+        - type: has_members
+          target: member
+          cardinality: many_to_many
+          inverse_name: focus_areas
+    cohort:
+      id: cohort
+      name: cohort
+      label: Cohort
+      icon: users
+      description: "Member cohort groups"
+      plural: cohorts
+      plural_label: Cohorts
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: year
+          type: number
+        - name: city
+          type: string
+      relationships:
+        - type: has_members
+          target: member
+          cardinality: one_to_many
+          inverse_name: cohort
+  intelligence_patterns:
+    connection_opportunity:
+      name: "Connection Opportunity"
+      pattern_type: opportunity
+      triggers:
+        - entity: member
+          condition: shared_focus_area
+          weight: 0.8
+      priority: high
+      actions:
+        - "Suggest introduction"
+        - "Identify shared context"
+    expertise_gap:
+      name: "Expertise Gap"
+      pattern_type: insight
+      triggers:
+        - entity: focus_area
+          condition: few_members
+          weight: 0.7
+      priority: medium
+      actions:
+        - "Recruit new members in this area"
+  extraction_priorities:
+    meetings:
+      pattern: member_mentions
+      priority: high
+  success_metrics:
+    - name: connection_density
+      type: percentage
+      calculation: "actual_connections / possible_connections"
+      target: 0.15
+    - name: member_engagement
+      type: percentage
+      calculation: "active_last_90_days / total_members"
+      target: 0.60

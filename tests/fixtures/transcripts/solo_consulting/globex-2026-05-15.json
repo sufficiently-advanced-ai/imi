@@ -1,0 +1,8 @@
+{
+  "provider": "fathom",
+  "title": "Globex — ESG data governance session",
+  "external_id": "fathom-globex-2026-05-15",
+  "recorded_at": "2026-05-15T15:30:00+00:00",
+  "participants": ["Sofia Reinholt", "Consultant"],
+  "transcript": "Sofia (Globex, VP Regulatory Affairs): We're struggling to get consistent ESG data from our 12 regional entities. Every region uses a different spreadsheet format. Consultant: This is a very common problem at the mid-market level. We decided to adopt a centralised data collection template based on the GRI-aligned format we used in the materiality workshop — it covers the metrics your CSRD disclosure will require. Sofia: Who owns implementation? Consultant: I'll draft the data governance policy and template by May 24 and run a 30-minute onboarding call with your regional coordinators. Sofia: The coordinators will need at least two weeks notice — so that call should happen by June 5. Consultant: I'll coordinate that by June 5 then. Consultant: The insight worth capturing here is that data governance investment upfront reduces audit time by roughly 40 percent based on my experience — it's one of the highest-ROI activities in an ESG programme. Sofia: That's a compelling number to share with our CFO."
+}

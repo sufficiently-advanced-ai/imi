@@ -1,0 +1,217 @@
+/* Print styles for Calendar Meetings Page - Issue #372 */
+
+@media print {
+  /* Hide navigation and controls */
+  nav,
+  header,
+  footer,
+  .print-hidden,
+  .navigation-controls,
+  .export-button,
+  .sync-indicator,
+  .upcoming-widget,
+  .orphaned-meetings,
+  .search-input,
+  button:not(.print-show) {
+    display: none !important;
+  }
+
+  /* Reset backgrounds and colors for print */
+  * {
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Page setup */
+  @page {
+    size: A4;
+    margin: 1.5cm;
+  }
+
+  /* Calendar grid adjustments */
+  .calendar-grid {
+    display: grid !important;
+    grid-template-columns: repeat(7, 1fr) !important;
+    gap: 0 !important;
+    page-break-inside: avoid;
+  }
+
+  .calendar-day {
+    border: 1px solid #333 !important;
+    padding: 4px !important;
+    min-height: 80px !important;
+    page-break-inside: avoid;
+  }
+
+  .calendar-day-number {
+    font-weight: bold !important;
+    font-size: 12px !important;
+    margin-bottom: 2px !important;
+  }
+
+  .calendar-day.other-month {
+    opacity: 0.5 !important;
+  }
+
+  /* Meeting cards in calendar */
+  .calendar-meeting {
+    font-size: 10px !important;
+    padding: 2px !important;
+    margin: 1px 0 !important;
+    border: 1px solid #666 !important;
+    page-break-inside: avoid;
+  }
+
+  .calendar-meeting-title {
+    font-weight: 500 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .calendar-meeting-time {
+    font-size: 9px !important;
+    opacity: 0.8 !important;
+  }
+
+  /* Month header */
+  .calendar-month-header {
+    font-size: 18px !important;
+    font-weight: bold !important;
+    text-align: center !important;
+    margin-bottom: 10px !important;
+    page-break-after: avoid;
+  }
+
+  /* Day headers */
+  .calendar-weekday-header {
+    font-weight: bold !important;
+    font-size: 11px !important;
+    text-align: center !important;
+    padding: 4px !important;
+    border-bottom: 2px solid #333 !important;
+  }
+
+  /* Meeting list view (agenda style) */
+  .meeting-agenda-list {
+    page-break-inside: avoid;
+  }
+
+  .meeting-agenda-item {
+    padding: 8px 0 !important;
+    border-bottom: 1px solid #ccc !important;
+    page-break-inside: avoid;
+  }
+
+  .meeting-agenda-date {
+    font-weight: bold !important;
+    font-size: 14px !important;
+    margin-top: 10px !important;
+    margin-bottom: 5px !important;
+    page-break-after: avoid;
+  }
+
+  .meeting-agenda-time {
+    font-size: 12px !important;
+    font-weight: 500 !important;
+  }
+
+  .meeting-agenda-title {
+    font-size: 12px !important;
+  }
+
+  .meeting-agenda-participants {
+    font-size: 10px !important;
+    opacity: 0.7 !important;
+  }
+
+  /* Correlation indicators */
+  .correlation-badge {
+    display: inline !important;
+    font-size: 9px !important;
+    padding: 1px 3px !important;
+    border: 1px solid #666 !important;
+    margin-left: 4px !important;
+  }
+
+  /* Stats summary */
+  .calendar-stats {
+    margin-top: 20px !important;
+    padding: 10px !important;
+    border: 1px solid #333 !important;
+    font-size: 11px !important;
+    page-break-inside: avoid;
+  }
+
+  .calendar-stats-title {
+    font-weight: bold !important;
+    margin-bottom: 5px !important;
+  }
+
+  /* Force page breaks */
+  .page-break {
+    page-break-after: always;
+  }
+
+  .page-break-avoid {
+    page-break-inside: avoid;
+  }
+
+  /* Links */
+  a {
+    text-decoration: none !important;
+  }
+
+  a[href]:after {
+    content: none !important;
+  }
+
+  /* Images and icons */
+  img,
+  svg {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+
+  .icon {
+    display: none !important;
+  }
+
+  /* Tables */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  th,
+  td {
+    border: 1px solid #333 !important;
+    padding: 4px !important;
+    font-size: 11px !important;
+  }
+
+  th {
+    font-weight: bold !important;
+    background: #f0f0f0 !important;
+  }
+
+  /* Print-specific visibility */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Ensure proper text contrast */
+  .text-muted,
+  .text-muted-foreground {
+    opacity: 0.8 !important;
+  }
+
+  /* Page numbers */
+  .page-number:after {
+    content: counter(page);
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    font-size: 10px;
+  }
+}

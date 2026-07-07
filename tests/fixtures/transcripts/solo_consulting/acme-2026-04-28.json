@@ -1,0 +1,8 @@
+{
+  "provider": "fathom",
+  "title": "Acme Corp — data collection kickoff",
+  "external_id": "fathom-acme-2026-04-28",
+  "recorded_at": "2026-04-28T14:00:00+00:00",
+  "participants": ["Jane Okoye", "Grace Bello", "Ken Mueller", "Omar Haddad", "Consultant"],
+  "transcript": "Consultant: This call kicks off data collection. Grace, you own the Scope 1 activity data across the sites. Grace (Acme Corp, Facilities & Operations Manager): Understood. I'll coordinate the meter readings and fuel logs. Ken (Acme Corp, Plant Manager): I'll flag now that my team is flat out — pulling two years of meter readings is a real ask on top of production. Consultant: Noted, Ken, but your site is the largest single source, so we can't baseline without it. Omar (Acme Corp, Data & Analytics Lead): I'll stand up the activity-data pipeline so the numbers flow into one place. Consultant: We decided the primary emission factor source will be the GHG Protocol database rather than custom factors. Omar: That keeps it consistent and defensible. Consultant: The supplier survey goes out this week — I'll target supplier responses back by May 18. Jane (Acme Corp, Head of Sustainability): Good. Ken, please get us your first batch of readings by May 5. Ken: I'll try."
+}

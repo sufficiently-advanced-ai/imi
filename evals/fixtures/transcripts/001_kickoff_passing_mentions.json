@@ -1,0 +1,178 @@
+{
+  "id": "001_kickoff_passing_mentions",
+  "version": 1,
+  "description": "Stresses extraneous-entity filtering: tooling mentions (Jira, Slack), a vendor named for comparison (Deloitte), an employer anecdote (Disney), an AI product (ChatGPT), and generic role words ('the client', 'the account manager') must NOT become entities. Real entities: Meridian Health (client account), Pulse Analytics engagement, three people, one team.",
+  "meeting": {
+    "title_context": "Engagement kickoff",
+    "date": "2026-05-12",
+    "participants": ["Elena Vasquez", "Marcus Webb", "Jasmine Cole"],
+    "transcript": "**Elena Vasquez**: Welcome everyone, this is the kickoff for the Meridian Health engagement. Marcus will run delivery, Jasmine owns the data workstream.\n\n**Marcus Webb**: Thanks Elena. So scope first — Meridian Health wants a patient-engagement analytics platform. We're calling the engagement Pulse Analytics internally.\n\n**Jasmine Cole**: I read the discovery notes. Their previous vendor — I think it was Deloitte — quoted them a much bigger build, and they walked away from it. We should keep our scope tight.\n\n**Elena Vasquez**: Right, and that's exactly why they picked us. The client wants weekly demos, by the way. Their account manager on our side — that's me for now — will run those.\n\n**Marcus Webb**: On tooling, we'll track work in Jira and keep the channel chatter in Slack as usual. Nothing exotic.\n\n**Jasmine Cole**: One thing from discovery — their data team is tiny. Two analysts. When I was at Disney we had forty people doing what these two do, so we need to plan for heavy enablement.\n\n**Elena Vasquez**: Good flag. Let's set up the enablement track under the data workstream. Jasmine, can you draft the enablement plan by end of next week?\n\n**Jasmine Cole**: Yes, end of next week, I'll have a draft to review.\n\n**Marcus Webb**: I asked ChatGPT to summarize the discovery transcripts last night, by the way — decent starting point, I'll share the doc. The delivery squad here is the Apex team, same crew that did the logistics build.\n\n**Elena Vasquez**: Perfect. So to wrap: Pulse Analytics is officially kicked off, Apex team runs delivery, Jasmine drafts the enablement plan by end of next week, and weekly demos start the week after.\n\n**Jasmine Cole**: Sounds good.\n\n**Marcus Webb**: Let's go."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-elena-vasquez",
+        "canonical_name": "Elena Vasquez",
+        "type": "person",
+        "aliases": ["Elena"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-marcus-webb",
+        "canonical_name": "Marcus Webb",
+        "type": "person",
+        "aliases": ["Marcus"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-jasmine-cole",
+        "canonical_name": "Jasmine Cole",
+        "type": "person",
+        "aliases": ["Jasmine"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-meridian-health",
+        "canonical_name": "Meridian Health",
+        "type": "account",
+        "aliases": ["Meridian"],
+        "required": true
+      },
+      {
+        "canonical_id": "project-pulse-analytics",
+        "canonical_name": "Pulse Analytics",
+        "type": "project",
+        "aliases": ["the Pulse Analytics engagement"],
+        "required": true
+      },
+      {
+        "canonical_id": "team-apex",
+        "canonical_name": "Apex Team",
+        "type": "team",
+        "aliases": ["Apex", "the Apex team"],
+        "required": false
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Deloitte",
+        "type": "account",
+        "reason": "previous vendor named once for comparison — not a client account"
+      },
+      {
+        "name": "Disney",
+        "type": "account",
+        "reason": "former-employer anecdote ('when I was at Disney') — not an organization in this engagement"
+      },
+      {
+        "name": "Jira",
+        "type": "account",
+        "reason": "tooling mention, not an organization we work with"
+      },
+      {
+        "name": "Jira",
+        "type": "project",
+        "reason": "tooling mention, not an engagement"
+      },
+      {
+        "name": "Slack",
+        "type": "account",
+        "reason": "tooling mention, not an organization we work with"
+      },
+      {
+        "name": "ChatGPT",
+        "type": "person",
+        "reason": "AI product must never be extracted as a person"
+      },
+      {
+        "name": "client",
+        "type": "account",
+        "reason": "generic role word ('the client') — not an entity"
+      },
+      {
+        "name": "account manager",
+        "type": "person",
+        "reason": "generic role word — not an entity"
+      },
+      {
+        "name": "account manager",
+        "type": "account",
+        "reason": "generic role word — the production graph grew an 'account-account-manager' stub from exactly this"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": [
+      {
+        "gold_id": "sig-enablement-plan",
+        "type": "action_item",
+        "keywords_all": ["enablement"],
+        "keywords_any": ["draft", "next week"],
+        "owner": "Jasmine Cole",
+        "required": true
+      },
+      {
+        "gold_id": "sig-kickoff-decision",
+        "type": "decision",
+        "keywords_all": ["Pulse Analytics"],
+        "keywords_any": ["kicked off", "kickoff", "officially"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-weekly-demos",
+        "type": "decision",
+        "keywords_all": ["demo"],
+        "keywords_any": ["weekly"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-tiny-data-team",
+        "type": "key_point",
+        "keywords_all": ["data team"],
+        "keywords_any": ["two analysts", "tiny", "enablement"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-share-discovery-doc",
+        "type": "action_item",
+        "keywords_all": ["discovery"],
+        "keywords_any": ["share", "doc", "summar"],
+        "owner": "Marcus Webb",
+        "required": false
+      },
+      {
+        "gold_id": "sig-scope-tight",
+        "type": "key_point",
+        "keywords_all": ["scope"],
+        "keywords_any": ["tight", "vendor", "walked away"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-apex-delivery",
+        "type": "key_point",
+        "keywords_all": ["Apex"],
+        "keywords_any": ["delivery", "squad"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-why-they-picked-us",
+        "type": "insight",
+        "keywords_any": ["selected", "picked", "lean", "walked away"],
+        "required": false
+      }
+    ],
+    "forbidden_signals": [],
+    "summary": {
+      "must_mention_keywords": [["Meridian"], ["Pulse Analytics"], ["enablement"]],
+      "must_not_mention_keywords": ["Disney"],
+      "title_max_words": 10,
+      "title_must_contain_any": ["Meridian", "Pulse", "kickoff"]
+    }
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

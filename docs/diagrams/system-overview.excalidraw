@@ -1,0 +1,632 @@
+{
+ "type": "excalidraw",
+ "version": 2,
+ "source": "imi-docs",
+ "appState": {
+  "viewBackgroundColor": "#ffffff"
+ },
+ "elements": [
+  {
+   "id": "title",
+   "type": "text",
+   "x": 0,
+   "y": 0,
+   "text": "imi — system overview",
+   "fontSize": 26,
+   "strokeColor": "#1e1e1e",
+   "fontWeight": "bold",
+   "textAlign": "center",
+   "width": 880
+  },
+  {
+   "id": "in1",
+   "type": "rectangle",
+   "x": 0,
+   "y": 64,
+   "width": 202,
+   "height": 64,
+   "strokeColor": "#495057",
+   "backgroundColor": "#f1f3f5",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "in1T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "in1T",
+   "type": "text",
+   "containerId": "in1",
+   "x": 10,
+   "y": 74,
+   "text": "Documents\n& uploads",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "in2",
+   "type": "rectangle",
+   "x": 218,
+   "y": 64,
+   "width": 202,
+   "height": 64,
+   "strokeColor": "#495057",
+   "backgroundColor": "#f1f3f5",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "in2T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "in2T",
+   "type": "text",
+   "containerId": "in2",
+   "x": 228,
+   "y": 74,
+   "text": "Call transcripts\nrecorders · Zapier",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "in3",
+   "type": "rectangle",
+   "x": 436,
+   "y": 64,
+   "width": 202,
+   "height": 64,
+   "strokeColor": "#495057",
+   "backgroundColor": "#f1f3f5",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "in3T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "in3T",
+   "type": "text",
+   "containerId": "in3",
+   "x": 446,
+   "y": 74,
+   "text": "GitHub\nwebhooks",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "in4",
+   "type": "rectangle",
+   "x": 654,
+   "y": 64,
+   "width": 202,
+   "height": 64,
+   "strokeColor": "#495057",
+   "backgroundColor": "#f1f3f5",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "in4T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "in4T",
+   "type": "text",
+   "containerId": "in4",
+   "x": 664,
+   "y": 74,
+   "text": "Thought captures\n& pull connectors",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "a1",
+   "type": "arrow",
+   "x": 101,
+   "y": 128,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     22
+    ],
+    [
+     169,
+     50
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "a2",
+   "type": "arrow",
+   "x": 319,
+   "y": 128,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     50
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "a3",
+   "type": "arrow",
+   "x": 537,
+   "y": 128,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     50
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "a4",
+   "type": "arrow",
+   "x": 755,
+   "y": 128,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     22
+    ],
+    [
+     -145,
+     50
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "pipe",
+   "type": "rectangle",
+   "x": 210,
+   "y": 178,
+   "width": 460,
+   "height": 130,
+   "strokeColor": "#1971c2",
+   "backgroundColor": "#d0ebff",
+   "strokeWidth": 2,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "pipeT",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "pipeT",
+   "type": "text",
+   "containerId": "pipe",
+   "x": 220,
+   "y": 188,
+   "text": "Ingestion pipeline — IngestOrchestrator\n\nclassify · extract entities · resolve\npromote signals · detect conflicts",
+   "fontSize": 16,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "claude",
+   "type": "rectangle",
+   "x": 0,
+   "y": 201,
+   "width": 185,
+   "height": 84,
+   "strokeColor": "#e8590c",
+   "backgroundColor": "#ffe8cc",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "claudeT",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "claudeT",
+   "type": "text",
+   "containerId": "claude",
+   "x": 10,
+   "y": 211,
+   "text": "Claude\ninference registry\napp/prompts/*.xml",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "a5",
+   "type": "arrow",
+   "x": 185,
+   "y": 243,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     25,
+     0
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "schema",
+   "type": "rectangle",
+   "x": 695,
+   "y": 189,
+   "width": 185,
+   "height": 108,
+   "strokeColor": "#7048e8",
+   "backgroundColor": "#e5dbff",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "schemaT",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "schemaT",
+   "type": "text",
+   "containerId": "schema",
+   "x": 705,
+   "y": 199,
+   "text": "Domain schema\nconfig/domains/*.yaml\n\nshapes extraction,\nvalidation, UI labels",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "a6",
+   "type": "arrow",
+   "x": 695,
+   "y": 243,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     -25,
+     0
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 1.5
+  },
+  {
+   "id": "a7",
+   "type": "arrow",
+   "x": 440,
+   "y": 308,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     40
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 2
+  },
+  {
+   "id": "storesBox",
+   "type": "rectangle",
+   "x": 80,
+   "y": 348,
+   "width": 720,
+   "height": 140,
+   "strokeColor": "#2f9e44",
+   "backgroundColor": "#ebfbee",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   }
+  },
+  {
+   "id": "storesTitle",
+   "type": "text",
+   "x": 96,
+   "y": 356,
+   "text": "Three synchronized stores",
+   "fontSize": 15,
+   "strokeColor": "#2b8a3e",
+   "fontWeight": "bold"
+  },
+  {
+   "id": "st1",
+   "type": "rectangle",
+   "x": 96,
+   "y": 392,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#2f9e44",
+   "backgroundColor": "#d3f9d8",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "st1T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "st1T",
+   "type": "text",
+   "containerId": "st1",
+   "x": 106,
+   "y": 402,
+   "text": "Neo4j graph\n+ in-memory fallback",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "st2",
+   "type": "rectangle",
+   "x": 330,
+   "y": 392,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#2f9e44",
+   "backgroundColor": "#d3f9d8",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "st2T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "st2T",
+   "type": "text",
+   "containerId": "st2",
+   "x": 340,
+   "y": 402,
+   "text": "Git corpus (markdown)\nsource of truth",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "st3",
+   "type": "rectangle",
+   "x": 564,
+   "y": 392,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#2f9e44",
+   "backgroundColor": "#d3f9d8",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "st3T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "st3T",
+   "type": "text",
+   "containerId": "st3",
+   "x": 574,
+   "y": 402,
+   "text": "Signals & memory\n+ vector index",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "a8",
+   "type": "arrow",
+   "x": 440,
+   "y": 488,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     44
+    ]
+   ],
+   "strokeColor": "#1e1e1e",
+   "strokeWidth": 2
+  },
+  {
+   "id": "a8note",
+   "type": "text",
+   "x": 458,
+   "y": 500,
+   "text": "every surface reads every store",
+   "fontSize": 13,
+   "strokeColor": "#495057"
+  },
+  {
+   "id": "surfBox",
+   "type": "rectangle",
+   "x": 80,
+   "y": 532,
+   "width": 720,
+   "height": 140,
+   "strokeColor": "#0b7285",
+   "backgroundColor": "#e3fafc",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   }
+  },
+  {
+   "id": "surfTitle",
+   "type": "text",
+   "x": 96,
+   "y": 540,
+   "text": "Query surfaces",
+   "fontSize": 15,
+   "strokeColor": "#0b7285",
+   "fontWeight": "bold"
+  },
+  {
+   "id": "surfNote",
+   "type": "text",
+   "x": 315,
+   "y": 542,
+   "text": "agents write evidence — humans grant instruction grade (ADR-002)",
+   "fontSize": 13,
+   "strokeColor": "#495057",
+   "textAlign": "right",
+   "width": 469
+  },
+  {
+   "id": "sf1",
+   "type": "rectangle",
+   "x": 96,
+   "y": 576,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#0b7285",
+   "backgroundColor": "#c5f6fa",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "sf1T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "sf1T",
+   "type": "text",
+   "containerId": "sf1",
+   "x": 106,
+   "y": 586,
+   "text": "MCP server — ~30 tools\n/api/mcp/sse",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "sf2",
+   "type": "rectangle",
+   "x": 330,
+   "y": 576,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#0b7285",
+   "backgroundColor": "#c5f6fa",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "sf2T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "sf2T",
+   "type": "text",
+   "containerId": "sf2",
+   "x": 340,
+   "y": 586,
+   "text": "REST API\n/openapi.json",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  },
+  {
+   "id": "sf3",
+   "type": "rectangle",
+   "x": 564,
+   "y": 576,
+   "width": 220,
+   "height": 80,
+   "strokeColor": "#0b7285",
+   "backgroundColor": "#c5f6fa",
+   "strokeWidth": 1.5,
+   "roundness": {
+    "type": 3
+   },
+   "boundElements": [
+    {
+     "id": "sf3T",
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "id": "sf3T",
+   "type": "text",
+   "containerId": "sf3",
+   "x": 574,
+   "y": 586,
+   "text": "Web UI\n(Next.js)",
+   "fontSize": 15,
+   "strokeColor": "#1e1e1e"
+  }
+ ]
+}

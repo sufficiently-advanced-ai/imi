@@ -1,0 +1,302 @@
+domain:
+  id: b2b_saas
+  name: "B2B SaaS"
+  version: "1.0.0"
+  ui:
+    app_name: "CS Intelligence"
+    entity_label: "Accounts & Contacts"
+    graph_label: "Account Map"
+    nav_groups:
+      knowledge_base:
+        label: "Account Intelligence"
+        items:
+          /entities:
+            label: "Accounts & Contacts"
+            description: "Browse customer accounts, contacts, and implementations"
+          /domain-graph-enhanced:
+            label: "Account Map"
+            description: "Interactive visualization of account relationships and health"
+      intelligence:
+        label: "CS Intelligence"
+        items:
+          /feed:
+            label: "Signal Feed"
+            description: "Live feed of account signals, risks, and opportunities"
+    terminology:
+      entity: "record"
+      signal: "signal"
+  entities:
+    account:
+      id: account
+      name: account
+      label: Account
+      icon: building-2
+      description: Customer organizations and companies
+      plural: accounts
+      plural_label: Accounts
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: industry
+          type: enum
+          enum: ["retail", "healthcare", "technology", "finance", "manufacturing", "education", "hospitality", "energy", "pharma", "aerospace", "media", "telecom", "biotech", "automotive", "construction", "mining", "logistics", "insurance", "gaming", "other"]
+        - name: arr
+          type: number
+          unit: USD
+        - name: seats
+          type: number
+        - name: health_score
+          type: number
+        - name: renewal_date
+          type: date
+        - name: contract_start
+          type: date
+        - name: is_active
+          type: boolean
+        - name: status
+          type: enum
+          enum: ["onboarding", "active", "at_risk", "expanding", "renewing", "churned", "steady"]
+        - name: engagement_rate
+          type: number
+        - name: nps_score
+          type: number
+      relationships:
+        - type: has_projects
+          target: project
+          cardinality: one_to_many
+          inverse_name: belongs_to_account
+        - type: managed_by
+          target: person
+          cardinality: many_to_one
+          inverse_name: manages_accounts
+    project:
+      id: project
+      name: project
+      label: Implementation
+      icon: settings
+      description: Client implementations, integrations, and deployments
+      plural: projects
+      plural_label: Implementations
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: start_date
+          type: date
+        - name: target_completion
+          type: date
+        - name: status
+          type: enum
+          enum: ["planning", "in_progress", "completed", "blocked", "cancelled"]
+        - name: integration_type
+          type: enum
+          enum: ["lms_integration", "sso_setup", "data_migration", "custom_deployment", "standard_onboarding"]
+      relationships:
+        - type: belongs_to_account
+          target: account
+          cardinality: many_to_one
+          inverse_name: has_projects
+        - type: has_team_members
+          target: person
+          cardinality: many_to_many
+          inverse_name: works_on_projects
+        - type: managed_by
+          target: person
+          cardinality: many_to_one
+    person:
+      id: person
+      name: person
+      label: Person
+      icon: user
+      description: OnlineExec staff and client contacts
+      plural: people
+      plural_label: People
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: email
+          type: string
+        - name: title
+          type: string
+        - name: department
+          type: string
+        - name: company
+          type: string
+      relationships:
+        - type: works_on_projects
+          target: project
+          cardinality: many_to_many
+          inverse_name: has_team_members
+        - type: manages_accounts
+          target: account
+          cardinality: one_to_many
+          inverse_name: managed_by
+        - type: member_of_team
+          target: team
+          cardinality: many_to_one
+          inverse_name: has_members
+        - type: reports_to
+          target: person
+          cardinality: many_to_one
+          inverse_name: manages
+        - type: manages
+          target: person
+          cardinality: one_to_many
+          inverse_name: reports_to
+        - type: collaborates_with
+          target: person
+          cardinality: many_to_many
+          inverse_name: collaborates_with
+    team:
+      id: team
+      name: team
+      label: Team
+      icon: users
+      description: CS pods, departments, and cross-functional groups
+      plural: teams
+      plural_label: Teams
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: department
+          type: string
+        - name: focus_area
+          type: string
+      relationships:
+        - type: has_members
+          target: person
+          cardinality: one_to_many
+          inverse_name: member_of_team
+        - type: works_on_projects
+          target: project
+          cardinality: many_to_many
+  intelligence_patterns:
+    churn_risk:
+      name: "Churn Risk Detection"
+      pattern_type: risk
+      priority: high
+      triggers:
+        - entity: account
+          condition: engagement_decline_mentioned
+          weight: 0.9
+        - entity: account
+          condition: champion_departure
+          weight: 0.95
+        - entity: account
+          condition: missed_qbr
+          weight: 0.8
+        - entity: account
+          condition: competitor_mentioned
+          weight: 0.85
+        - entity: account
+          condition: budget_concerns_raised
+          weight: 0.7
+      actions:
+        - "Alert CS Director immediately"
+        - "Schedule executive sponsor call"
+        - "Prepare retention playbook"
+    expansion_opportunity:
+      name: "Expansion Opportunity Detection"
+      pattern_type: opportunity
+      priority: medium
+      triggers:
+        - entity: account
+          condition: seat_growth_interest
+          weight: 0.8
+        - entity: account
+          condition: new_department_rollout
+          weight: 0.7
+        - entity: account
+          condition: positive_roi_discussed
+          weight: 0.6
+      actions:
+        - "Prepare expansion proposal"
+        - "Loop in Account Manager"
+        - "Schedule executive alignment call"
+    integration_risk:
+      name: "Integration Risk Detection"
+      pattern_type: escalation
+      priority: high
+      triggers:
+        - entity: project
+          condition: integration_failure_mentioned
+          weight: 0.9
+        - entity: project
+          condition: timeline_delay
+          weight: 0.7
+        - entity: project
+          condition: technical_blocker
+          weight: 0.85
+      actions:
+        - "Escalate to Implementation Lead"
+        - "Schedule technical review"
+        - "Prepare mitigation plan"
+    champion_change:
+      name: "Champion Change Detection"
+      pattern_type: risk
+      priority: high
+      triggers:
+        - entity: account
+          condition: primary_contact_changed
+          weight: 0.9
+        - entity: account
+          condition: new_stakeholder_introduced
+          weight: 0.6
+      actions:
+        - "Schedule new champion onboarding"
+        - "Review account health"
+        - "Update stakeholder map"
+    product_commitment:
+      name: "Product Commitment Tracking"
+      pattern_type: commitment
+      priority: medium
+      triggers:
+        - entity: account
+          condition: feature_request_promised
+          weight: 0.8
+        - entity: account
+          condition: roadmap_commitment_made
+          weight: 0.9
+      actions:
+        - "Log in product backlog"
+        - "Verify with PM"
+        - "Set follow-up reminder"
+  extraction_priorities:
+    meetings:
+      pattern: entity_extraction
+      priority: high
+    documents:
+      pattern: contract_analysis
+      priority: high
+    emails:
+      pattern: stakeholder_tracking
+      priority: medium
+  success_metrics:
+    - name: net_retention_rate
+      type: percentage
+      calculation: "(starting_arr + expansion - contraction - churn) / starting_arr"
+      target: 1.10
+    - name: gross_retention_rate
+      type: percentage
+      calculation: "(starting_arr - contraction - churn) / starting_arr"
+      target: 0.90
+    - name: average_health_score
+      type: score
+      range: [0, 100]
+      target: 75
+    - name: time_to_value
+      type: time
+      unit: days
+      calculation: "avg_days_from_contract_to_first_engagement"
+      target: 30
+    - name: engagement_rate
+      type: percentage
+      calculation: "active_users / total_seats"
+      target: 0.65
+    - name: nps_score
+      type: score
+      range: [-100, 100]
+      target: 45

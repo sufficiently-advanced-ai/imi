@@ -1,0 +1,8 @@
+{
+  "provider": "grain",
+  "title": "Acme Corp — pre-board status check",
+  "external_id": "grain-acme-2026-05-25",
+  "recorded_at": "2026-05-25T16:00:00+00:00",
+  "participants": ["Jane Okoye", "Dani Ferreira", "Victor Lin", "Omar Haddad", "Consultant"],
+  "transcript": "Consultant: Status check with the board date closing in. Dani, where are we on the supplier survey? Dani (Acme Corp, Procurement Manager): We're at 55 percent response. The rest won't come in until early June — we won't hit the May 18 target we set, that date has slipped. Consultant: Then we'll finalize supplier figures in early June and flag the gap. One concern I have to raise: I haven't been able to get meter readings out of Ken's plant in two weeks. He's stopped responding to my emails. Jane (Acme Corp, Head of Sustainability): That's not good — I'll ask Grace to lean on him directly. Victor (Acme Corp, CFO): Separately, the board is now asking us to include logistics and business travel, not just purchased goods. Consultant: That expands Scope 3 from Category 1 to Categories 1, 4, and 6 — that's meaningfully more work than we scoped. Victor: I'll admit, Omar's numbers on the financing impact changed my view. I can support the full independent baseline now, as long as we hold the line on cost. Omar (Acme Corp, Data & Analytics Lead): I'll get Victor the updated cost-of-capital comparison by May 27. Consultant: We also discussed switching to custom emission factors for the gas figures, since the GHG Protocol defaults may overstate them. I'll bring a recommendation to the next call."
+}

@@ -1,0 +1,196 @@
+domain:
+  id: solo_consulting
+  name: "Solo Consulting Practice"
+  version: "1.0.0"
+  ui:
+    app_name: "Practice Brain"
+    entity_label: "Clients & Engagements"
+    graph_label: "Practice Map"
+    nav_groups:
+      knowledge_base:
+        label: "Practice"
+        items:
+          /entities:
+            label: "Clients & Engagements"
+            description: "Manage clients, engagements, and stakeholders"
+      intelligence:
+        label: "Intelligence"
+        items:
+          /feed:
+            label: "Open Items"
+            description: "Commitments and action items across all clients"
+    terminology:
+      entity: "record"
+      signal: "commitment"
+  entities:
+    client:
+      id: client
+      name: client
+      label: Client
+      icon: building-2
+      description: Client organizations the practice advises
+      plural: clients
+      plural_label: Clients
+      ner_labels: ["ORG", "ORGANIZATION"]
+      ner_exclude:
+        - GRI
+        - MSCI
+        - SBTi
+        - TCFD
+        - CSRD
+        - NGFS
+        - CDP
+        - ISSB
+        - SASB
+        - "GHG Protocol"
+        - GHG
+        - IFRS
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: industry
+          type: enum
+          enum: ["tech", "finance", "healthcare", "energy", "nonprofit", "other"]
+        - name: engagement_status
+          type: enum
+          enum: ["prospect", "active", "paused", "completed"]
+        - name: start_date
+          type: date
+      relationships:
+        - type: has_engagements
+          target: engagement
+          cardinality: one_to_many
+          inverse_name: for_client
+        - type: has_stakeholders
+          target: stakeholder
+          cardinality: one_to_many
+          inverse_name: works_at
+        - type: advised_by
+          target: consultant
+          cardinality: many_to_one
+          inverse_name: advises
+    engagement:
+      id: engagement
+      name: engagement
+      label: Engagement
+      icon: briefcase
+      description: A scope of work for a client
+      plural: engagements
+      plural_label: Engagements
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: scope
+          type: string
+        - name: status
+          type: enum
+          enum: ["scoping", "active", "on_hold", "completed"]
+        - name: cadence
+          type: string
+      relationships:
+        - type: for_client
+          target: client
+          cardinality: many_to_one
+          inverse_name: has_engagements
+        - type: has_participants
+          target: stakeholder
+          cardinality: many_to_many
+          inverse_name: involved_in
+    stakeholder:
+      id: stakeholder
+      name: stakeholder
+      label: Stakeholder
+      icon: user
+      description: People at client organizations
+      plural: stakeholders
+      plural_label: Stakeholders
+      ner_labels: ["PERSON", "PER"]
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: role
+          type: string
+        - name: email
+          type: string
+        - name: stance
+          type: enum
+          enum: ["champion", "supporter", "neutral", "skeptic", "blocker"]
+        - name: influence
+          type: enum
+          enum: ["high", "medium", "low"]
+        - name: authority
+          type: enum
+          enum: ["economic_buyer", "decision_maker", "influencer", "gatekeeper", "end_user"]
+      relationships:
+        - type: works_at
+          target: client
+          cardinality: many_to_one
+          inverse_name: has_stakeholders
+        - type: involved_in
+          target: engagement
+          cardinality: many_to_many
+          inverse_name: has_participants
+        - type: reports_to
+          target: stakeholder
+          cardinality: many_to_one
+          inverse_name: manages
+        - type: manages
+          target: stakeholder
+          cardinality: one_to_many
+          inverse_name: reports_to
+        - type: influences
+          target: stakeholder
+          cardinality: many_to_many
+          inverse_name: influenced_by
+        - type: influenced_by
+          target: stakeholder
+          cardinality: many_to_many
+          inverse_name: influences
+    consultant:
+      id: consultant
+      name: consultant
+      label: Consultant
+      icon: badge-check
+      description: The practice owner
+      plural: consultants
+      plural_label: Consultants
+      attributes:
+        - name: name
+          type: string
+          required: true
+      relationships:
+        - type: advises
+          target: client
+          cardinality: one_to_many
+          inverse_name: advised_by
+  intelligence_patterns:
+    commitment_overdue:
+      name: "Overdue Commitment Detection"
+      pattern_type: risk
+      triggers:
+        - entity: engagement
+          condition: commitment_past_due
+          weight: 0.9
+      priority: high
+      actions:
+        - "Surface in weekly sweep"
+    renewal_risk:
+      name: "Renewal Risk Detection"
+      pattern_type: risk
+      triggers:
+        - entity: client
+          condition: dissatisfaction_mentioned
+          weight: 0.8
+      priority: high
+      actions:
+        - "Flag for follow-up"
+  extraction_priorities:
+    meetings:
+      pattern: entity_extraction
+      priority: high
+    documents:
+      pattern: project_analysis
+      priority: medium

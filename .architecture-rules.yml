@@ -1,0 +1,147 @@
+# Architecture Validation Rules Configuration
+# This file defines rules and thresholds for architecture validation tools
+
+duplicate_detection:
+  enabled: true
+  similarity_threshold: 0.75
+  whitelist:
+    - "entity_brain*"  # Allow entity_brain variations for now
+    - "*_enhanced.py"  # Allow enhanced versions
+    - "*_legacy.py"    # Allow legacy versions
+  allowlist:
+    - "entity_brain*"  # Allow entity_brain variations for now
+    - "*_enhanced.py"  # Allow enhanced versions
+    - "*_legacy.py"    # Allow legacy versions
+  exclude_paths:
+    - "tests/"
+    - "migrations/"
+    - "__pycache__/"
+    - "scripts/"       # Utility scripts are not part of app architecture
+    - "./*.py"         # Root-level utility scripts
+
+boundary_validation:
+  enabled: true
+  rules:
+    routes:
+      can_import_from:
+        - services
+        - models
+        - config
+        - utils
+      cannot_import_from:
+        - agents
+      exceptions:
+        - file: "app/routes/command.py"
+          allow:
+            - "agents.memory_agent"
+        - file: "app/routes/agent_tools.py"
+          allow:
+            - "agents.base"
+
+    services:
+      can_import_from:
+        - models
+        - config
+        - utils
+        - services  # Allow service-to-service imports
+      cannot_import_from:
+        - routes
+        - agents
+
+    agents:
+      can_import_from:
+        - services
+        - models
+        - config
+        - utils
+        - agents  # Allow agent-to-agent imports
+      cannot_import_from:
+        - routes
+
+    models:
+      can_import_from:
+        - config
+      cannot_import_from:
+        - routes
+        - services
+        - agents
+
+    utils:
+      can_import_from:
+        - config
+      cannot_import_from:
+        - routes
+        - services
+        - agents
+        - models
+
+cycle_detection:
+  enabled: true
+  max_cycle_length: 0
+  exclusions:
+    - "tests/**"
+    - "migrations/**"
+    - "**/__init__.py"
+
+metrics:
+  enabled: true
+  collect:
+    - complexity
+    - coupling
+    - cohesion
+    - loc
+  thresholds:
+    complexity:
+      warning: 10
+      error: 15
+    coupling:
+      warning: 8
+      error: 12
+    loc:
+      warning: 300
+      error: 500
+    maintainability:
+      warning: 60
+      error: 40
+  exclusions:
+    - "tests/"
+    - "migrations/"
+    - "__init__.py"
+
+import_complexity:
+  enabled: true
+  max_imports_per_file: 20
+  max_import_depth: 5
+  allow_star_imports: false
+  detect_unused_imports: true
+  thresholds:
+    coupling:
+      warning: 8
+      error: 15
+    complexity_score:
+      warning: 60
+      error: 80
+  exclusions:
+    - "__init__.py"
+    - "tests/"
+    - "conftest.py"
+
+# Pre-commit hook configuration
+pre_commit:
+  enabled: true
+  check_on_commit:
+    - duplicates
+    - boundaries
+    - import_complexity
+  block_on_errors: true
+  allow_warnings: true
+
+# CI/CD integration settings
+ci_integration:
+  enabled: true
+  platforms:
+    - github
+  post_pr_comments: true
+  set_commit_status: true
+  generate_badges: true
+  artifact_retention_days: 30

@@ -1,0 +1,145 @@
+{
+  "id": "004_decisions_vs_opinions",
+  "version": 1,
+  "description": "Stresses decision-vs-banter classification. Traps: personal banter commitment (beard dye), unagreed opinion (Kubernetes), hypothetical (offshore QA), passing tooling mention (Salesforce). Real signals: staging deploy gate decision, SOW action item, onboarding-timeline key point.",
+  "meeting": {
+    "title_context": "Weekly delivery sync",
+    "date": "2026-06-01",
+    "participants": ["Noah Bergman", "Alex Delgado", "Dana Okafor"],
+    "transcript": "**Noah Bergman**: Morning everyone. Quick agenda today — the NorthWind deployment incident from Thursday, the SOW renewal, and then open floor.\n\n**Alex Delgado**: Sounds good. Before we start — Noah, the beard is looking very distinguished these days.\n\n**Noah Bergman**: Ha, thanks. You know what, I've decided I'm just going to dye it grey and lean into it.\n\n**Alex Delgado**: Honestly? I'll join you. Grey beards by Q3, that's a commitment.\n\n**Dana Okafor**: You two are ridiculous. Can we talk about Thursday?\n\n**Noah Bergman**: Yes. So the Thursday incident — we pushed the billing service straight to production and it took the NorthWind portal down for forty minutes. Root cause was an unreviewed config change.\n\n**Dana Okafor**: Their ops lead logged it in Salesforce and flagged it to their steering committee, so it's visible on their side.\n\n**Noah Bergman**: Right. So here's what I want to lock in: from now on, every production deploy goes through the staging environment first and needs an explicit sign-off in the deploy channel before it ships. No exceptions. Are we agreed?\n\n**Alex Delgado**: Agreed. Staging gate plus sign-off. Let's write it down.\n\n**Dana Okafor**: Agreed. I'll add it to the runbook.\n\n**Noah Bergman**: Good, that's settled then. Next — the SOW renewal.\n\n**Dana Okafor**: I have the revised scope drafted. NorthWind wants the analytics workstream added. I'll send the revised SOW to their procurement team by Friday.\n\n**Noah Bergman**: Perfect, you own that. Friday at the latest, their fiscal year closes soon.\n\n**Alex Delgado**: One thing from their side — on the call Tuesday their ops lead said the onboarding timeline for the new cohort is their biggest concern right now. They think six weeks is too long.\n\n**Dana Okafor**: That came up with their CFO too. It's a recurring theme.\n\n**Noah Bergman**: Noted. Let's keep it on the radar for the QBR.\n\n**Alex Delgado**: On infrastructure — I think we should eventually move the whole platform to Kubernetes. It would make these deploy problems mostly go away.\n\n**Noah Bergman**: Maybe. That's a much bigger conversation, and I'm not convinced the team has the bandwidth this quarter. Let's not commit to anything there.\n\n**Alex Delgado**: Fair enough, just planting the seed.\n\n**Dana Okafor**: We could also look at offshoring the QA regression work at some point, if budget gets tight.\n\n**Noah Bergman**: Could be, but that's hypothetical for now. Nothing to act on.\n\n**Noah Bergman**: Alright, wrapping up. Dana sends the SOW Friday, deploy gate is in effect immediately, and we keep the onboarding concern warm for the QBR. Oh — and Alex and I will be grey by Q3, apparently.\n\n**Dana Okafor**: I'm not putting that in the minutes.\n\n**Alex Delgado**: Cowards get no glory, Dana. Thanks all."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-noah-bergman",
+        "canonical_name": "Noah Bergman",
+        "type": "person",
+        "aliases": ["Noah"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-alex-delgado",
+        "canonical_name": "Alex Delgado",
+        "type": "person",
+        "aliases": ["Alex"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-dana-okafor",
+        "canonical_name": "Dana Okafor",
+        "type": "person",
+        "aliases": ["Dana"],
+        "required": true
+      },
+      {
+        "canonical_id": "account-northwind",
+        "canonical_name": "NorthWind",
+        "type": "account",
+        "aliases": ["North Wind", "Northwind"],
+        "required": true
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Salesforce",
+        "type": "account",
+        "reason": "passing tooling mention — the client logged a ticket in it; not a client account"
+      },
+      {
+        "name": "Kubernetes",
+        "type": "project",
+        "reason": "hypothetical infrastructure idea, explicitly not committed to"
+      },
+      {
+        "name": "Kubernetes",
+        "type": "account",
+        "reason": "product mentioned in passing, not an organization we work with"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": [
+      {
+        "gold_id": "sig-deploy-gate",
+        "type": "decision",
+        "keywords_all": ["staging"],
+        "keywords_any": ["sign-off", "sign off", "gate", "deploy"],
+        "required": true
+      },
+      {
+        "gold_id": "sig-sow-friday",
+        "type": "action_item",
+        "keywords_all": ["SOW"],
+        "keywords_any": ["Friday", "procurement", "send"],
+        "owner": "Dana Okafor",
+        "required": true
+      },
+      {
+        "gold_id": "sig-onboarding-concern",
+        "type": "key_point",
+        "keywords_all": ["onboarding"],
+        "keywords_any": ["timeline", "six weeks", "concern"],
+        "required": true
+      },
+      {
+        "gold_id": "sig-runbook-update",
+        "type": "action_item",
+        "keywords_all": ["runbook"],
+        "owner": "Dana Okafor",
+        "required": false
+      },
+      {
+        "gold_id": "sig-incident-root-cause",
+        "type": "key_point",
+        "keywords_all": ["config"],
+        "keywords_any": ["incident", "unreviewed", "production", "forty minutes"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-onboarding-qbr",
+        "type": "insight",
+        "keywords_all": ["QBR"],
+        "required": false
+      }
+    ],
+    "forbidden_signals": [
+      {
+        "type": "decision",
+        "keywords_all": ["beard"],
+        "reason": "personal banter must not be promoted to a decision"
+      },
+      {
+        "type": "action_item",
+        "keywords_all": ["beard"],
+        "reason": "personal banter must not be promoted to an action item"
+      },
+      {
+        "type": "decision",
+        "keywords_all": ["kubernetes"],
+        "reason": "unagreed opinion explicitly deferred ('let's not commit to anything there')"
+      },
+      {
+        "type": "decision",
+        "keywords_all": ["offshor"],
+        "reason": "hypothetical ('that's hypothetical for now, nothing to act on')"
+      },
+      {
+        "type": "action_item",
+        "keywords_all": ["offshor"],
+        "reason": "hypothetical must not become an action item"
+      }
+    ],
+    "summary": {
+      "must_mention_keywords": [["staging", "deploy gate", "sign-off"], ["NorthWind", "North Wind"], ["SOW"]],
+      "must_not_mention_keywords": ["beard"],
+      "title_max_words": 10,
+      "title_must_contain_any": ["NorthWind", "delivery", "deploy", "SOW", "sync"]
+    }
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

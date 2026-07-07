@@ -1,0 +1,193 @@
+{
+  "id": "003_org_chart_phrasings",
+  "version": 1,
+  "description": "Stresses reporting-relationship extraction across phrasings: 'I report to X', 'X's manager', 'reports up to', 'X's boss'. Traps: skip-level misread (Barry does NOT report to Janet), hierarchical relationship downgraded to collaborates_with (the production coercion bug), and a former-employer manager anecdote (Accenture) that must produce nothing.",
+  "meeting": {
+    "title_context": "Engagement staffing review",
+    "date": "2026-05-21",
+    "participants": ["Barry Chen", "Stephen Cole", "Lauren Park"],
+    "transcript": "**Stephen Cole**: Staffing review for the new engagement. Barry, you first — how's your capacity?\n\n**Barry Chen**: I can take the workstream lead. Since I report to Stephen it keeps the escalation path simple — anything blocked goes straight up to him.\n\n**Lauren Park**: Works for me. On the data side, Nadia Hassan is the right fit. She's on my data science team and she's already deep in the Atlas migration, so the context carries over.\n\n**Stephen Cole**: Good. Nadia reports up to you, Lauren, so her utilization call is yours.\n\n**Lauren Park**: I run the data science team, so yes — I'll rebalance her sprint load. She stays on Atlas through the staging milestone, then shifts.\n\n**Barry Chen**: One question on governance. If the client asks who signs off above Stephen — that's Janet Wu now, right?\n\n**Stephen Cole**: Right, Janet Wu is my boss since the reorg, so for you she's the skip-level. Sign-offs above me go to her.\n\n**Barry Chen**: Got it. Funny — my old manager back at Accenture used to make us chart this stuff out every quarter. Old habits.\n\n**Lauren Park**: Not the worst habit. So: Barry leads the workstream, Nadia covers data under me, Stephen escalates to Janet where needed.\n\n**Stephen Cole**: That's the structure. I'll confirm Janet's availability for the kickoff sign-off this week.\n\n**Barry Chen**: And I'll draft the RACI for the workstream by Monday.\n\n**Stephen Cole**: Perfect. Short and sweet, thanks both."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-barry-chen",
+        "canonical_name": "Barry Chen",
+        "type": "person",
+        "aliases": ["Barry"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-stephen-cole",
+        "canonical_name": "Stephen Cole",
+        "type": "person",
+        "aliases": ["Stephen"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-lauren-park",
+        "canonical_name": "Lauren Park",
+        "type": "person",
+        "aliases": ["Lauren"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-nadia-hassan",
+        "canonical_name": "Nadia Hassan",
+        "type": "person",
+        "aliases": ["Nadia"],
+        "required": true
+      },
+      {
+        "canonical_id": "person-janet-wu",
+        "canonical_name": "Janet Wu",
+        "type": "person",
+        "aliases": ["Janet"],
+        "required": true
+      },
+      {
+        "canonical_id": "team-data-science",
+        "canonical_name": "Data Science Team",
+        "type": "team",
+        "aliases": ["data science team", "Lauren's data science team"],
+        "required": false
+      },
+      {
+        "canonical_id": "project-atlas-migration",
+        "canonical_name": "Atlas Migration",
+        "type": "project",
+        "aliases": ["Atlas", "the Atlas migration"],
+        "required": true
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Accenture",
+        "type": "account",
+        "reason": "former-employer anecdote — not an organization in this engagement"
+      }
+    ],
+    "relationships": [
+      {
+        "subject": "person-barry-chen",
+        "predicate": "reports_to",
+        "object": "person-stephen-cole",
+        "evidence": "Since I report to Stephen it keeps the escalation path simple",
+        "required": true
+      },
+      {
+        "subject": "person-stephen-cole",
+        "predicate": "reports_to",
+        "object": "person-janet-wu",
+        "evidence": "Janet Wu is my boss since the reorg",
+        "required": true
+      },
+      {
+        "subject": "person-nadia-hassan",
+        "predicate": "reports_to",
+        "object": "person-lauren-park",
+        "evidence": "Nadia reports up to you, Lauren",
+        "required": true
+      },
+      {
+        "subject": "person-nadia-hassan",
+        "predicate": "member_of_team",
+        "object": "team-data-science",
+        "evidence": "She's on my data science team",
+        "required": false
+      },
+      {
+        "subject": "person-nadia-hassan",
+        "predicate": "works_on",
+        "object": "project-atlas-migration",
+        "evidence": "she's already deep in the Atlas migration",
+        "required": true
+      },
+      {
+        "subject": "person-lauren-park",
+        "predicate": "member_of_team",
+        "object": "team-data-science",
+        "evidence": "I run the data science team (schema has no 'leads'; team attachment via member_of_team/has_members)",
+        "required": false
+      },
+      {
+        "subject": "person-barry-chen",
+        "predicate": "collaborates_with",
+        "object": "person-nadia-hassan",
+        "evidence": "Barry leads the workstream, Nadia covers data under me — staffed together",
+        "required": false
+      }
+    ],
+    "forbidden_relationships": [
+      {
+        "subject": "person-barry-chen",
+        "predicate": "reports_to",
+        "object": "person-janet-wu",
+        "reason": "skip-level misread — Janet is Barry's skip-level, not his manager"
+      },
+      {
+        "subject": "person-barry-chen",
+        "predicate": "collaborates_with",
+        "object": "person-stephen-cole",
+        "reason": "hierarchical relationship downgraded to collaboration — the production coercion bug"
+      },
+      {
+        "subject": "person-nadia-hassan",
+        "predicate": "collaborates_with",
+        "object": "person-lauren-park",
+        "reason": "hierarchical relationship downgraded to collaboration — the production coercion bug"
+      }
+    ],
+    "signals": [
+      {
+        "gold_id": "sig-staffing-structure",
+        "type": "decision",
+        "keywords_all": ["workstream"],
+        "keywords_any": ["Barry", "lead", "structure", "staffing"],
+        "required": true
+      },
+      {
+        "gold_id": "sig-raci-draft",
+        "type": "action_item",
+        "keywords_all": ["RACI"],
+        "keywords_any": ["Monday", "draft"],
+        "owner": "Barry Chen",
+        "required": true
+      },
+      {
+        "gold_id": "sig-janet-availability",
+        "type": "action_item",
+        "keywords_all": ["availability"],
+        "keywords_any": ["Janet", "kickoff", "sign-off"],
+        "owner": "Stephen Cole",
+        "required": false
+      },
+      {
+        "gold_id": "sig-nadia-allocation",
+        "type": "decision",
+        "keywords_all": ["Nadia"],
+        "keywords_any": ["Atlas", "staging", "rebalance", "data"],
+        "required": false
+      },
+      {
+        "gold_id": "sig-sprint-rebalance",
+        "type": "key_point",
+        "keywords_all": ["sprint load"],
+        "required": false
+      }
+    ],
+    "forbidden_signals": [
+      {
+        "keywords_all": ["Accenture"],
+        "reason": "former-employer anecdote is not a signal"
+      }
+    ],
+    "summary": null
+  },
+  "replay": {
+    "entities": null,
+    "signals": null,
+    "relationships": null,
+    "summary": null
+  }
+}

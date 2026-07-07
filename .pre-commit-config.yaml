@@ -1,0 +1,28 @@
+# Pre-commit hooks. Lint policy lives in pyproject.toml [tool.ruff] — ruff is
+# the single lint/format tool for this repo (same command CI runs).
+# See https://pre-commit.com for more information.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^app/
+
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: debug-statements
+
+default_language_version:
+  python: python3
+
+exclude: ^(migrations/|\.git/)

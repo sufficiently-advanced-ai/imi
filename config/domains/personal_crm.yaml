@@ -1,0 +1,177 @@
+domain:
+  id: personal_crm
+  name: "Personal CRM"
+  version: "1.0.0"
+  ui:
+    app_name: "My Network"
+    entity_label: "Contacts & Companies"
+    graph_label: "Network Map"
+    nav_groups:
+      knowledge_base:
+        label: "My Network"
+        items:
+          /entities:
+            label: "Contacts & Companies"
+            description: "Manage your personal and professional contacts"
+          /domain-graph-enhanced:
+            label: "Network Map"
+            description: "Interactive visualization of your network"
+      intelligence:
+        label: "Network Intelligence"
+        items:
+          /feed:
+            label: "Activity Feed"
+            description: "Recent contact activity and follow-up reminders"
+    terminology:
+      entity: "contact"
+      signal: "update"
+  entities:
+    contact:
+      id: contact
+      name: contact
+      label: Contact
+      icon: user
+      description: Personal and professional contacts
+      plural: contacts
+      plural_label: Contacts
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: email
+          type: string
+        - name: phone
+          type: string
+        - name: last_contact
+          type: date
+        - name: relationship_strength
+          type: enum
+          enum: ["weak", "moderate", "strong"]
+      relationships:
+        - type: works_at
+          target: company
+          cardinality: many_to_one
+          inverse_name: has_employees
+        - type: related_to
+          target: contact
+          cardinality: many_to_many
+          inverse_name: related_to
+    company:
+      id: company
+      name: company
+      label: Company
+      icon: building-2
+      description: Organizations and companies
+      plural: companies
+      plural_label: Companies
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: industry
+          type: string
+        - name: size
+          type: enum
+          enum: ["small", "medium", "large", "enterprise"]
+      relationships:
+        - type: has_employees
+          target: contact
+          cardinality: one_to_many
+          inverse_name: works_at
+    activity:
+      id: activity
+      name: activity
+      label: Activity
+      icon: calendar
+      description: Contact activities and interactions
+      plural: activities
+      plural_label: Activities
+      attributes:
+        - name: type
+          type: enum
+          enum: ["meeting", "call", "email", "event"]
+        - name: date
+          type: datetime
+          required: true
+        - name: notes
+          type: string
+      relationships:
+        - type: with_contact
+          target: contact
+          cardinality: many_to_many
+  intelligence_patterns:
+    follow_up_needed:
+      name: "Follow Up Needed"
+      pattern_type: risk
+      triggers:
+        - entity: contact
+          condition: no_recent_contact
+          weight: 0.8
+      priority: medium
+      actions:
+        - "Schedule follow up"
+        - "Send check-in message"
+    relationship_at_risk:
+      name: "Relationship at Risk"
+      pattern_type: risk
+      triggers:
+        - entity: contact
+          condition: lost_touch_mentioned
+          weight: 0.9
+      priority: high
+      actions:
+        - "Priority outreach"
+        - "Schedule call"
+    introduction_opportunity:
+      name: "Introduction Opportunity"
+      pattern_type: opportunity
+      triggers:
+        - entity: contact
+          condition: networking_need_mentioned
+          weight: 0.7
+      priority: medium
+      actions:
+        - "Identify mutual connections"
+        - "Facilitate introduction"
+    mutual_connection:
+      name: "Mutual Connection Discovery"
+      pattern_type: insight
+      triggers:
+        - entity: contact
+          condition: shared_connection_mentioned
+          weight: 0.6
+      priority: low
+      actions:
+        - "Document connection"
+        - "Explore networking"
+    career_update:
+      name: "Career Update Detection"
+      pattern_type: opportunity
+      triggers:
+        - entity: contact
+          condition: job_change_mentioned
+          weight: 0.9
+      priority: high
+      actions:
+        - "Send congratulations"
+        - "Update contact info"
+  extraction_priorities:
+    emails:
+      pattern: contact_mentions
+      priority: high
+    meetings:
+      pattern: meeting_requests
+      priority: high
+  success_metrics:
+    - name: network_growth
+      type: percentage
+      calculation: "new_contacts_this_quarter / total_contacts"
+      target: 0.10
+    - name: relationship_health
+      type: percentage
+      calculation: "strong_relationships / total_contacts"
+      target: 0.30
+    - name: engagement_rate
+      type: percentage
+      calculation: "contacted_last_90_days / total_contacts"
+      target: 0.60

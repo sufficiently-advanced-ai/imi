@@ -1,0 +1,20 @@
+{
+  "claude": {
+    "name": "claude",
+    "status": "unknown",
+    "error_message": null,
+    "api_key": "${ANTHROPIC_API_KEY}",
+    "model": "claude-sonnet-4-5-20250929",
+    "sonnet_model": "claude-sonnet-4-5-20250929",
+    "haiku_model": "claude-haiku-4-5-20251001",
+    "agent_model": "claude-sonnet-4-5-20250929"
+  },
+  "github": {
+    "name": "github",
+    "status": "unknown",
+    "error_message": null,
+    "token": "${GITHUB_TOKEN}",
+    "repo": "your-org/your-knowledge-repo",
+    "webhook_secret": "${GITHUB_WEBHOOK_SECRET}"
+  }
+}
