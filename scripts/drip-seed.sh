@@ -16,6 +16,9 @@ SLEEP_BETWEEN=${SLEEP_BETWEEN:-1800}
 mkdir -p "$(dirname "$0")/../logs"
 
 while true; do
+  # Sync subscription creds into the container's auth dir (see compose
+  # override: single-file mounts go stale when Claude Code rotates the token).
+  cp -f "$HOME/.claude/.credentials.json" "$HOME/Developer/imi/.claude-auth/.credentials.json" 2>/dev/null || true
   echo "=== $(date '+%F %T') seed pass starting ==="
   docker exec imi-app python scripts/rebuild_kb.py seed \
     --folder "$SEED_DIR" --resume --yes
