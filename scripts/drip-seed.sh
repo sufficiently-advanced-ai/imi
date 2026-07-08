@@ -12,6 +12,7 @@ set -uo pipefail
 
 SEED_DIR=${SEED_DIR:-/app/data/imi-seed}
 SLEEP_BETWEEN=${SLEEP_BETWEEN:-1800}
+CONCURRENCY=${CONCURRENCY:-3}
 
 mkdir -p "$(dirname "$0")/../logs"
 
@@ -21,7 +22,7 @@ while true; do
   cp -f "$HOME/.claude/.credentials.json" "$HOME/Developer/imi/.claude-auth/.credentials.json" 2>/dev/null || true
   echo "=== $(date '+%F %T') seed pass starting ==="
   docker exec imi-app python scripts/rebuild_kb.py seed \
-    --folder "$SEED_DIR" --resume --yes
+    --folder "$SEED_DIR" --resume --yes --concurrency "$CONCURRENCY"
   rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "=== $(date '+%F %T') seed COMPLETE ==="

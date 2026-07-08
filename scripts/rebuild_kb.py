@@ -477,57 +477,79 @@ async def _run_seed(args) -> int:
     from app.models.ingestion.models import IngestRequest
     from app.routes.ingest import _run_ingestion_pipeline
 
-    ok = dupes = failures = 0
+    # Bounded concurrency: N files in flight at once. Files are launched in
+    # chronological order and the semaphore keeps the skew to at most N-1
+    # files, so supersession/conflict ordering stays near-chronological. Git
+    # writes are serialized by git_ops.git_lock; manifest writes by a local
+    # lock. On failure without --continue-on-error, in-flight files finish but
+    # nothing new launches (usage-window exhaustion stops the pass cleanly).
+    concurrency = max(1, getattr(args, "concurrency", 1))
+    sem = asyncio.Semaphore(concurrency)
+    manifest_lock = asyncio.Lock()
+    counts = {"ok": 0, "dupes": 0, "failures": 0}
+    stop_launching = asyncio.Event()
+
+    async def _seed_one(i: int, path, content: str, meta: dict) -> None:
+        async with sem:
+            if stop_launching.is_set():
+                return
+            sha = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+            request = IngestRequest(
+                content=content,
+                source_id=f"seed:{path.name}",
+                title=meta["title"],
+                participants=meta["participants"] or None,
+                timestamp=meta["timestamp"],
+            )
+            job_id = f"seed-{uuid.uuid4().hex[:12]}"
+            job_store: dict = {}
+            try:
+                result = await _run_ingestion_pipeline(request, job_id, job_store)
+            except Exception as e:
+                result = {"status": "failed", "error": str(e)}
+
+            status = (result or {}).get("status", "failed")
+            async with manifest_lock:
+                manifest[path.name] = {
+                    "sha256": sha,
+                    "job_id": job_id,
+                    "status": status,
+                    "bot_id": f"ingest-{(result or {}).get('content_hash', '')[:12]}",
+                }
+                save_manifest(folder, manifest)
+
+            if status == "completed":
+                counts["ok"] += 1
+                print(
+                    f"[{i}/{len(entries)}] {path.name}: completed — "
+                    f"{result.get('signals_written', 0)} signals, "
+                    f"{result.get('decisions_found', 0)} decisions"
+                )
+            elif status == "duplicate":
+                counts["dupes"] += 1
+                print(f"[{i}/{len(entries)}] {path.name}: duplicate — skipped")
+            else:
+                counts["failures"] += 1
+                print(
+                    f"[{i}/{len(entries)}] {path.name}: FAILED — "
+                    f"{(result or {}).get('error', job_store.get(f'job:{job_id}', {}).get('error'))}"
+                )
+                if not args.continue_on_error:
+                    stop_launching.set()
+
+    tasks = []
     for i, (path, content, meta) in enumerate(entries, 1):
         if args.resume and manifest.get(path.name, {}).get("status") == "completed":
             print(f"[{i}/{len(entries)}] {path.name}: already completed — skipped")
             continue
+        tasks.append(asyncio.create_task(_seed_one(i, path, content, meta)))
+    if tasks:
+        await asyncio.gather(*tasks)
 
-        sha = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
-        request = IngestRequest(
-            content=content,
-            source_id=f"seed:{path.name}",
-            title=meta["title"],
-            participants=meta["participants"] or None,
-            timestamp=meta["timestamp"],
-        )
-        job_id = f"seed-{uuid.uuid4().hex[:12]}"
-        job_store: dict = {}
-        try:
-            result = await _run_ingestion_pipeline(request, job_id, job_store)
-        except Exception as e:
-            result = {"status": "failed", "error": str(e)}
-
-        status = (result or {}).get("status", "failed")
-        manifest[path.name] = {
-            "sha256": sha,
-            "job_id": job_id,
-            "status": status,
-            "bot_id": f"ingest-{(result or {}).get('content_hash', '')[:12]}",
-        }
-        save_manifest(folder, manifest)
-
-        if status == "completed":
-            ok += 1
-            print(
-                f"[{i}/{len(entries)}] {path.name}: completed — "
-                f"{result.get('signals_written', 0)} signals, "
-                f"{result.get('decisions_found', 0)} decisions"
-            )
-        elif status == "duplicate":
-            dupes += 1
-            print(f"[{i}/{len(entries)}] {path.name}: duplicate — skipped")
-        else:
-            failures += 1
-            print(
-                f"[{i}/{len(entries)}] {path.name}: FAILED — "
-                f"{(result or {}).get('error', job_store.get(f'job:{job_id}', {}).get('error'))}"
-            )
-            if not args.continue_on_error:
-                print(
-                    "Stopping (use --continue-on-error to keep going; --resume to retry)."
-                )
-                return 1
+    ok, dupes, failures = counts["ok"], counts["dupes"], counts["failures"]
+    if failures and not args.continue_on_error:
+        print("Stopping (use --continue-on-error to keep going; --resume to retry).")
+        return 1
 
     print(f"\nSeed complete: {ok} ingested, {dupes} duplicates, {failures} failed.")
     return 0 if failures == 0 else 1
@@ -586,6 +608,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Show the plan, ingest nothing"
     )
     seed.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    seed.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Files ingested in parallel (git/manifest writes stay serialized)",
+    )
     return parser
 
 

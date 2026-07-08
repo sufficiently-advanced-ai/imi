@@ -104,6 +104,8 @@ class Settings(JSONConfigSettings):
     # endpoint point at an Anthropic-compatible gateway/proxy (e.g. a single
     # in-DMZ box). Multi-endpoint routing lives in config/inference.yaml.
     ANTHROPIC_BASE_URL: str = ""
+    # ClaudeClient semaphore: max LLM requests in flight per process.
+    CLAUDE_MAX_CONCURRENCY: int = 3
 
     # Model configuration — new canonical names (clear tier-based naming)
     CLAUDE_SONNET_MODEL: str = "claude-sonnet-4-5-20250929"  # Full-power: complex analysis, chat, synthesis
