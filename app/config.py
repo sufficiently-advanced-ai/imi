@@ -169,6 +169,28 @@ class Settings(JSONConfigSettings):
         3600, description="Database pool recycle time in seconds"
     )
 
+    # Standing Jobs Settings (Sprint 3, S3-5)
+    STANDING_JOBS_ENABLED: bool = True
+    STALENESS_EVAL_INTERVAL_SECONDS: int = Field(21600, ge=60)  # 6 hours
+    WEEKLY_DIGEST_CHECK_INTERVAL_SECONDS: int = Field(86400, ge=60)  # 24 hours
+    COMMITMENT_AGING_DAYS: int = Field(
+        7, ge=1
+    )  # Threshold for surfacing old open action items in weekly digest
+
+    # Conflict Detection Settings (Sprint 4, S4-1)
+    CONFLICT_CONFIDENCE_THRESHOLD: float = Field(
+        0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum LLM confidence to surface a conflict candidate",
+    )
+    CONFLICT_MAX_COMPARISONS_PER_INGEST: int = Field(
+        5,
+        ge=1,
+        le=50,
+        description="Maximum standing signals compared per new decision ingest",
+    )
+
     # Encryption settings
     ENCRYPTION_KEY: str = Field("", env="ENCRYPTION_KEY", description="AES encryption key for sensitive data")
 

@@ -71,7 +71,10 @@ class CommitmentUpdateRequest(BaseModel):
 
 def get_storage() -> AnalysisStorage:
     """Get analysis storage instance"""
-    return AnalysisStorage(base_path=settings.REPO_PATH)
+    # REPO_PATH is not a Settings field; every analysis endpoint raised
+    # AttributeError here. Fall back to the constructor default ("repo",
+    # the in-container corpus checkout).
+    return AnalysisStorage(base_path=getattr(settings, "REPO_PATH", "repo"))
 
 
 @router.get("/meetings/{meeting_id}")
