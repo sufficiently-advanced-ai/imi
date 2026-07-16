@@ -15,6 +15,7 @@ Config shape (all sections optional)::
         api_key_env: TAILNET_LLM_KEY
         pricing: { input: 0.0, output: 0.0 }
         allow_tools: false
+        extra_body: { chat_template_kwargs: { enable_thinking: false } }
       client-dmz-bedrock:
         type: bedrock
         litellm_model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
@@ -209,6 +210,10 @@ class InferenceRegistry:
         extra: dict[str, Any] = {}
         if spec.get("aws_region"):
             extra["aws_region_name"] = spec["aws_region"]
+        if spec.get("extra_body"):
+            # Arbitrary request-body params LiteLLM forwards verbatim to the
+            # backend (e.g. chat_template_kwargs to disable Qwen thinking mode).
+            extra["extra_body"] = spec["extra_body"]
         return ResolvedEndpoint(
             name=name,
             is_anthropic=False,

@@ -41,6 +41,23 @@ endpoints:
       input: 0.0                        # USD per 1M input tokens
       output: 0.0                       # USD per 1M output tokens
 
+  # Local Apple-silicon model via mlx_lm.server (OpenAI-compatible), e.g.:
+  #   mlx_lm.server --model mlx-community/Qwen3.6-27B-4bit --port 8000
+  # `extra_body` is forwarded verbatim in every request body — use it for
+  # backend-specific params. For Qwen3+ hybrid-reasoning models, disabling
+  # thinking mode matters: left on, the server returns the reasoning in a
+  # separate field and `content` can come back EMPTY, which downstream
+  # parsers read as an empty extraction rather than an error.
+  # From inside Docker, the host's server is http://host.docker.internal:<port>.
+  local-mlx:
+    type: openai
+    litellm_model: hosted_vllm/mlx-community/Qwen3.6-27B-4bit
+    base_url: http://host.docker.internal:8000/v1
+    allow_tools: false
+    pricing: { input: 0.0, output: 0.0 }
+    extra_body:
+      chat_template_kwargs: { enable_thinking: false }
+
   # DigitalOcean serverless inference (OpenAI-compatible, many models behind one
   # base URL). `type: digitalocean` is a convenience over `type: openai`: it
   # defaults base_url to https://inference.do-ai.run/v1 and wraps the bare model
