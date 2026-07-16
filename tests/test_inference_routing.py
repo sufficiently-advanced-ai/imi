@@ -60,6 +60,71 @@ def test_operation_override_wins_over_alias():
     assert reg.resolve("claude-haiku-4-5-20251001", "chat").name == "anthropic-default"
 
 
+def test_extra_body_flows_into_endpoint_extra():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/mlx-community/Qwen3.6-27B-4bit",
+                "base_url": "http://host.docker.internal:8000/v1",
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+    }
+
+
+def test_non_dict_extra_body_is_config_error():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "extra_body": "enable_thinking=false",
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    with pytest.raises(InferenceConfigError, match="extra_body"):
+        reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+
+
+def test_digitalocean_forwards_extra_body(monkeypatch):
+    monkeypatch.setenv("DO_KEY", "sk-do-test")
+    cfg = {
+        "endpoints": {
+            "do-model": {
+                "type": "digitalocean",
+                "model": "some-model",
+                "api_key_env": "DO_KEY",
+                "extra_body": {"foo": "bar"},
+            }
+        },
+        "operations": {"metadata_extraction": "do-model"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {"extra_body": {"foo": "bar"}}
+
+
+def test_no_extra_body_leaves_extra_empty():
+    cfg = {
+        "endpoints": {
+            "tailnet": {"type": "openai", "litellm_model": "hosted_vllm/qwen"}
+        },
+        "operations": {"metadata_extraction": "tailnet"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {}
+
+
 def test_unknown_endpoint_reference_is_config_error():
     cfg = {"endpoints": {}, "aliases": {"some-model": "does-not-exist"}}
     with pytest.raises(InferenceConfigError):
