@@ -156,6 +156,15 @@ class InferenceRegistry:
         api_key_env = spec.get("api_key_env")
         api_key = os.getenv(api_key_env) if api_key_env else None
 
+        # Fail closed on a malformed extra_body here rather than as an opaque
+        # LiteLLM error at call time.
+        extra_body = spec.get("extra_body")
+        if extra_body is not None and not isinstance(extra_body, dict):
+            raise InferenceConfigError(
+                f"endpoint {name!r}: 'extra_body' must be a mapping, "
+                f"got {type(extra_body).__name__}"
+            )
+
         if etype == "anthropic":
             return ResolvedEndpoint(
                 name=name,
@@ -199,6 +208,7 @@ class InferenceRegistry:
                 # plain-generation only by contract. Use type: openai for an
                 # endpoint where tool use should be configurable.
                 allow_tools=False,
+                extra={"extra_body": extra_body} if extra_body else {},
             )
 
         # Non-Anthropic -> LiteLLM. litellm_model carries the provider prefix.
@@ -210,10 +220,10 @@ class InferenceRegistry:
         extra: dict[str, Any] = {}
         if spec.get("aws_region"):
             extra["aws_region_name"] = spec["aws_region"]
-        if spec.get("extra_body"):
+        if extra_body:
             # Arbitrary request-body params LiteLLM forwards verbatim to the
             # backend (e.g. chat_template_kwargs to disable Qwen thinking mode).
-            extra["extra_body"] = spec["extra_body"]
+            extra["extra_body"] = extra_body
         return ResolvedEndpoint(
             name=name,
             is_anthropic=False,
