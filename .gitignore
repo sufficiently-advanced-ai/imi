@@ -132,3 +132,5 @@ test_output/
 
 # Local compose overrides (may contain instance-specific hosts/secrets)
 docker-compose.override.yml
+.claude-auth/
+logs/

@@ -199,6 +199,76 @@ async def test_enrichment_failure_never_blocks_persistence(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_enrichment_summary_lands_on_the_top_level_field(tmp_path, monkeypatch):
+    from app.services import capture_service
+    from app.services import signal_indexing
+
+    async def _enrich(content, claude_client=None):
+        return {"type": "observation", "summary": "A generated summary."}
+
+    store = _make_store(tmp_path)
+    monkeypatch.setattr(capture_service, "enrich_capture", _enrich)
+    monkeypatch.setattr(signal_indexing, "index_capture_one", _FakeIndexing())
+
+    mock_git = MagicMock()
+    mock_git.commit_and_push = AsyncMock()
+
+    with patch("app.services.capture_service.git_ops", mock_git):
+        result = await capture_service.capture_and_persist(
+            "A thought.", source="manual", store=store, repo_root=tmp_path
+        )
+
+    assert store.get(result["id"]).summary == "A generated summary."
+
+
+@pytest.mark.asyncio
+async def test_existing_summary_survives_an_enrichment_with_none(tmp_path, monkeypatch):
+    """A summary already on the record is not clobbered by a summary-less enrichment.
+
+    capture_and_persist does not pass `summary` to store.capture() today, so a
+    caller value cannot reach this branch through that entry point. CaptureStore
+    .capture does accept one, though, so drive the real service against a store
+    that supplies it -- this has to fail if capture_service stops falling back,
+    which asserting the expression inline would not.
+    """
+    from app.services import capture_service
+    from app.services import signal_indexing
+
+    async def _enrich_without_summary(content, claude_client=None):
+        return {"type": "observation", "summary": None}
+
+    real_store = _make_store(tmp_path)
+
+    class SummarySupplyingStore:
+        """Stands in for a caller that threads `summary` into store.capture()."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def capture(self, content, source, source_id=None, **kwargs):
+            kwargs.setdefault("summary", "Caller wrote this.")
+            return self._inner.capture(content, source, source_id, **kwargs)
+
+        def __getattr__(self, item):
+            return getattr(self._inner, item)
+
+    store = SummarySupplyingStore(real_store)
+    monkeypatch.setattr(capture_service, "enrich_capture", _enrich_without_summary)
+    monkeypatch.setattr(signal_indexing, "index_capture_one", _FakeIndexing())
+
+    mock_git = MagicMock()
+    mock_git.commit_and_push = AsyncMock()
+
+    with patch("app.services.capture_service.git_ops", mock_git):
+        result = await capture_service.capture_and_persist(
+            "A thought.", source="manual", store=store, repo_root=tmp_path
+        )
+
+    # Read back through the real store: the persisted record, not a local copy.
+    assert real_store.get(result["id"]).summary == "Caller wrote this."
+
+
+@pytest.mark.asyncio
 async def test_git_failure_is_non_fatal(tmp_path, monkeypatch):
     from app.services import capture_service
     from app.services import signal_indexing

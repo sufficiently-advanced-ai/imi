@@ -121,3 +121,119 @@ def test_distinct_content_is_not_deduped(tmp_path):
     assert a.deduped is False
     assert b.deduped is False
     assert a.memory.id != b.memory.id
+
+
+# ---------------------------------------------------------------------------
+# created_after filter
+# ---------------------------------------------------------------------------
+
+
+def test_created_after_filters_list_and_count(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    older = store.capture("older note", source="manual").memory
+    newer = store.capture("newer note", source="manual").memory
+
+    # created_at is an ISO-8601 string compared lexicographically, so the
+    # newer record's own timestamp is an inclusive floor.
+    assert [m.id for m in store.list(created_after=newer.created_at)] == [newer.id]
+    assert store.count(created_after=newer.created_at) == 1
+
+    assert store.count(created_after=older.created_at) == 2
+    assert store.count(created_after="9999-01-01T00:00:00") == 0
+
+
+def test_created_after_composes_with_source_filter(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("web note", source="web")
+    manual = store.capture("manual note", source="manual").memory
+
+    # Both predicates must apply, not just the last one evaluated.
+    assert store.count(source="manual", created_after="0001-01-01T00:00:00") == 1
+    assert store.count(source="web", created_after=manual.created_at) == 0
+
+
+def test_no_created_after_returns_everything(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("one", source="manual")
+    store.capture("two", source="manual")
+    assert store.count() == 2
+    assert len(store.list()) == 2
+
+
+def test_created_after_compares_instants_not_strings(tmp_path):
+    """Equivalent instants written with different UTC offsets must agree.
+
+    A lexicographic comparison gets this backwards: '...T10:00:00-04:00' sorts
+    before '...T10:30:00+00:00' as text, but is half an hour *later* in time.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    store = CaptureStore(capture_dir=tmp_path)
+    mem = store.capture("a note", source="manual").memory
+    created = datetime.fromisoformat(mem.created_at)
+
+    an_hour_later = created + timedelta(hours=1)
+    # Same instant, expressed in a -04:00 offset rather than UTC.
+    shifted = an_hour_later.astimezone(UTC) - timedelta(hours=4)
+    as_offset = shifted.replace(tzinfo=None).isoformat() + "-04:00"
+
+    assert store.count(created_after=an_hour_later.isoformat()) == 0
+    assert store.count(created_after=as_offset) == 0, (
+        "offset-aware bound was compared as a string"
+    )
+
+
+def test_created_after_accepts_z_suffix_and_naive_values(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    store = CaptureStore(capture_dir=tmp_path)
+    mem = store.capture("a note", source="manual").memory
+    created = datetime.fromisoformat(mem.created_at)
+    before = (created - timedelta(minutes=1)).astimezone(UTC)
+
+    assert store.count(created_after=before.isoformat().replace("+00:00", "Z")) == 1
+    # Naive values are read as UTC, matching how created_at is written.
+    assert store.count(created_after=before.replace(tzinfo=None).isoformat()) == 1
+
+
+def test_list_sorts_by_instant_across_offsets(tmp_path):
+    """Newest-first ordering must survive mixed UTC offsets on stored records.
+
+    Chosen so raw string sorting is actively wrong, not merely lucky:
+    '2026-08-21T17:30:00-04:00' is 21:30Z -- the *later* instant -- but sorts
+    before '2026-08-21T20:00:00+00:00' as text, so a string sort puts it last.
+    """
+    store = CaptureStore(capture_dir=tmp_path)
+    earlier = store.capture("earlier", source="manual").memory
+    later = store.capture("later", source="manual").memory
+
+    earlier = earlier.model_copy(update={"created_at": "2026-08-21T20:00:00+00:00"})
+    later = later.model_copy(update={"created_at": "2026-08-21T17:30:00-04:00"})
+    store.update(earlier)
+    store.update(later)
+
+    assert [m.id for m in store.list()] == [later.id, earlier.id]
+
+
+def test_list_keeps_undated_records_last(tmp_path):
+    # Unfiltered listing still returns records whose timestamp cannot be
+    # parsed; they just need a deterministic position rather than whatever
+    # raw string comparison produced.
+    store = CaptureStore(capture_dir=tmp_path)
+    good = store.capture("good", source="manual").memory
+    bad = store.capture("bad", source="manual").memory
+    store.update(bad.model_copy(update={"created_at": "not-a-timestamp"}))
+
+    listed = [m.id for m in store.list()]
+    assert listed[0] == good.id
+    assert listed[-1] == bad.id
+
+
+def test_malformed_created_after_raises(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("a note", source="manual")
+    for bad in ("banana", "2026-13-45", ""):
+        with pytest.raises(ValueError):
+            store.count(created_after=bad)
+        with pytest.raises(ValueError):
+            store.list(created_after=bad)

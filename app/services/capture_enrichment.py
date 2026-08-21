@@ -1,8 +1,11 @@
 """LLM metadata enrichment for captures (Phase 1 of the OB1 absorption).
 
 Ports OB1's ``extractMetadata`` (server/index.ts): a captured thought is
-classified into type/topics/people/action_items/dates_mentioned with a cheap
-Haiku call. Enrichment is strictly best-effort — every failure mode (no
+classified into type/topics/people/action_items/dates_mentioned/summary with a
+cheap Haiku call. ``summary`` (added 2026-08-20) is mirrored onto the capture's
+top-level ``summary`` field by capture_service — the openbrain→imi forwarder
+ships raw content and imi is the only summarizer now that openbrain's
+enrichment is disabled (DISABLE_ENRICHMENT, 2026-08-19). Enrichment is strictly best-effort — every failure mode (no
 client, API error, empty or unparseable response) returns FALLBACK_METADATA
 so capture persistence is never blocked (persist-first ordering; the
 embeddings do the heavy lifting when metadata is off, per the OB1 design).
@@ -41,6 +44,7 @@ FALLBACK_METADATA: dict[str, Any] = {
     "people": [],
     "action_items": [],
     "dates_mentioned": [],
+    "summary": None,
 }
 
 _SYSTEM_PROMPT = (
@@ -51,8 +55,9 @@ _SYSTEM_PROMPT = (
     '"topics" (list of 1-5 short lowercase tags), '
     '"people" (list of person names mentioned), '
     '"action_items" (list of concrete follow-ups, empty if none), '
-    '"dates_mentioned" (list of ISO dates referenced, empty if none). '
-    "No prose, no markdown fences."
+    '"dates_mentioned" (list of ISO dates referenced, empty if none), '
+    '"summary" (1-2 sentence plain-prose summary of the content). '
+    "No prose outside the JSON, no markdown fences."
 )
 
 
@@ -90,12 +95,15 @@ def _as_str_list(value: Any) -> list[str]:
 def _coerce_metadata(raw: dict) -> dict[str, Any]:
     """Normalize a parsed LLM object into the enrichment metadata shape."""
     raw_type = str(raw.get("type", "")).strip().lower()
+    summary = raw.get("summary")
+    summary = summary.strip() if isinstance(summary, str) and summary.strip() else None
     return {
         "type": raw_type if raw_type in CAPTURE_TYPES else "observation",
         "topics": _as_str_list(raw.get("topics")),
         "people": _as_str_list(raw.get("people")),
         "action_items": _as_str_list(raw.get("action_items")),
         "dates_mentioned": _as_str_list(raw.get("dates_mentioned")),
+        "summary": summary,
     }
 
 

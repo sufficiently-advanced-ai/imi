@@ -23,6 +23,7 @@ import hashlib
 import logging
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
@@ -33,6 +34,62 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path("/app/repo")
 CAPTURE_DIR = REPO_ROOT / "memory" / "captures"
+
+
+def parse_instant(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp into an aware UTC datetime.
+
+    Timestamp fields on these records are strings, so filtering on them is a
+    string comparison unless both sides are normalized first. That is wrong
+    across UTC offsets: ``2026-08-21T10:00:00-04:00`` (14:00Z) sorts *before*
+    ``2026-08-21T10:30:00+00:00`` lexicographically but is the later instant.
+    A naive value is read as UTC, matching how ``created_at`` is written
+    (``datetime.now(UTC).isoformat()``).
+
+    Raises ``ValueError`` on anything unparseable, so a malformed filter fails
+    loudly instead of silently returning a garbage lexicographic slice.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+# Unparseable stored timestamps sort as oldest so they land last under
+# newest-first ordering, rather than wherever raw string comparison put them.
+_UNDATED = datetime.min.replace(tzinfo=UTC)
+
+
+def _created_at_instant(mem: CapturedMemory) -> datetime | None:
+    """``mem.created_at`` as an aware UTC instant, or None if unparseable."""
+    try:
+        return parse_instant(mem.created_at)
+    except ValueError:
+        logger.warning(
+            "[CAPTURE] Unparseable created_at %r on %s",
+            mem.created_at,
+            mem.id,
+        )
+        return None
+
+
+def _created_at_or_after(mem: CapturedMemory, after: datetime | None) -> bool:
+    """Whether ``mem`` was created at or after ``after`` (None -> always true)."""
+    if after is None:
+        return True
+    instant = _created_at_instant(mem)
+    # A stored timestamp that predates the write path (or was hand-edited)
+    # cannot be placed on the timeline, so it cannot satisfy a lower bound.
+    return instant is not None and instant >= after
+
+
+def _sort_key(mem: CapturedMemory) -> datetime:
+    """Ordering key for newest-first listing.
+
+    Must normalize for the same reason the filter does: raw ISO-8601 strings
+    only sort chronologically when every value carries the same UTC offset.
+    """
+    return _created_at_instant(mem) or _UNDATED
 
 # Guards the dedup check-then-save against thread-executor callers (the
 # section is synchronous, so it is already atomic on the event loop).
@@ -160,15 +217,21 @@ class CaptureStore:
         review_status: str | None = None,
         source: str | None = None,
         limit: int = 50,
+        created_after: str | None = None,
     ) -> list[CapturedMemory]:
-        """List captures, newest first, with optional exact-field filters."""
+        """List captures, newest first, with optional exact-field filters.
+
+        Raises ``ValueError`` if ``created_after`` is not ISO-8601.
+        """
+        after = parse_instant(created_after) if created_after is not None else None
         records = [
             mem
             for mem in self._iter_memories()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
+            and _created_at_or_after(mem, after)
         ]
-        records.sort(key=lambda m: m.created_at, reverse=True)
+        records.sort(key=_sort_key, reverse=True)
         return records[:limit]
 
     def count(
@@ -176,13 +239,19 @@ class CaptureStore:
         *,
         review_status: str | None = None,
         source: str | None = None,
+        created_after: str | None = None,
     ) -> int:
-        """Full match count for the same filters as ``list`` (pre-truncation)."""
+        """Full match count for the same filters as ``list`` (pre-truncation).
+
+        Raises ``ValueError`` if ``created_after`` is not ISO-8601.
+        """
+        after = parse_instant(created_after) if created_after is not None else None
         return sum(
             1
             for mem in self._iter_memories()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
+            and _created_at_or_after(mem, after)
         )
 
     def capture(

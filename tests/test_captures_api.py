@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.services.memory_capture import capture_memory
+from app.services.memory_capture import capture_memory, parse_instant
 
 
 @pytest.fixture
@@ -59,19 +59,33 @@ def client(monkeypatch):
     ]
 
     class FakeStore:
-        def _matches(self, *, review_status=None, source=None):
+        def _matches(self, *, review_status=None, source=None, created_after=None):
+            # Mirror the real store: normalize to an instant, and let a
+            # malformed bound raise ValueError so the route can map it to 422.
+            after = (
+                parse_instant(created_after) if created_after is not None else None
+            )
             return [
                 m
                 for m in stored
                 if (source is None or m.source == source)
                 and (review_status is None or m.review_status == review_status)
+                and (after is None or parse_instant(m.created_at) >= after)
             ]
 
-        def list(self, *, review_status=None, source=None, limit=50):
-            return self._matches(review_status=review_status, source=source)[:limit]
+        def list(self, *, review_status=None, source=None, limit=50, created_after=None):
+            return self._matches(
+                review_status=review_status, source=source, created_after=created_after
+            )[:limit]
 
-        def count(self, *, review_status=None, source=None):
-            return len(self._matches(review_status=review_status, source=source))
+        def count(self, *, review_status=None, source=None, created_after=None):
+            return len(
+                self._matches(
+                    review_status=review_status,
+                    source=source,
+                    created_after=created_after,
+                )
+            )
 
         def get(self, memory_id):
             for m in stored:
@@ -138,6 +152,34 @@ class TestListAndDetail:
         body = c.get("/api/captures", params={"limit": 1}).json()
         assert len(body["captures"]) == 1
         assert body["total"] == 2  # pre-truncation count
+
+    def test_list_filters_by_created_after(self, client):
+        c, _, stored = client
+        # created_at is an ISO-8601 string and the filter is a lexicographic
+        # >= against it, so an all-zeros floor matches everything and a
+        # far-future one matches nothing.
+        body = c.get("/api/captures", params={"created_after": "0001-01-01T00:00:00"}).json()
+        assert body["total"] == len(stored)
+
+        body = c.get("/api/captures", params={"created_after": "9999-01-01T00:00:00"}).json()
+        assert body["total"] == 0
+        assert body["captures"] == []
+
+    def test_created_after_narrows_total_not_just_the_page(self, client):
+        # `total` is the pre-truncation match count, so it has to honor the
+        # same filter as `list` -- a filtered-out capture must not inflate it.
+        c, _, stored = client
+        cutoff = max(m.created_at for m in stored)
+        body = c.get(
+            "/api/captures", params={"created_after": cutoff, "limit": 1}
+        ).json()
+        assert body["total"] == sum(1 for m in stored if m.created_at >= cutoff)
+
+    def test_malformed_created_after_is_422_not_500(self, client):
+        c, _, _ = client
+        resp = c.get("/api/captures", params={"created_after": "banana"})
+        assert resp.status_code == 422
+        assert "created_after" in resp.json()["detail"]
 
     def test_detail_returns_record(self, client):
         c, _, stored = client

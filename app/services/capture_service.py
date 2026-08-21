@@ -108,7 +108,18 @@ async def capture_and_persist(
 
             logger.warning("[CAPTURE] Enrichment failed (non-fatal): %s", e)
             enrichment = dict(FALLBACK_METADATA)
-        memory = memory.model_copy(update={"enrichment": enrichment})
+        memory = memory.model_copy(
+            update={
+                "enrichment": enrichment,
+                # Mirror the LLM summary onto the queryable top-level field.
+                # memory.summary is always None on this path today -- the
+                # store.capture() call above does not pass one, and the deduped
+                # branch returned before we got here -- but CaptureStore.capture
+                # does accept `summary`, so fall back rather than clobber if a
+                # caller-supplied value ever reaches this point.
+                "summary": enrichment.get("summary") or memory.summary,
+            }
+        )
         store.update(memory)
 
         # Vector index (best-effort)
