@@ -401,7 +401,9 @@ def _relationship_domain():
             "project": DomainEntity(
                 name="project", description="pr", plural="projects",
                 attributes=[DomainAttribute(name="name", type="string", required=True)],
-                relationships=[],
+                relationships=[
+                    DomainRelationship(type="project_of", target="person", cardinality="many-to-one")
+                ],
             ),
         },
     )
