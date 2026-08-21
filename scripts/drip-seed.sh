@@ -23,10 +23,19 @@ while true; do
   # NOT best-effort. A swallowed failure here is the exact bug this sync
   # exists to fix: the container keeps stale credentials, every pass dies on
   # auth, and the retry loop hides the cause behind hours of failed passes.
+  # Destination must be the directory the container mounts at /root/.claude
+  # (docker-compose.dev.yml: ./.claude-auth:/root/.claude). Overridable so a
+  # deployment that mounts elsewhere can point this at the right place.
+  CLAUDE_AUTH_DIR=${CLAUDE_AUTH_DIR:-$HOME/Developer/imi/.claude-auth}
+  if [ ! -d "$CLAUDE_AUTH_DIR" ]; then
+    echo "FATAL: credential mount dir $CLAUDE_AUTH_DIR does not exist" >&2
+    echo "       (set CLAUDE_AUTH_DIR to the host path mounted at /root/.claude)" >&2
+    exit 1
+  fi
   if ! cp -f "$HOME/.claude/.credentials.json" \
-              "$HOME/Developer/imi/.claude-auth/.credentials.json"; then
+              "$CLAUDE_AUTH_DIR/.credentials.json"; then
     echo "FATAL: could not sync credentials from $HOME/.claude/.credentials.json" >&2
-    echo "       (is Claude Code logged in? is .claude-auth/ writable?)" >&2
+    echo "       (is Claude Code logged in? is $CLAUDE_AUTH_DIR writable?)" >&2
     exit 1
   fi
   echo "=== $(date '+%F %T') seed pass starting ==="
