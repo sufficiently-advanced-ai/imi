@@ -105,7 +105,9 @@ class Settings(JSONConfigSettings):
     # in-DMZ box). Multi-endpoint routing lives in config/inference.yaml.
     ANTHROPIC_BASE_URL: str = ""
     # ClaudeClient semaphore: max LLM requests in flight per process.
-    CLAUDE_MAX_CONCURRENCY: int = 3
+    # ge=1: Semaphore(0) deadlocks every request and a negative value raises
+    # inside client construction, so both must fail at config load instead.
+    CLAUDE_MAX_CONCURRENCY: int = Field(3, ge=1)
 
     # Model configuration — new canonical names (clear tier-based naming)
     CLAUDE_SONNET_MODEL: str = "claude-sonnet-4-5-20250929"  # Full-power: complex analysis, chat, synthesis

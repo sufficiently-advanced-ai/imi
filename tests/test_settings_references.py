@@ -75,3 +75,18 @@ def test_claude_client_honors_the_concurrency_setting(monkeypatch):
     monkeypatch.setattr(cc.settings, "CLAUDE_MAX_CONCURRENCY", 7, raising=False)
     client = cc.get_claude_client()
     assert client.semaphore._value == 7
+
+
+def test_claude_max_concurrency_rejects_non_positive_values():
+    """Semaphore(0) deadlocks every request and a negative raises inside client
+    construction — both must fail at config load, not at first use."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    for bad in (0, -1):
+        with pytest.raises(ValidationError):
+            Settings(CLAUDE_MAX_CONCURRENCY=bad)
+
+    assert Settings(CLAUDE_MAX_CONCURRENCY=1).CLAUDE_MAX_CONCURRENCY == 1

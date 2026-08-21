@@ -612,7 +612,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--concurrency",
         type=int,
         default=1,
-        help="Files ingested in parallel (git/manifest writes stay serialized)",
+        help=(
+            "Files ingested in parallel (default 1 = strict chronological order). "
+            "Git/manifest writes stay serialized, but >1 WEAKENS supersession and "
+            "conflict detection: those phases read the signal store before the "
+            "in-flight pipelines save theirs, so up to N-1 chronologically earlier "
+            "files may not be visible yet. Use >1 for bulk backfill where throughput "
+            "matters more than exact ordering; keep 1 when detection must be precise."
+        ),
     )
     return parser
 

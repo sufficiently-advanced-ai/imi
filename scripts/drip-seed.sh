@@ -19,7 +19,16 @@ mkdir -p "$(dirname "$0")/../logs"
 while true; do
   # Sync subscription creds into the container's auth dir (see compose
   # override: single-file mounts go stale when Claude Code rotates the token).
-  cp -f "$HOME/.claude/.credentials.json" "$HOME/Developer/imi/.claude-auth/.credentials.json" 2>/dev/null || true
+  #
+  # NOT best-effort. A swallowed failure here is the exact bug this sync
+  # exists to fix: the container keeps stale credentials, every pass dies on
+  # auth, and the retry loop hides the cause behind hours of failed passes.
+  if ! cp -f "$HOME/.claude/.credentials.json" \
+              "$HOME/Developer/imi/.claude-auth/.credentials.json"; then
+    echo "FATAL: could not sync credentials from $HOME/.claude/.credentials.json" >&2
+    echo "       (is Claude Code logged in? is .claude-auth/ writable?)" >&2
+    exit 1
+  fi
   echo "=== $(date '+%F %T') seed pass starting ==="
   docker exec imi-app python scripts/rebuild_kb.py seed \
     --folder "$SEED_DIR" --resume --yes --concurrency "$CONCURRENCY"
