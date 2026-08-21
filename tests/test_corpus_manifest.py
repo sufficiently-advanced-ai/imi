@@ -252,11 +252,74 @@ async def test_reconcile_skips_manifest_write_if_build_id_changed_underneath(tmp
     kg = FakeKG()
     repo = tmp_path / "repo"
     neo4j = _neo4j(build_id="b1")
-    # first read → b1 (reconcile start), second read → b2 (a rebuild finished meanwhile)
-    neo4j.execute_read = AsyncMock(side_effect=[[{"build_id": "b1"}], [{"build_id": "b2"}]])
     rec = _reconciler(tmp_path, kg, neo4j)
     _write(repo, "a.md", "v1")
     save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files={}))
+
+    reads = iter([[{"build_id": "b1"}], [{"build_id": "b2"}]])
+
+    async def execute_read(*_args, **_kwargs):
+        rows = next(reads)
+        if rows[0]["build_id"] == "b2":
+            # simulate record_full_build() of a concurrent rebuild landing
+            # between reconcile's first read and its manifest write
+            save_manifest(rec.manifest_path, Manifest(build_id="b2", built_at="", files={"rebuilt.md": (1, 1)}))
+        return rows
+
+    neo4j.execute_read = execute_read
     result = await rec.reconcile()
     assert result["action"] == "reconciled" and result["manifest"] == "skipped_build_id_changed"
-    assert load_manifest(rec.manifest_path).build_id == "b1"  # untouched; the rebuild owns the newer one
+    newer = load_manifest(rec.manifest_path)
+    assert newer.build_id == "b2" and "rebuilt.md" in newer.files  # the rebuild's baseline survived
+
+
+class FailingSK(FakeSK):
+    async def ingest_file(self, path, content):
+        raise RuntimeError("embedder down")
+
+    async def remove_entities_for_file(self, path):
+        raise RuntimeError("vector store down")
+
+
+@pytest.mark.asyncio
+async def test_semantica_failures_also_keep_stamps_for_retry(tmp_path):
+    kg = FakeKG()
+    repo = tmp_path / "repo"
+    rec = _reconciler(tmp_path, kg, _neo4j(build_id="b1"), sk=FailingSK())
+    _write(repo, "gone.md", "x")
+    _write(repo, "keep.md", "y")
+    baseline = scan_corpus(str(repo))
+    save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files=baseline))
+    (repo / "gone.md").unlink()
+    _write(repo, "new.md", "z")
+
+    result = await rec.reconcile()
+    # graph side succeeded, semantica side failed → both paths retried next boot
+    assert kg.removed == [["gone.md"]] and kg.ingested == [["new.md"]]
+    assert result["retry_next_boot"] == 2
+    saved = load_manifest(rec.manifest_path)
+    assert "gone.md" in saved.files and "new.md" not in saved.files
+
+
+class RemovingSK(FakeSK):
+    def __init__(self):
+        super().__init__()
+        self.removed: list[str] = []
+
+    async def remove_entities_for_file(self, path):
+        self.removed.append(path)
+        return 3
+
+
+@pytest.mark.asyncio
+async def test_removed_files_drop_semantica_vectors(tmp_path):
+    kg = FakeKG()
+    sk = RemovingSK()
+    repo = tmp_path / "repo"
+    rec = _reconciler(tmp_path, kg, _neo4j(build_id="b1"), sk=sk)
+    _write(repo, "gone.md", "x")
+    save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files=scan_corpus(str(repo))))
+    (repo / "gone.md").unlink()
+    result = await rec.reconcile()
+    assert sk.removed == ["gone.md"] and result["semantica_vectors_removed"] == 3
+    assert "gone.md" not in load_manifest(rec.manifest_path).files

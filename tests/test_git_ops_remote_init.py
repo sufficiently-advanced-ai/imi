@@ -123,11 +123,31 @@ async def test_github_token_is_never_persisted_in_git_config(remote_ops, monkeyp
     config = open(remote_ops.repo_path + "/.git/config").read()
     assert "ghp_supersecret" not in config
     assert str(bare) in config
-    # the header is only generated for github.com HTTPS remotes
-    assert remote_ops._git_auth_args(str(bare)) == []
-    args = remote_ops._git_auth_args("https://github.com/org/repo.git")
-    assert args[0] == "-c" and args[1].startswith("http.extraheader=Authorization: Basic ")
-    assert "ghp_supersecret" not in args[1]  # base64-encoded, not plaintext
+    # credentials only apply to github.com HTTPS remotes, and travel in the
+    # environment (GIT_CONFIG_*), never in argv
+    assert remote_ops._git_env(str(bare)) is None
+    env = remote_ops._git_env("https://github.com/org/repo.git")
+    assert env["GIT_CONFIG_COUNT"] == "1" and env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+    assert env["GIT_CONFIG_VALUE_0"].startswith("Authorization: Basic ")
+    assert "ghp_supersecret" not in env["GIT_CONFIG_VALUE_0"]
+
+
+def test_failed_authenticated_git_command_does_not_leak_the_credential(tmp_path, monkeypatch):
+    """A failing git command renders argv into CalledProcessError (→ logs,
+    /health/startup failures); the credential must not be in there."""
+    monkeypatch.setattr(git_ops_module.settings, "GITHUB_TOKEN", "ghp_supersecret", raising=False)
+    ops = GitOperations(repo_path=str(tmp_path))
+    env = ops._git_env("https://github.com/org/repo.git")
+    argv = ["git", "clone", "https://github.com/org/repo.git", "."]
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        subprocess.run(
+            ["python3", "-c", "import sys; sys.exit(1)", *argv],
+            env=env, check=True, capture_output=True, text=True, timeout=30,
+        )
+    rendered = str(excinfo.value) + repr(excinfo.value.cmd)
+    assert "ghp_supersecret" not in rendered
+    assert "Authorization" not in rendered
+    assert env["GIT_CONFIG_VALUE_0"].split()[-1] not in rendered  # the base64 value either
 
 
 @pytest.mark.asyncio

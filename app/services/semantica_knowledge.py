@@ -151,6 +151,29 @@ class SemanticaKnowledge:
             await self._process_relationships(entity_id, entity_type, metadata)
         return ok
 
+    async def remove_entities_for_file(self, file_path: str) -> int:
+        """Drop entity vectors for every entity whose profile was ``file_path``.
+
+        The reconcile path's counterpart to ``ingest_file`` for deleted files.
+        Graph nodes are left to the legacy graph (which demotes them to stubs);
+        this only makes sure their vectors stop matching. Returns the count.
+        """
+        rows = self._extract_records(
+            await self._query(
+                "MATCH (n:Entity) WHERE n.file_path = $p OR n.source_file = $p RETURN n.id AS id",
+                {"p": file_path},
+            )
+        )
+        removed = 0
+        for row in rows:
+            entity_id = row.get("id")
+            if not entity_id:
+                continue
+            await self.search.delete_entity_vector(entity_id)
+            self.nodes.pop(entity_id, None)
+            removed += 1
+        return removed
+
     async def reindex_entities_from_graph(self) -> int:
         """Rebuild the entity vector index from Neo4j — no corpus read.
 
@@ -295,13 +318,13 @@ class SemanticaKnowledge:
     async def clear_all_data(self) -> dict[str, Any]:
         """Clear all graph data."""
         try:
+            # Vectors first: a vector whose node is gone is the harmful state
+            # (hybrid_search returns ghosts), a node without a vector is not.
+            # If this fails the graph is left untouched and the reset reports
+            # the error instead of claiming success.
+            cleared = await self.search.clear_entity_vectors()
+            logger.info("Cleared %d entity vectors", cleared)
             await self._query("MATCH (n) DETACH DELETE n")
-            # Persistent entity vectors must not outlive the nodes they point at.
-            try:
-                cleared = await self.search.clear_entity_vectors()
-                logger.info("Cleared %d entity vectors", cleared)
-            except Exception as vec_err:
-                logger.warning("Entity vector clear skipped: %s", vec_err)
             self.nodes.clear()
             self.edges.clear()
             self.semantic_edges.clear()
@@ -490,6 +513,11 @@ class SemanticaKnowledge:
             True if successful.
         """
         try:
+            # Vector first (see clear_all_data): if this fails the node stays
+            # and the deletion is reported as incomplete rather than leaving a
+            # searchable vector that points at nothing.
+            await self.search.delete_entity_vector(entity_id)
+
             if cascade:
                 cypher = "MATCH (n:Entity {id: $id}) DETACH DELETE n"
             else:
@@ -499,12 +527,6 @@ class SemanticaKnowledge:
 
             # Remove from cache
             self.nodes.pop(entity_id, None)
-
-            # Remove from vector index
-            try:
-                await self.search.delete_entity_vector(entity_id)
-            except Exception as vec_err:
-                logger.debug(f"Vector index delete for {entity_id} skipped: {vec_err}")
 
             return True
 

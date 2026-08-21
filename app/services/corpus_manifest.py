@@ -269,6 +269,16 @@ class CorpusReconciler:
                 summary["graph_removed_error"] = str(e)
                 failed.update(delta.removed)
 
+            if self.sk is not None and hasattr(self.sk, "remove_entities_for_file"):
+                vectors_removed = 0
+                for path in delta.removed:
+                    try:
+                        vectors_removed += int(await self.sk.remove_entities_for_file(path) or 0)
+                    except Exception as e:
+                        logger.warning("[RECONCILE] semantica removal failed for %s: %s", path, e)
+                        failed.add(path)
+                summary["semantica_vectors_removed"] = vectors_removed
+
         if delta.changed:
             try:
                 summary["graph_ingested"] = await self.kg.ingest_files(delta.changed)
@@ -287,7 +297,10 @@ class CorpusReconciler:
                         if await self.sk.ingest_file(path, content):
                             indexed += 1
                     except Exception as e:
-                        logger.debug("[RECONCILE] semantica ingest skipped for %s: %s", path, e)
+                        # The stamp advances only once BOTH graph and vector
+                        # updates succeed; otherwise the next boot retries.
+                        logger.warning("[RECONCILE] semantica ingest failed for %s: %s", path, e)
+                        failed.add(path)
                 summary["semantica_indexed"] = indexed
 
         # A full rebuild may have run concurrently (admin endpoint) and written
