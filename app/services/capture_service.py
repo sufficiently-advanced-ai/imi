@@ -111,8 +111,12 @@ async def capture_and_persist(
         memory = memory.model_copy(
             update={
                 "enrichment": enrichment,
-                # Mirror the LLM summary onto the queryable top-level field;
-                # keep any caller-supplied summary when enrichment has none.
+                # Mirror the LLM summary onto the queryable top-level field.
+                # memory.summary is always None on this path today -- the
+                # store.capture() call above does not pass one, and the deduped
+                # branch returned before we got here -- but CaptureStore.capture
+                # does accept `summary`, so fall back rather than clobber if a
+                # caller-supplied value ever reaches this point.
                 "summary": enrichment.get("summary") or memory.summary,
             }
         )

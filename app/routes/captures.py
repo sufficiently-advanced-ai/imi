@@ -117,23 +117,30 @@ async def list_captures(
     limit: int = Query(50, ge=1, le=500),
     created_after: str | None = Query(
         None,
-        description="ISO-8601 timestamp; only returns captures created after this time",
+        description=(
+            "ISO-8601 timestamp; only returns captures created at or after this "
+            "instant. Offset-aware values are honored; a naive value is read as UTC"
+        ),
     ),
 ):
     """List captures, newest first. ``total`` is the full match count."""
     store = CaptureStore()
-    records = store.list(
-        review_status=review_status,
-        source=source,
-        limit=limit,
-        created_after=created_after,
-    )
+    try:
+        records = store.list(
+            review_status=review_status,
+            source=source,
+            limit=limit,
+            created_after=created_after,
+        )
+        total = store.count(
+            review_status=review_status,
+            source=source,
+            created_after=created_after,
+        )
+    except ValueError as e:
+        # Unparseable created_after -- a client error, not a server fault.
+        raise HTTPException(status_code=422, detail=f"invalid created_after: {e}") from e
     captures = [CaptureRecord(**m.model_dump()) for m in records]
-    total = store.count(
-        review_status=review_status,
-        source=source,
-        created_after=created_after,
-    )
     return CaptureListResponse(captures=captures, total=total)
 
 

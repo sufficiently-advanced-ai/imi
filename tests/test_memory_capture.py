@@ -158,3 +158,49 @@ def test_no_created_after_returns_everything(tmp_path):
     store.capture("two", source="manual")
     assert store.count() == 2
     assert len(store.list()) == 2
+
+
+def test_created_after_compares_instants_not_strings(tmp_path):
+    """Equivalent instants written with different UTC offsets must agree.
+
+    A lexicographic comparison gets this backwards: '...T10:00:00-04:00' sorts
+    before '...T10:30:00+00:00' as text, but is half an hour *later* in time.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    store = CaptureStore(capture_dir=tmp_path)
+    mem = store.capture("a note", source="manual").memory
+    created = datetime.fromisoformat(mem.created_at)
+
+    an_hour_later = created + timedelta(hours=1)
+    # Same instant, expressed in a -04:00 offset rather than UTC.
+    shifted = an_hour_later.astimezone(UTC) - timedelta(hours=4)
+    as_offset = shifted.replace(tzinfo=None).isoformat() + "-04:00"
+
+    assert store.count(created_after=an_hour_later.isoformat()) == 0
+    assert store.count(created_after=as_offset) == 0, (
+        "offset-aware bound was compared as a string"
+    )
+
+
+def test_created_after_accepts_z_suffix_and_naive_values(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    store = CaptureStore(capture_dir=tmp_path)
+    mem = store.capture("a note", source="manual").memory
+    created = datetime.fromisoformat(mem.created_at)
+    before = (created - timedelta(minutes=1)).astimezone(UTC)
+
+    assert store.count(created_after=before.isoformat().replace("+00:00", "Z")) == 1
+    # Naive values are read as UTC, matching how created_at is written.
+    assert store.count(created_after=before.replace(tzinfo=None).isoformat()) == 1
+
+
+def test_malformed_created_after_raises(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("a note", source="manual")
+    for bad in ("banana", "2026-13-45", ""):
+        with pytest.raises(ValueError):
+            store.count(created_after=bad)
+        with pytest.raises(ValueError):
+            store.list(created_after=bad)

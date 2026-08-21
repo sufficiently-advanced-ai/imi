@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.services.memory_capture import capture_memory
+from app.services.memory_capture import capture_memory, parse_instant
 
 
 @pytest.fixture
@@ -60,12 +60,17 @@ def client(monkeypatch):
 
     class FakeStore:
         def _matches(self, *, review_status=None, source=None, created_after=None):
+            # Mirror the real store: normalize to an instant, and let a
+            # malformed bound raise ValueError so the route can map it to 422.
+            after = (
+                parse_instant(created_after) if created_after is not None else None
+            )
             return [
                 m
                 for m in stored
                 if (source is None or m.source == source)
                 and (review_status is None or m.review_status == review_status)
-                and (created_after is None or m.created_at >= created_after)
+                and (after is None or parse_instant(m.created_at) >= after)
             ]
 
         def list(self, *, review_status=None, source=None, limit=50, created_after=None):
@@ -169,6 +174,12 @@ class TestListAndDetail:
             "/api/captures", params={"created_after": cutoff, "limit": 1}
         ).json()
         assert body["total"] == sum(1 for m in stored if m.created_at >= cutoff)
+
+    def test_malformed_created_after_is_422_not_500(self, client):
+        c, _, _ = client
+        resp = c.get("/api/captures", params={"created_after": "banana"})
+        assert resp.status_code == 422
+        assert "created_after" in resp.json()["detail"]
 
     def test_detail_returns_record(self, client):
         c, _, stored = client
