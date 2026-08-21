@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,6 +17,9 @@ from pydantic import BaseModel
 from .config import settings
 from .models import DocumentMetadata, File
 from .utils.timeout import timeout
+
+# Per-file read progress goes here at DEBUG; everything else still prints to stderr.
+_ops_logger = logging.getLogger("app.git_ops.operations")
 
 
 class Folder(BaseModel):
@@ -242,7 +247,33 @@ class GitOperations:
         }
         if error:
             log_entry["error"] = str(error)
-        print(json.dumps(log_entry), file=sys.stderr)
+        line = json.dumps(log_entry)
+        # One line per file read turned a corpus scan into ~50k log lines per
+        # boot. Per-file progress is DEBUG-only; summaries and errors still
+        # print unconditionally.
+        if error is None and operation in self._PER_FILE_OPERATIONS and "path" in details:
+            _ops_logger.debug(line)
+            return
+        print(line, file=sys.stderr)
+
+    _PER_FILE_OPERATIONS = frozenset({"read_file", "read_markdown_files"})
+
+    async def get_head_commit(self) -> str | None:
+        """Current HEAD sha of the corpus repo, or None if unavailable."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0:
+            return None
+        sha = result.stdout.strip()
+        return sha or None
 
     def _is_markdown_file(self, path: str) -> bool:
         """Check if a file is a markdown file."""
@@ -316,6 +347,7 @@ class GitOperations:
             # Pull those changes like we mean it
             subprocess.run(
                 ["git", "pull", "origin", settings.GIT_BRANCH, "--force"],
+                env=self._git_env(),
                 cwd=self.repo_path,
                 check=True,
                 timeout=300,  # Use a longer timeout for pull operations
@@ -455,7 +487,8 @@ class GitOperations:
                 try:
                     push_start = datetime.utcnow()
                     subprocess.run(
-                        push_command, cwd=self.repo_path, check=True, timeout=300
+                        push_command, cwd=self.repo_path, check=True, timeout=300,
+                        env=self._git_env(),
                     )  # 5 minute timeout for push
                     push_time = (datetime.utcnow() - push_start).total_seconds()
 
@@ -509,6 +542,7 @@ class GitOperations:
                                     settings.GIT_BRANCH,
                                 ],
                                 cwd=self.repo_path,
+                                env=self._git_env(),
                                 capture_output=True,
                                 text=True,
                                 timeout=300,
@@ -536,6 +570,7 @@ class GitOperations:
                                     settings.GIT_BRANCH,
                                 ],
                                 cwd=self.repo_path,
+                                env=self._git_env(),
                                 check=True,
                                 timeout=300,
                             )
@@ -634,38 +669,40 @@ class GitOperations:
                     },
                 )
             else:
-                # Set up auth if needed
+                # The canonical, token-free URL is what gets persisted in
+                # .git/config; credentials ride along per command as an
+                # ephemeral header (never written to disk, never in `remote -v`).
                 repo_url = settings.GIT_REPO_URL
-                if settings.GITHUB_TOKEN:
-                    auth_url = f"https://{settings.GITHUB_TOKEN}@github.com/"
-                    repo_url = settings.GIT_REPO_URL.replace(
-                        "https://github.com/", auth_url
-                    )
+                git_env = self._git_env(repo_url)
 
-                # Always clean up existing directory
-                if os.path.exists(self.repo_path):
-                    # Clean up all contents including .git
-                    shutil.rmtree(self.repo_path, ignore_errors=True)
-
-                # Create directory if it doesn't exist
                 os.makedirs(self.repo_path, exist_ok=True)
-
-                self._log_operation(
-                    operation,
-                    {
-                        "action": "cleanup",
-                        "path": self.repo_path,
-                        "status": "completed",
-                    },
-                )
-
-                # Clone into existing directory
-                subprocess.run(
-                    ["git", "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
-                    cwd=self.repo_path,
-                    check=True,
-                    timeout=300,  # Cloning can take longer, especially for large repos
-                )
+                if os.path.isdir(os.path.join(self.repo_path, ".git")):
+                    # Persistent checkout: refresh in place. The old code
+                    # rm -rf'd the directory and re-cloned on every boot,
+                    # which on a persistent volume destroys every file git has
+                    # not seen yet (on LCARS ~3.8k untracked memory records).
+                    self._refresh_existing_checkout(repo_url, operation, git_env)
+                elif os.listdir(self.repo_path):
+                    # Non-empty but not a repo: fail closed rather than wipe.
+                    raise GitOperationError(
+                        operation,
+                        f"{self.repo_path} is non-empty but not a git repository; "
+                        "refusing to delete it. Move it aside, or unset GIT_REPO_URL "
+                        "for local-only mode.",
+                    )
+                else:
+                    # Clone into the (empty) directory
+                    subprocess.run(
+                        ["git", "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
+                        cwd=self.repo_path,
+                        env=git_env,
+                        check=True,
+                        timeout=300,  # Cloning can take longer, especially for large repos
+                    )
+                    self._log_operation(
+                        operation,
+                        {"action": "clone", "branch": settings.GIT_BRANCH, "status": "completed"},
+                    )
 
             # Mark directory as safe (fixes dubious ownership issues in containers)
             subprocess.run(
@@ -700,16 +737,159 @@ class GitOperations:
             self._log_operation(
                 operation,
                 {
-                    "action": "clone",
+                    "action": "configured",
                     "branch": settings.GIT_BRANCH,
+                    "local_only": self.local_only,
                     "status": "completed",
                 },
             )
 
+        except GitOperationError:
+            raise
         except Exception as e:
             error = GitOperationError(operation, f"Git operation failed: {str(e)}")
             self._log_operation(operation, {"status": "failed"}, error)
             raise error
+
+    @staticmethod
+    def _git_env(repo_url: str | None = None) -> dict[str, str] | None:
+        """Per-process git auth for GitHub HTTPS remotes, without persisting a token.
+
+        When ``GITHUB_TOKEN`` is set and the remote is github.com over HTTPS,
+        returns a copy of the environment carrying ``http.extraheader`` via
+        ``GIT_CONFIG_COUNT/KEY/VALUE`` (git ≥ 2.31). The credential therefore
+        never appears in ``.git/config``, in ``git remote -v``, or in argv —
+        so a failed command's ``CalledProcessError`` (which renders argv into
+        logs and ``/health/startup``) cannot leak it. Returns None (inherit the
+        environment) when no credential applies.
+        """
+        url = repo_url if repo_url is not None else (settings.GIT_REPO_URL or "")
+        token = settings.GITHUB_TOKEN
+        if not token or not url.startswith("https://github.com/"):
+            return None
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env = dict(os.environ)
+        env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.extraheader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+            }
+        )
+        return env
+
+    def _refresh_existing_checkout(
+        self, repo_url: str, operation: str, git_env: dict[str, str] | None = None
+    ) -> None:
+        """Fetch the remote and fast-forward an existing checkout, never wiping.
+
+        * untracked files are left untouched;
+        * local commits that cannot be fast-forwarded are kept (logged as a
+          warning) instead of discarded — data loss is never the automatic
+          answer on a persistent volume;
+        * a checkout with no commits yet (``git init`` + remote) or without the
+          target branch is pointed at ``origin/<branch>`` explicitly.
+        """
+        branch = settings.GIT_BRANCH
+        cwd = self.repo_path
+        git_env = git_env if git_env is not None else self._git_env(repo_url)
+
+        remotes = subprocess.run(
+            ["git", "remote"], cwd=cwd, capture_output=True, text=True, timeout=30
+        )
+        if "origin" in remotes.stdout.split():
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", repo_url], cwd=cwd, check=True, timeout=30
+            )
+        else:
+            subprocess.run(
+                ["git", "remote", "add", "origin", repo_url], cwd=cwd, check=True, timeout=30
+            )
+
+        # Explicit refspec: updates refs/remotes/origin/<branch> even when the
+        # remote was added by hand without a fetch refspec.
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            cwd=cwd, env=git_env, capture_output=True, text=True, timeout=300,
+        )
+        if fetch.returncode != 0:
+            self._log_operation(
+                operation,
+                {
+                    "action": "refresh",
+                    "stage": "fetch",
+                    "status": "failed",
+                    "reason": (fetch.stderr or "").strip()[-500:],
+                    "message": "continuing with the existing local checkout",
+                },
+            )
+            return
+
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).returncode == 0
+        has_branch = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).returncode == 0
+        if not has_commits or not has_branch:
+            # Unborn HEAD (fresh `git init`) or missing target branch: create
+            # the branch from the remote-tracking ref. Untracked files survive.
+            cmd = (
+                ["git", "checkout", "-B", branch, f"origin/{branch}"] if not has_commits
+                else ["git", "checkout", "-b", branch, "--track", f"origin/{branch}"]
+            )
+            created = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60)
+            self._log_operation(
+                operation,
+                {
+                    "action": "refresh",
+                    "stage": "create-branch",
+                    "branch": branch,
+                    "status": "completed" if created.returncode == 0 else "failed",
+                    "reason": None if created.returncode == 0 else (created.stderr or "").strip()[-300:],
+                },
+            )
+            return
+
+        current = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        if current != branch:
+            checkout = subprocess.run(
+                ["git", "checkout", branch], cwd=cwd, capture_output=True, text=True, timeout=60
+            )
+            if checkout.returncode != 0:
+                self._log_operation(
+                    operation,
+                    {
+                        "action": "refresh",
+                        "stage": "checkout",
+                        "status": "skipped",
+                        "current_branch": current,
+                        "reason": (checkout.stderr or "").strip()[-300:],
+                    },
+                )
+                return
+
+        merge = subprocess.run(
+            ["git", "merge", "--ff-only", f"origin/{branch}"],
+            cwd=cwd, capture_output=True, text=True, timeout=120,
+        )
+        self._log_operation(
+            operation,
+            {
+                "action": "refresh",
+                "stage": "fast-forward",
+                "branch": branch,
+                "status": "completed" if merge.returncode == 0 else "skipped",
+                "reason": None if merge.returncode == 0 else
+                "local history has diverged from origin; keeping local commits "
+                "(resolve manually)",
+            },
+        )
 
     async def _commit_exists(self, commit_hash: str) -> bool:
         """Check if a commit exists in the repository."""

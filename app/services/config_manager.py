@@ -1,5 +1,6 @@
 """Configuration management service for imi."""
 
+import errno
 import json
 import os
 import sys
@@ -166,17 +167,46 @@ class ConfigManager:
         return redacted
 
     def _save_config(self) -> None:
-        """Save configuration to file with secrets redacted."""
+        """Save configuration to file with secrets redacted.
+
+        A read-only config mount (``./config:/app/config:ro``) is a supported
+        deployment shape: configuration is then derived from the environment
+        on every boot and the write is skipped quietly instead of logging an
+        error at startup.
+        """
         if self.config:
+            if self._config_dir_read_only():
+                sys.stderr.write(
+                    f"Config directory is read-only; not persisting {self.config_path.name} "
+                    "(configuration is derived from environment each boot)\n"
+                )
+                sys.stderr.flush()
+                return
             sys.stderr.write(f"Saving configuration to: {self.config_path}\n")
             try:
                 safe_data = self._redact_secrets(self.config.model_dump())
                 with open(self.config_path, "w") as f:
                     json.dump(safe_data, f, indent=2)
                 sys.stderr.write("Configuration saved successfully (secrets redacted)\n")
+            except OSError as e:
+                if getattr(e, "errno", None) in (errno.EROFS, errno.EACCES, errno.EPERM):
+                    sys.stderr.write(
+                        f"Config path {self.config_path} is not writable ({e.strerror}); "
+                        "continuing with environment-derived configuration\n"
+                    )
+                else:
+                    sys.stderr.write(f"Error saving configuration: {str(e)}\n")
             except Exception as e:
                 sys.stderr.write(f"Error saving configuration: {str(e)}\n")
             sys.stderr.flush()
+
+    def _config_dir_read_only(self) -> bool:
+        """True when the config directory exists but cannot be written to."""
+        config_dir = self.config_path.parent
+        try:
+            return config_dir.is_dir() and not os.access(config_dir, os.W_OK)
+        except OSError:
+            return False
 
     def get_config(self) -> dict[str, Any]:
         """Get current configuration."""

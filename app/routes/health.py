@@ -89,6 +89,36 @@ async def liveness_check() -> Response:
         )
 
 
+def _startup_state() -> dict[str, Any]:
+    """Snapshot of the lifecycle manager's startup state."""
+    from ..core.lifecycle import get_lifecycle_manager
+
+    lm = get_lifecycle_manager()
+    return {
+        "ready": lm.is_ready(),
+        "state": lm.state.value,
+        "startup": getattr(lm, "startup_detail", None),
+        "failures": list(getattr(lm, "startup_failures", []) or []),
+    }
+
+
+@router.get("/health/startup")
+async def startup_check() -> Response:
+    """
+    Startup probe — 200 only once ``startup_event`` has finished loading.
+
+    This is what the container healthcheck hits. ``/health`` is a liveness
+    probe (the process is up) and returns 200 during the minutes a cold
+    start can spend loading the graph; this endpoint does not.
+    """
+    state = _startup_state()
+    state["timestamp"] = time.time()
+    status_code = 200 if state["ready"] else 503
+    response = JSONResponse(content=state, status_code=status_code)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 @router.get("/health/ready", response_model=ReadinessResponse)
 async def readiness_check() -> Response:
     """
@@ -96,8 +126,18 @@ async def readiness_check() -> Response:
 
     Used by Kubernetes readiness probes and deployment systems.
     Includes detailed dependency status and performance metrics.
+    Returns 503 ``starting`` until startup has completed.
     """
     start_time = time.time()
+
+    startup = _startup_state()
+    if not startup["ready"]:
+        response = JSONResponse(
+            content={"status": "starting", "startup": startup, "timestamp": time.time()},
+            status_code=503,
+        )
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     try:
         health_service = get_health_service()

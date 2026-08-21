@@ -1,7 +1,6 @@
 import asyncio
 import functools
 import logging
-import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
@@ -11,14 +10,10 @@ from typing import Any, TypeVar
 T = TypeVar("T")
 TaskFunc = Callable[..., Awaitable[T]]
 
-# Configure logging
+# Root logging is configured in app.core.logging_setup; this module used to
+# attach its own stderr handler as a workaround, which double-logged once the
+# root had one.
 logger = logging.getLogger(__name__)
-handler = logging.StreamHandler(sys.stderr)
-handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
 
 
 class TaskStatus(str, Enum):

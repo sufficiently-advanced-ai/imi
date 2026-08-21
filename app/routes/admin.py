@@ -528,3 +528,41 @@ async def regenerate_digests():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+# ── Graph rebuild (stateful-mode replacement for NEO4J_REBUILD_ON_STARTUP) ──
+
+
+@router.post("/rebuild-graph")
+async def rebuild_graph(clean: bool = False, reingest_signals: bool = True):
+    """Start a full knowledge-graph rebuild from the corpus in the background.
+
+    With ``NEO4J_REBUILD_ON_STARTUP=false`` the graph persists across
+    restarts; this is the explicit way to regenerate it (legacy Neo4j graph
+    with batched writes, then the Semantica layer, then the corpus manifest
+    baseline). ``clean=true`` wipes Neo4j first. Poll
+    ``GET /api/admin/rebuild-graph/status``.
+    """
+    from ..services import graph_rebuild
+
+    if graph_rebuild.is_rebuild_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A graph rebuild is already running",
+        )
+    graph_rebuild.spawn_background(
+        graph_rebuild.run_full_rebuild(
+            clean=clean, source="admin", reingest_signals=reingest_signals
+        ),
+        "admin-rebuild-graph",
+    )
+    _log_admin("rebuild_graph_started", {"clean": clean, "reingest_signals": reingest_signals})
+    return {"status": "started", "clean": clean, "poll": "/api/admin/rebuild-graph/status"}
+
+
+@router.get("/rebuild-graph/status")
+async def rebuild_graph_status():
+    """Status of the most recent graph rebuild (idle | running | completed | failed)."""
+    from ..services import graph_rebuild
+
+    return graph_rebuild.get_rebuild_status()

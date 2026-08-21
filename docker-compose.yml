@@ -65,6 +65,13 @@ services:
       # Vector store backend (faiss | sqlite | pgvector)
       - VECTOR_BACKEND=${VECTOR_BACKEND:-sqlite}
 
+      # Graph startup mode. The Neo4j volume below is persistent, so the
+      # default is stateful: trust the graph, re-ingest only corpus files that
+      # changed while the container was down, rebuild vectors from Neo4j if
+      # empty. Set true to wipe-free rebuild from the corpus on every boot.
+      - NEO4J_REBUILD_ON_STARTUP=${NEO4J_REBUILD_ON_STARTUP:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
       # AI models (defaults to Claude Sonnet / Haiku)
       - CLAUDE_SONNET_MODEL=${CLAUDE_SONNET_MODEL:-claude-sonnet-4-5-20250929}
       - CLAUDE_HAIKU_MODEL=${CLAUDE_HAIKU_MODEL:-claude-haiku-4-5-20251001}
@@ -74,7 +81,17 @@ services:
     volumes:
       - ./repo:/app/repo
       - ./data:/app/data
-      - ./config:/app/config:ro
+      # Writable so app_config.json persists (a :ro mount is also supported —
+      # the app then re-derives configuration from the environment each boot).
+      - ./config:/app/config
+    # Hits the app's startup probe directly (bypassing nginx) so "healthy"
+    # means the API has finished loading, not merely that nginx is up.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/startup"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
     restart: unless-stopped
 
 volumes:

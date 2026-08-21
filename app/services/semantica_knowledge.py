@@ -15,6 +15,7 @@ All methods are async for consistency with the existing FastAPI codebase.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from app.model_schemas.domain_config import DomainConfiguration
+from app.services.blocking import run_blocking
 from app.services.semantica_config import (
     build_neo4j_schema_description,
     domain_entity_to_neo4j_properties,
@@ -103,8 +105,118 @@ class SemanticaKnowledge:
         return self._git_ops
 
     # ──────────────────────────────────────────────────────────────
+    # Blocking-call boundary
+    # ──────────────────────────────────────────────────────────────
+
+    async def _query(self, cypher: str, params: dict[str, Any] | None = None) -> Any:
+        """Run a Semantica GraphStore query off the event loop.
+
+        ``GraphStore.execute_query`` uses the synchronous Neo4j driver; calling
+        it inline from a coroutine blocks the loop for the round trip. During
+        a full build that was ~26k sequential stalls (9.5 min on LCARS) during
+        which no request could be served.
+        """
+        if params is None:
+            return await run_blocking(self.graph_store.execute_query, cypher)
+        return await run_blocking(self.graph_store.execute_query, cypher, params)
+
+    # ──────────────────────────────────────────────────────────────
     # Graph Operations
     # ──────────────────────────────────────────────────────────────
+
+    async def ingest_file(self, file_path: str, content: str) -> bool:
+        """Ingest one markdown document (entity profile) into graph + vectors.
+
+        Shared by the full build and the startup reconcile path. Returns True
+        when the file described an entity that was upserted, False when the
+        file is intentionally skipped (no frontmatter, unknown type, archived),
+        and RAISES when the upsert failed — callers that track retries must be
+        able to tell a skip from a failure.
+        """
+        metadata = self._extract_metadata(content)
+        if not metadata:
+            return False
+        entity_type = self._resolve_entity_type(file_path, metadata)
+        if not entity_type:
+            return False
+        if metadata.get("is_archived"):
+            return False
+        name = metadata.get("name", Path(file_path).stem.replace("-", " ").title())
+        entity_id = make_entity_id(entity_type, name)
+        ok = await self.add_entity(
+            entity_id=entity_id,
+            entity_type=entity_type,
+            name=name,
+            properties=metadata,
+            file_path=file_path,
+        )
+        if not ok:
+            # add_entity converts graph/vector errors into False; surface that
+            # as a failure so the reconcile keeps the file for retry.
+            raise RuntimeError(f"add_entity failed for {entity_id} ({file_path})")
+        await self._process_relationships(entity_id, entity_type, metadata)
+        return True
+
+    async def remove_entities_for_file(self, file_path: str) -> int:
+        """Drop entity vectors for every entity whose profile was ``file_path``.
+
+        The reconcile path's counterpart to ``ingest_file`` for deleted files.
+        Graph nodes are left to the legacy graph (which demotes them to stubs);
+        this only makes sure their vectors stop matching. Returns the count.
+        """
+        rows = self._extract_records(
+            await self._query(
+                "MATCH (n:Entity) WHERE n.file_path = $p OR n.source_file = $p RETURN n.id AS id",
+                {"p": file_path},
+            )
+        )
+        removed = 0
+        for row in rows:
+            entity_id = row.get("id")
+            if not entity_id:
+                continue
+            await self.search.delete_entity_vector(entity_id)
+            self.nodes.pop(entity_id, None)
+            removed += 1
+        return removed
+
+    async def reindex_entities_from_graph(self) -> int:
+        """Rebuild the entity vector index from Neo4j — no corpus read.
+
+        Used on boot when the graph is populated but the (persistent) vector
+        store has no entity vectors yet, e.g. the first start after enabling
+        ``VECTOR_BACKEND=sqlite``. Returns the number of entities indexed.
+        """
+        rows = self._extract_records(
+            await self._query("MATCH (n:Entity) WHERE NOT n:Signal RETURN n")
+        )
+        skip = {"id", "name", "entity_type", "canonical_name", "file_path"}
+        try:
+            from app.config import settings
+
+            throttle = float(getattr(settings, "VECTOR_BOOTSTRAP_THROTTLE_MS", 0) or 0) / 1000.0
+        except Exception:
+            throttle = 0.0
+        indexed = 0
+        for row in rows:
+            node = row.get("n", {}) or {}
+            entity_id = node.get("id")
+            if not entity_id:
+                continue
+            if throttle:
+                await asyncio.sleep(throttle)
+            attributes = {k: v for k, v in node.items() if k not in skip and v is not None}
+            vector_id = await self.search.index_entity(
+                entity_id=entity_id,
+                name=node.get("name", ""),
+                entity_type=node.get("entity_type", ""),
+                attributes=attributes,
+                file_path=node.get("file_path", "") or "",
+            )
+            if vector_id:
+                indexed += 1
+        logger.info("[SEMANTICA] reindexed %d/%d entities from graph", indexed, len(rows))
+        return indexed
 
     async def build_graph(
         self,
@@ -163,7 +275,7 @@ class SemanticaKnowledge:
                     name = metadata.get("name", Path(file_info.path).stem.replace("-", " ").title())
                     entity_id = make_entity_id(entity_type, name)
 
-                    # Upsert node
+                    # Upsert node (graph write + embedding both run off-loop)
                     await self.add_entity(
                         entity_id=entity_id,
                         entity_type=entity_type,
@@ -212,7 +324,13 @@ class SemanticaKnowledge:
     async def clear_all_data(self) -> dict[str, Any]:
         """Clear all graph data."""
         try:
-            self.graph_store.execute_query("MATCH (n) DETACH DELETE n")
+            # Vectors first: a vector whose node is gone is the harmful state
+            # (hybrid_search returns ghosts), a node without a vector is not.
+            # If this fails the graph is left untouched and the reset reports
+            # the error instead of claiming success.
+            cleared = await self.search.clear_entity_vectors()
+            logger.info("Cleared %d entity vectors", cleared)
+            await self._query("MATCH (n) DETACH DELETE n")
             self.nodes.clear()
             self.edges.clear()
             self.semantic_edges.clear()
@@ -235,7 +353,7 @@ class SemanticaKnowledge:
             Entity dict with id, name, type, attributes, or None.
         """
         try:
-            rows = self._extract_records(self.graph_store.execute_query(
+            rows = self._extract_records(await self._query(
                 "MATCH (n:Entity {id: $id}) RETURN n",
                 {"id": entity_id},
             ))
@@ -275,7 +393,7 @@ class SemanticaKnowledge:
                     cypher = f"MATCH (a:Entity {{id: $id}})-[r:{neo4j_type}]->(b:Entity) "
                 cypher += "RETURN type(r) AS rel_type, properties(r) AS props, b.id AS target_id, b.name AS target_name, b.entity_type AS target_type"
 
-                rows = self._extract_records(self.graph_store.execute_query(cypher, {"id": entity_id}))
+                rows = self._extract_records(await self._query(cypher, {"id": entity_id}))
                 for r in rows:
                     rels.append({
                         "source": entity_id,
@@ -294,7 +412,7 @@ class SemanticaKnowledge:
                     cypher = f"MATCH (a:Entity)-[r:{neo4j_type}]->(b:Entity {{id: $id}}) "
                 cypher += "RETURN type(r) AS rel_type, properties(r) AS props, a.id AS source_id, a.name AS source_name, a.entity_type AS source_type"
 
-                rows = self._extract_records(self.graph_store.execute_query(cypher, {"id": entity_id}))
+                rows = self._extract_records(await self._query(cypher, {"id": entity_id}))
                 for r in rows:
                     rels.append({
                         "source": r.get("source_id", ""),
@@ -364,7 +482,7 @@ class SemanticaKnowledge:
                 f"SET n += $props "
                 f"RETURN n"
             )
-            self.graph_store.execute_query(cypher, {"id": entity_id, "props": props})
+            await self._query(cypher, {"id": entity_id, "props": props})
 
             # Update in-memory cache
             from app.services.graph.models import GraphNode
@@ -401,22 +519,20 @@ class SemanticaKnowledge:
             True if successful.
         """
         try:
+            # Vector first (see clear_all_data): if this fails the node stays
+            # and the deletion is reported as incomplete rather than leaving a
+            # searchable vector that points at nothing.
+            await self.search.delete_entity_vector(entity_id)
+
             if cascade:
                 cypher = "MATCH (n:Entity {id: $id}) DETACH DELETE n"
             else:
                 cypher = "MATCH (n:Entity {id: $id}) DELETE n"
 
-            self.graph_store.execute_query(cypher, {"id": entity_id})
+            await self._query(cypher, {"id": entity_id})
 
             # Remove from cache
             self.nodes.pop(entity_id, None)
-
-            # Remove from vector index
-            try:
-                if hasattr(self.search, 'vector_store') and hasattr(self.search.vector_store, 'delete'):
-                    self.search.vector_store.delete(entity_id)
-            except Exception as vec_err:
-                logger.debug(f"Vector index delete for {entity_id} skipped: {vec_err}")
 
             return True
 
@@ -456,7 +572,7 @@ class SemanticaKnowledge:
                 f"SET r += $props "
                 f"RETURN r"
             )
-            self.graph_store.execute_query(
+            await self._query(
                 cypher,
                 {"source": source_id, "target": target_id, "props": props},
             )
@@ -489,7 +605,7 @@ class SemanticaKnowledge:
                 f"MATCH (a:Entity {{id: $source}})-[r:{neo4j_type}]->(b:Entity {{id: $target}}) "
                 f"DELETE r"
             )
-            self.graph_store.execute_query(
+            await self._query(
                 cypher,
                 {"source": source_id, "target": target_id},
             )
@@ -513,7 +629,7 @@ class SemanticaKnowledge:
                 "SET n += $props "
                 "RETURN n"
             )
-            self.graph_store.execute_query(
+            await self._query(
                 cypher,
                 {"id": entity_id, "props": properties},
             )
@@ -556,7 +672,7 @@ class SemanticaKnowledge:
         """
         try:
             # Transfer outgoing relationships
-            self.graph_store.execute_query(
+            await self._query(
                 "MATCH (dup:Entity {id: $dup_id})-[r]->(t:Entity) "
                 "WHERE NOT (t.id = $primary_id) "
                 "WITH dup, r, t, type(r) AS rel_type, properties(r) AS props "
@@ -567,7 +683,7 @@ class SemanticaKnowledge:
             )
 
             # Transfer incoming relationships
-            self.graph_store.execute_query(
+            await self._query(
                 "MATCH (s:Entity)-[r]->(dup:Entity {id: $dup_id}) "
                 "WHERE NOT (s.id = $primary_id) "
                 "WITH s, r, dup, type(r) AS rel_type, properties(r) AS props "
@@ -591,7 +707,7 @@ class SemanticaKnowledge:
             logger.warning(f"APOC merge failed, using manual fallback: {e}")
             try:
                 # Transfer outgoing relationships from duplicate to primary
-                out_rels = self._extract_records(self.graph_store.execute_query(
+                out_rels = self._extract_records(await self._query(
                     "MATCH (dup:Entity {id: $dup_id})-[r]->(t:Entity) "
                     "WHERE t.id <> $primary_id "
                     "RETURN t.id AS target_id, type(r) AS rel_type, properties(r) AS props",
@@ -599,14 +715,14 @@ class SemanticaKnowledge:
                 ))
                 for rel in out_rels:
                     neo4j_type = _validate_cypher_id(rel["rel_type"])
-                    self.graph_store.execute_query(
+                    await self._query(
                         f"MATCH (p:Entity {{id: $primary_id}}), (t:Entity {{id: $target_id}}) "
                         f"MERGE (p)-[r:{neo4j_type}]->(t) SET r += $props",
                         {"primary_id": primary_id, "target_id": rel["target_id"], "props": rel.get("props", {})},
                     )
 
                 # Transfer incoming relationships from duplicate to primary
-                in_rels = self._extract_records(self.graph_store.execute_query(
+                in_rels = self._extract_records(await self._query(
                     "MATCH (s:Entity)-[r]->(dup:Entity {id: $dup_id}) "
                     "WHERE s.id <> $primary_id "
                     "RETURN s.id AS source_id, type(r) AS rel_type, properties(r) AS props",
@@ -614,7 +730,7 @@ class SemanticaKnowledge:
                 ))
                 for rel in in_rels:
                     neo4j_type = _validate_cypher_id(rel["rel_type"])
-                    self.graph_store.execute_query(
+                    await self._query(
                         f"MATCH (s:Entity {{id: $source_id}}), (p:Entity {{id: $primary_id}}) "
                         f"MERGE (s)-[r:{neo4j_type}]->(p) SET r += $props",
                         {"source_id": rel["source_id"], "primary_id": primary_id, "props": rel.get("props", {})},
@@ -670,7 +786,7 @@ class SemanticaKnowledge:
             if hasattr(self.graph_store, 'execute_read_query'):
                 raw = self.graph_store.execute_read_query(query, params or {})
             else:
-                raw = self.graph_store.execute_query(query, params or {})
+                raw = await self._query(query, params or {})
             # execute_query returns {"success": bool, "records": [...]} —
             # callers expect a flat list of row dicts.
             return self._extract_records(raw)
@@ -828,7 +944,7 @@ class SemanticaKnowledge:
         )
 
         results = self._extract_records(
-            self.graph_store.execute_query(cypher, {"lookup": entity_id, "at_time": at_iso})
+            await self._query(cypher, {"lookup": entity_id, "at_time": at_iso})
         )
 
         if not results:
@@ -873,7 +989,7 @@ class SemanticaKnowledge:
             "r.valid_from AS valid_from, r.valid_to AS valid_to"
         )
         out_results = self._extract_records(
-            self.graph_store.execute_query(out_cypher, {"id": entity_id, "at_time": at_iso})
+            await self._query(out_cypher, {"id": entity_id, "at_time": at_iso})
         )
         for r in out_results:
             rels.append({
@@ -897,7 +1013,7 @@ class SemanticaKnowledge:
             "r.valid_from AS valid_from, r.valid_to AS valid_to"
         )
         in_results = self._extract_records(
-            self.graph_store.execute_query(in_cypher, {"id": entity_id, "at_time": at_iso})
+            await self._query(in_cypher, {"id": entity_id, "at_time": at_iso})
         )
         for r in in_results:
             rels.append({
@@ -932,7 +1048,7 @@ class SemanticaKnowledge:
             "ORDER BY coalesce(r.timestamp, d.created_at) ASC"
         )
         results = self._extract_records(
-            self.graph_store.execute_query(cypher, {"id": entity_id})
+            await self._query(cypher, {"id": entity_id})
         )
 
         history = [
@@ -1058,7 +1174,7 @@ class SemanticaKnowledge:
             )
 
         try:
-            return self._extract_records(self.graph_store.execute_query(cypher, params))
+            return self._extract_records(await self._query(cypher, params))
         except Exception as e:
             logger.error(f"find_edges failed: {e}")
             return []
@@ -1110,7 +1226,13 @@ class SemanticaKnowledge:
         entity_type: str,
         metadata: dict[str, Any],
     ) -> int:
-        """Process relationship metadata and create edges. Returns count created."""
+        """Process relationship metadata and create edges. Returns count created.
+
+        Raises RuntimeError when a required stub or relationship write fails —
+        ``add_entity``/``add_relationship`` swallow their own errors into
+        ``False``, and a half-written profile must not be reported as ingested
+        (the reconcile would stamp it and never retry).
+        """
         if not self.domain or not self.domain.entities:
             return 0
 
@@ -1129,21 +1251,26 @@ class SemanticaKnowledge:
                 # Create stub node for target if it doesn't exist
                 existing = await self.get_entity(target_id)
                 if not existing:
-                    await self.add_entity(
+                    if not await self.add_entity(
                         entity_id=target_id,
                         entity_type=rel_def.target,
                         name=target_name,
                         properties={"name": target_name, "stub": True},
-                    )
+                    ):
+                        raise RuntimeError(
+                            f"stub write failed for {target_id} ({rel_type} of {entity_id})"
+                        )
 
-                await self.add_relationship(entity_id, target_id, rel_type)
+                if not await self.add_relationship(entity_id, target_id, rel_type):
+                    raise RuntimeError(f"relationship write failed: {entity_id} -{rel_type}-> {target_id}")
                 count += 1
 
                 # Create inverse relationship if defined
                 if hasattr(rel_def, "inverse_name") and rel_def.inverse_name:
-                    await self.add_relationship(
-                        target_id, entity_id, rel_def.inverse_name
-                    )
+                    if not await self.add_relationship(target_id, entity_id, rel_def.inverse_name):
+                        raise RuntimeError(
+                            f"inverse relationship write failed: {target_id} -{rel_def.inverse_name}-> {entity_id}"
+                        )
                     count += 1
 
         return count
@@ -1223,7 +1350,7 @@ class SemanticaKnowledge:
             self.entity_documents.clear()
 
             # Sync nodes
-            node_rows = self._extract_records(self.graph_store.execute_query(
+            node_rows = self._extract_records(await self._query(
                 "MATCH (n:Entity) RETURN n"
             ))
             from app.services.graph.models import GraphEdge, GraphNode
@@ -1240,7 +1367,7 @@ class SemanticaKnowledge:
                     )
 
             # Sync edges
-            edge_rows = self._extract_records(self.graph_store.execute_query(
+            edge_rows = self._extract_records(await self._query(
                 "MATCH (a:Entity)-[r]->(b:Entity) "
                 "RETURN a.id AS source, b.id AS target, type(r) AS rel_type, properties(r) AS props"
             ))
