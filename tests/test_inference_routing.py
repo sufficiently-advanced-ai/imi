@@ -125,6 +125,140 @@ def test_no_extra_body_leaves_extra_empty():
     assert ep.extra == {}
 
 
+def test_timeout_flows_into_endpoint_extra():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "timeout": 90,
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    # Normalized to float: litellm.completion() expects a number, and YAML hands
+    # an unquoted scalar through as an int.
+    assert ep.extra == {"timeout": 90.0}
+    assert isinstance(ep.extra["timeout"], float)
+
+
+def test_timeout_coexists_with_extra_body():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "timeout": 90,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        "timeout": 90.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "ninety",           # non-numeric string
+        True,               # bool is an int subclass -> would become a 1s cap
+        float("nan"),       # parses as a float, disables the cap
+        float("inf"),       # ditto
+        0,                  # no useful meaning as a wall-clock cap
+        -5,                 # negative
+        {"seconds": 90},    # wrong shape entirely
+    ],
+)
+def test_invalid_timeout_is_config_error(bad):
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "timeout": bad,
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    with pytest.raises(InferenceConfigError, match="timeout"):
+        reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+
+
+def test_digitalocean_forwards_timeout(monkeypatch):
+    # The digitalocean branch returns before the generic LiteLLM branch, but is
+    # still a non-Anthropic endpoint dispatched through litellm -- so it has to
+    # honor timeout too, exactly as it does extra_body.
+    monkeypatch.setenv("DO_KEY", "sk-do-test")
+    cfg = {
+        "endpoints": {
+            "do-model": {
+                "type": "digitalocean",
+                "model": "some-model",
+                "api_key_env": "DO_KEY",
+                "timeout": 45,
+                "extra_body": {"foo": "bar"},
+            }
+        },
+        "operations": {"metadata_extraction": "do-model"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {"extra_body": {"foo": "bar"}, "timeout": 45.0}
+
+
+def test_digitalocean_invalid_timeout_is_config_error(monkeypatch):
+    monkeypatch.setenv("DO_KEY", "sk-do-test")
+    cfg = {
+        "endpoints": {
+            "do-model": {
+                "type": "digitalocean",
+                "model": "some-model",
+                "api_key_env": "DO_KEY",
+                "timeout": -1,
+            }
+        },
+        "operations": {"metadata_extraction": "do-model"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    with pytest.raises(InferenceConfigError, match="timeout"):
+        reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+
+
+def test_anthropic_endpoint_ignores_timeout():
+    # The native Anthropic client sets its own timeout in _build_anthropic_client;
+    # ResolvedEndpoint carries no extra for it, so a stray key must not leak.
+    cfg = {
+        "endpoints": {"anth": {"type": "anthropic", "timeout": 90}},
+        "operations": {"metadata_extraction": "anth"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.is_anthropic
+    assert "timeout" not in (ep.extra or {})
+
+
+def test_no_timeout_leaves_it_out_of_extra():
+    # Absent -> LiteLLM's own default applies; we must not inject None, which
+    # litellm would treat as an explicit "no timeout" override.
+    cfg = {
+        "endpoints": {
+            "tailnet": {"type": "openai", "litellm_model": "hosted_vllm/qwen"}
+        },
+        "operations": {"metadata_extraction": "tailnet"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert "timeout" not in ep.extra
+
+
 def test_unknown_endpoint_reference_is_config_error():
     cfg = {"endpoints": {}, "aliases": {"some-model": "does-not-exist"}}
     with pytest.raises(InferenceConfigError):
