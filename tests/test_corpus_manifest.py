@@ -375,3 +375,59 @@ async def test_semantica_ingest_file_distinguishes_skip_from_failure():
     sk.add_entity = AsyncMock(return_value=False)  # add_entity swallowed an error
     with pytest.raises(RuntimeError, match="add_entity failed"):
         await sk.ingest_file("entities/person/alice.md", entity_md)
+
+
+def _relationship_domain():
+    from app.model_schemas.domain_config import (
+        DomainAttribute,
+        DomainConfiguration,
+        DomainEntity,
+        DomainRelationship,
+    )
+
+    return DomainConfiguration(
+        id="t",
+        name="T",
+        entities={
+            "person": DomainEntity(
+                name="person", description="p", plural="people",
+                attributes=[DomainAttribute(name="name", type="string", required=True)],
+                relationships=[DomainRelationship(type="has_projects", target="project", cardinality="one-to-many")],
+            ),
+            "project": DomainEntity(
+                name="project", description="pr", plural="projects",
+                attributes=[DomainAttribute(name="name", type="string", required=True)],
+                relationships=[],
+            ),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_relationships_propagates_write_failures():
+    from unittest.mock import AsyncMock
+
+    from app.services.semantica_knowledge import SemanticaKnowledge
+
+    sk = SemanticaKnowledge.__new__(SemanticaKnowledge)
+    sk.domain = _relationship_domain()
+    sk.get_entity = AsyncMock(return_value=None)
+    sk.add_entity = AsyncMock(return_value=True)
+    sk.add_relationship = AsyncMock(return_value=True)
+    meta = {"has_projects": ["Apollo"]}
+
+    assert await sk._process_relationships("person-alice", "person", meta) == 1
+
+    sk.add_relationship = AsyncMock(return_value=False)  # edge write swallowed an error
+    with pytest.raises(RuntimeError, match="relationship write failed"):
+        await sk._process_relationships("person-alice", "person", meta)
+
+    sk.add_relationship = AsyncMock(return_value=True)
+    sk.add_entity = AsyncMock(return_value=False)  # stub write failed
+    with pytest.raises(RuntimeError, match="stub write failed"):
+        await sk._process_relationships("person-alice", "person", meta)
+
+    # ingest_file surfaces it too, so the reconcile keeps the file for retry
+    sk.add_entity = AsyncMock(side_effect=[True, False])  # profile ok, stub fails
+    with pytest.raises(RuntimeError, match="stub write failed"):
+        await sk.ingest_file("entities/person/alice.md", "---\ntype: person\nname: Alice\nhas_projects:\n  - Apollo\n---\n")

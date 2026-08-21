@@ -1226,7 +1226,13 @@ class SemanticaKnowledge:
         entity_type: str,
         metadata: dict[str, Any],
     ) -> int:
-        """Process relationship metadata and create edges. Returns count created."""
+        """Process relationship metadata and create edges. Returns count created.
+
+        Raises RuntimeError when a required stub or relationship write fails —
+        ``add_entity``/``add_relationship`` swallow their own errors into
+        ``False``, and a half-written profile must not be reported as ingested
+        (the reconcile would stamp it and never retry).
+        """
         if not self.domain or not self.domain.entities:
             return 0
 
@@ -1245,21 +1251,26 @@ class SemanticaKnowledge:
                 # Create stub node for target if it doesn't exist
                 existing = await self.get_entity(target_id)
                 if not existing:
-                    await self.add_entity(
+                    if not await self.add_entity(
                         entity_id=target_id,
                         entity_type=rel_def.target,
                         name=target_name,
                         properties={"name": target_name, "stub": True},
-                    )
+                    ):
+                        raise RuntimeError(
+                            f"stub write failed for {target_id} ({rel_type} of {entity_id})"
+                        )
 
-                await self.add_relationship(entity_id, target_id, rel_type)
+                if not await self.add_relationship(entity_id, target_id, rel_type):
+                    raise RuntimeError(f"relationship write failed: {entity_id} -{rel_type}-> {target_id}")
                 count += 1
 
                 # Create inverse relationship if defined
                 if hasattr(rel_def, "inverse_name") and rel_def.inverse_name:
-                    await self.add_relationship(
-                        target_id, entity_id, rel_def.inverse_name
-                    )
+                    if not await self.add_relationship(target_id, entity_id, rel_def.inverse_name):
+                        raise RuntimeError(
+                            f"inverse relationship write failed: {target_id} -{rel_def.inverse_name}-> {entity_id}"
+                        )
                     count += 1
 
         return count
