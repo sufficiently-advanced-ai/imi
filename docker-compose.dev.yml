@@ -96,9 +96,15 @@ services:
       - ./demo/fixtures:/app/demo/fixtures:ro  # Mount demo fixtures for video recording
       - ./data:/app/data  # Database persistence directory
       - tailscale-state:/var/lib/tailscale  # Persist Tailscale identity
-      # Mount Claude Code subscription credentials from host (read-only)
-      # This enables dev container to use subscription auth instead of API billing
-      - /root/.claude/.credentials.json:/root/.claude/.credentials.json:ro
+      # Claude Code subscription credentials, so the dev container uses
+      # subscription auth instead of API billing.
+      #
+      # Mount the DIRECTORY, not the file. A single-file bind mount pins the
+      # inode: when Claude Code refreshes the token it writes a NEW file, and
+      # the container keeps reading the old inode until it is recreated — auth
+      # then fails hours later, nowhere near the cause. See scripts/drip-seed.sh,
+      # which syncs into this directory between passes.
+      - ${CLAUDE_AUTH_DIR:-./.claude-auth}:/root/.claude
     restart: unless-stopped
     networks:
       - default
