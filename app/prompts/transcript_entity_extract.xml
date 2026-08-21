@@ -47,8 +47,10 @@
     - A daily digest naming a dozen companies should promote NONE of them.
 
     ENTITY BUDGET:
-    Label at most 6 entities "participant" or "subject" per transcript — the most
-    central ones only. Everything else is "mention".
+    Label at most 6 NEW entities "participant" or "subject" per transcript — the
+    most central ones only. Everything else is "mention". Entities already listed
+    in the existing entities above do not count against this budget: labeling a
+    known entity accurately is never pollution, so label it on its merits.
 
     OTHER RULES:
     1. Use full speaker names from "**Full Name**:" headers; "Jordan" in conversation with "Jordan Reyes" in headers → canonical_name "Jordan Reyes"

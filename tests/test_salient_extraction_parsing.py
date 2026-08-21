@@ -149,3 +149,25 @@ def test_existing_entities_are_exempt_from_the_cap():
 def test_mentions_are_dropped_without_a_resolver():
     labeled = [_labeled("Passing Co", salience="mention")]
     assert filter_salient_entities(labeled, resolver=None) == []
+
+
+def test_known_entities_survive_the_prompt_budget_as_mentions():
+    """A known entity pushed to "mention" by the prompt's 6-entity budget is
+    still promoted, because the mention branch resolves too.
+
+    This is why the prompt-side budget and the code-side cap can disagree
+    without losing data: the budget only shifts an entity's salience label,
+    and to_entities_mentioned() collapses salience away entirely.
+    """
+    known = [f"Known {i}" for i in range(10)]
+    # Prompt honors its budget: 6 promoted, the remaining 4 demoted to mention.
+    labeled = [_labeled(n, salience="subject") for n in known[:6]] + [
+        _labeled(n, salience="mention") for n in known[6:]
+    ]
+    promoted = filter_salient_entities(labeled, resolver=_Resolver(known=known))
+    assert {e["canonical_name"] for e in promoted} == set(known)
+
+    from app.services.salient_entity_extractor import to_entities_mentioned
+
+    mentioned = to_entities_mentioned(promoted)
+    assert sorted(mentioned["topic"]) == sorted(known)
