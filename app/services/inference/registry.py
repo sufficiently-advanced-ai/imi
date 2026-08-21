@@ -35,6 +35,7 @@ implicit Anthropic endpoint built from ``settings.ANTHROPIC_API_KEY`` (+ optiona
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,6 +153,31 @@ class InferenceRegistry:
 
         return self._build(endpoint_name, spec, model)
 
+    @staticmethod
+    def _coerce_timeout(name: str, raw: Any) -> float | None:
+        """Validate `timeout` as a finite, positive number of seconds.
+
+        Fails closed here rather than letting a bad value reach
+        ``litellm.completion()``. A bare ``float()`` would silently accept
+        several values that are worse than useless as a timeout: ``bool`` is an
+        ``int`` subclass, so ``timeout: true`` becomes a 1-second cap; ``nan``
+        and ``inf`` parse fine and disable the cap entirely.
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            raise InferenceConfigError(
+                f"endpoint {name!r}: 'timeout' must be a number of seconds, "
+                f"got {type(raw).__name__}"
+            )
+        value = float(raw)
+        if not math.isfinite(value) or value <= 0:
+            raise InferenceConfigError(
+                f"endpoint {name!r}: 'timeout' must be finite and greater than 0, "
+                f"got {raw!r}"
+            )
+        return value
+
     def _build(self, name: str, spec: dict[str, Any], requested_model: str) -> ResolvedEndpoint:
         etype = (spec.get("type") or "anthropic").lower()
         api_key_env = spec.get("api_key_env")
@@ -165,6 +191,10 @@ class InferenceRegistry:
                 f"endpoint {name!r}: 'extra_body' must be a mapping, "
                 f"got {type(extra_body).__name__}"
             )
+
+        # Normalized before the type branches below: digitalocean returns early
+        # but is still a LiteLLM endpoint, so it has to honor timeout too.
+        timeout = self._coerce_timeout(name, spec.get("timeout"))
 
         if etype == "anthropic":
             return ResolvedEndpoint(
@@ -209,7 +239,10 @@ class InferenceRegistry:
                 # plain-generation only by contract. Use type: openai for an
                 # endpoint where tool use should be configurable.
                 allow_tools=False,
-                extra={"extra_body": extra_body} if extra_body else {},
+                extra={
+                    **({"extra_body": extra_body} if extra_body else {}),
+                    **({"timeout": timeout} if timeout is not None else {}),
+                },
             )
 
         # Non-Anthropic -> LiteLLM. litellm_model carries the provider prefix.
@@ -225,14 +258,14 @@ class InferenceRegistry:
             # Arbitrary request-body params LiteLLM forwards verbatim to the
             # backend (e.g. chat_template_kwargs to disable Qwen thinking mode).
             extra["extra_body"] = extra_body
-        if spec.get("timeout") is not None:
+        if timeout is not None:
             # Per-attempt wall-clock cap handed to litellm.completion(). LiteLLM
             # defaults to 600s, which is pathological in front of a serially
             # queued local backend: the caller's retry loop stacks 5 attempts of
             # dead time onto a queue that is already behind, and it never
             # drains. Keep this at a few multiples of a normal generation so a
             # wedged backend sheds load instead of amplifying it.
-            extra["timeout"] = float(spec["timeout"])
+            extra["timeout"] = timeout
         return ResolvedEndpoint(
             name=name,
             is_anthropic=False,
