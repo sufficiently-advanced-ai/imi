@@ -15,6 +15,7 @@ Config shape (all sections optional)::
         api_key_env: TAILNET_LLM_KEY
         pricing: { input: 0.0, output: 0.0 }
         allow_tools: false
+        timeout: 90                  # per-attempt seconds (LiteLLM default: 600)
         extra_body: { chat_template_kwargs: { enable_thinking: false } }
       client-dmz-bedrock:
         type: bedrock
@@ -224,6 +225,14 @@ class InferenceRegistry:
             # Arbitrary request-body params LiteLLM forwards verbatim to the
             # backend (e.g. chat_template_kwargs to disable Qwen thinking mode).
             extra["extra_body"] = extra_body
+        if spec.get("timeout") is not None:
+            # Per-attempt wall-clock cap handed to litellm.completion(). LiteLLM
+            # defaults to 600s, which is pathological in front of a serially
+            # queued local backend: the caller's retry loop stacks 5 attempts of
+            # dead time onto a queue that is already behind, and it never
+            # drains. Keep this at a few multiples of a normal generation so a
+            # wedged backend sheds load instead of amplifying it.
+            extra["timeout"] = float(spec["timeout"])
         return ResolvedEndpoint(
             name=name,
             is_anthropic=False,
