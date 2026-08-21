@@ -105,17 +105,38 @@ class LifecycleManager:
         logger.info("Registered database pool for cleanup")
 
     async def startup(self) -> None:
-        """Run startup sequence"""
+        """Begin the startup sequence.
+
+        Installs signal handlers and moves to RUNNING. It deliberately does
+        NOT mark startup as complete: that happens in ``mark_ready()`` once
+        ``app.main.startup_event`` has finished loading the graph, vector
+        stack and database. Previously the flag was set here — on the first
+        line of startup — which made any readiness signal built on it wrong.
+        """
         logger.info("Starting application lifecycle...")
 
         # Initialize signal handlers
         self._setup_signal_handlers()
 
-        # Mark as running
+        # Mark as running (serving infrastructure is up; dependencies may not be)
         self.state = LifecycleState.RUNNING
-        self._startup_complete.set()
 
-        logger.info("Application startup complete - ready to serve requests")
+    def mark_ready(self, *, detail: str | None = None) -> None:
+        """Declare startup complete: dependencies loaded, safe to serve."""
+        if self._startup_complete.is_set():
+            return
+        self._startup_complete.set()
+        logger.info("Application startup complete - ready to serve requests%s", f" ({detail})" if detail else "")
+
+    def is_ready(self) -> bool:
+        return self._startup_complete.is_set()
+
+    async def wait_until_ready(self, timeout: float | None = None) -> bool:
+        try:
+            await asyncio.wait_for(self._startup_complete.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
 
     def _setup_signal_handlers(self) -> None:
         """Setup graceful shutdown signal handlers"""

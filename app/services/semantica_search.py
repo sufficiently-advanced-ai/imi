@@ -17,6 +17,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.blocking import run_blocking
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,48 @@ class SemanticaSearch:
         self.vector_store = vector_store
         self.embedder = embedding_generator
         self.graph_store = graph_store
+
+    # ── store resolution / blocking boundary ───────────────────────────
+
+    @property
+    def store(self) -> Any:
+        """The vector store to read/write for the current tenant.
+
+        ``VECTOR_BACKEND=sqlite`` (community default) resolves to the
+        persistent, metadata-carrying ``SqliteVectorStore``; ``faiss`` keeps
+        the in-memory Semantica store handed in at construction. Resolved per
+        call because the hosted backend is tenant-scoped.
+        """
+        try:
+            from app.services.signal_indexing import resolve_vector_store
+
+            return resolve_vector_store(self.vector_store)
+        except Exception:
+            return self.vector_store
+
+    async def _embed(self, text: str) -> Any:
+        embedding = await run_blocking(self.embedder.generate_embeddings, text, data_type="text")
+        if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
+            embedding = embedding[0]
+        return embedding
+
+    async def entity_vector_count(self) -> int | None:
+        """Number of indexed entity vectors, or None when the store can't say."""
+        store = self.store
+        if not hasattr(store, "count"):
+            return None
+        try:
+            return int(await run_blocking(store.count, "entity"))
+        except Exception as e:
+            logger.debug(f"entity_vector_count unavailable: {e}")
+            return None
+
+    async def delete_entity_vector(self, entity_id: str) -> None:
+        store = self.store
+        if hasattr(store, "delete"):
+            await run_blocking(store.delete, entity_id)
+        elif hasattr(store, "delete_vectors"):
+            await run_blocking(store.delete_vectors, [entity_id])
 
     async def hybrid_search(
         self,
@@ -54,11 +98,7 @@ class SemanticaSearch:
 
         try:
             # Generate query embedding
-            query_embedding = self.embedder.generate_embeddings(
-                query, data_type="text"
-            )
-            if isinstance(query_embedding, np.ndarray) and query_embedding.ndim > 1:
-                query_embedding = query_embedding[0]
+            query_embedding = await self._embed(query)
 
             # Build metadata filter — always exclude transcript chunks from
             # entity search, and optionally restrict to specific entity types.
@@ -77,11 +117,21 @@ class SemanticaSearch:
             search_kwargs["filter"] = mf
 
             # Vector search
-            results = self.vector_store.search_vectors(
+            results = await run_blocking(
+                self.store.search_vectors,
                 query_embedding,
                 k=limit * 2,  # Over-fetch for re-ranking
                 **search_kwargs,
             )
+
+            # Stores only honour content_type filters server-side (see
+            # SqliteVectorStore); apply the entity_type restriction here.
+            if entity_types:
+                wanted = set(entity_types)
+                results = [
+                    r for r in results
+                    if (r.get("metadata") or {}).get("entity_type") in wanted
+                ]
 
             # Convert to standard format
             search_results = []
@@ -132,11 +182,7 @@ class SemanticaSearch:
             return []
 
         try:
-            query_embedding = self.embedder.generate_embeddings(
-                query, data_type="text"
-            )
-            if isinstance(query_embedding, np.ndarray) and query_embedding.ndim > 1:
-                query_embedding = query_embedding[0]
+            query_embedding = await self._embed(query)
 
             # Build metadata filter
             search_kwargs: dict[str, Any] = {}
@@ -148,7 +194,8 @@ class SemanticaSearch:
             # requires an exact match.
             search_kwargs["filter"] = mf
 
-            results = self.vector_store.search_vectors(
+            results = await run_blocking(
+                self.store.search_vectors,
                 query_embedding,
                 k=max_results * 2,
                 **search_kwargs,
@@ -232,9 +279,7 @@ class SemanticaSearch:
                     text_parts.append(f"{key}: {', '.join(str(v) for v in value)}")
 
             text = " | ".join(text_parts)
-            embedding = self.embedder.generate_embeddings(text, data_type="text")
-            if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
-                embedding = embedding[0]
+            embedding = await self._embed(text)
 
             metadata = {
                 "id": entity_id,
@@ -245,9 +290,14 @@ class SemanticaSearch:
                 "attributes": attributes,
             }
 
-            ids = self.vector_store.store_vectors(
+            # ids=[entity_id]: upsert-capable stores (sqlite/pgvector) replace
+            # the previous vector instead of accumulating duplicates on every
+            # re-index; the FAISS facade ignores the kwarg.
+            ids = await run_blocking(
+                self.store.store_vectors,
                 [embedding],
                 metadata=[metadata],
+                ids=[entity_id],
             )
             return ids[0] if ids else None
 
@@ -283,9 +333,7 @@ class SemanticaSearch:
             return None
 
         try:
-            embedding = self.embedder.generate_embeddings(text, data_type="text")
-            if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
-                embedding = embedding[0]
+            embedding = await self._embed(text)
 
             metadata = {
                 "content_type": "transcript",
@@ -298,7 +346,8 @@ class SemanticaSearch:
                 "file_path": file_path,
             }
 
-            ids = self.vector_store.store_vectors(
+            ids = await run_blocking(
+                self.store.store_vectors,
                 [embedding],
                 metadata=[metadata],
             )
@@ -362,8 +411,8 @@ class SemanticaSearch:
                 cypher += f" AND ({type_labels})"
             cypher += " RETURN n LIMIT $limit"
 
-            raw = self.graph_store.execute_query(
-                cypher, {"query": query, "limit": limit}
+            raw = await run_blocking(
+                self.graph_store.execute_query, cypher, {"query": query, "limit": limit}
             )
             # execute_query returns {"success": bool, "records": [...]} —
             # iterate the records list, not the wrapper dict.

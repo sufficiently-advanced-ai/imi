@@ -18,6 +18,7 @@ import os
 import re
 import time
 from collections import defaultdict
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -26,6 +27,7 @@ import yaml
 from app.model_schemas.domain_config import DomainConfiguration
 from app.neo4j_client import Neo4jClient
 
+from .batch_writer import Neo4jBatchWriter
 from .models import GraphEdge, GraphNode
 from .neo4j_models import (
     build_node_properties,
@@ -44,6 +46,13 @@ try:
 except ImportError:
     OTEL_AVAILABLE = False
     tracer = None
+
+
+# Active batch collector for the *current task* during full builds / bulk
+# ingests. The single-row write helpers check it and buffer instead of hitting
+# Neo4j one statement at a time (see batch_writer.py). A ContextVar, not an
+# attribute, so only the building task (and tasks it spawns) see it.
+_active_batch: ContextVar[Neo4jBatchWriter | None] = ContextVar("neo4j_active_batch", default=None)
 
 
 class Neo4jKnowledgeGraph:
@@ -82,6 +91,14 @@ class Neo4jKnowledgeGraph:
 
         # Per-entity locks for write-through file operations
         self._file_locks: dict[str, asyncio.Lock] = {}
+        # Batch collection is task-scoped (see ``_active_batch`` below), not
+        # instance state: a request-path write that lands while a background
+        # reconcile is batching must still go straight to Neo4j.
+
+    @property
+    def _batch(self) -> Neo4jBatchWriter | None:
+        """The batch collector active for the current task, if any."""
+        return _active_batch.get()
 
     @property
     def git_ops(self):
@@ -152,7 +169,12 @@ class Neo4jKnowledgeGraph:
     # Graph Build
     # ──────────────────────────────────────────────────────────────
 
-    async def build_graph(self, force_rebuild: bool = False, clean: bool = False) -> dict[str, Any]:
+    async def build_graph(
+        self,
+        force_rebuild: bool = False,
+        clean: bool = False,
+        reingest_signals: bool = True,
+    ) -> dict[str, Any]:
         """Build the knowledge graph by scanning markdown files and writing to Neo4j.
 
         On subsequent calls, skips rebuild unless forced or cache is stale (24h).
@@ -218,9 +240,16 @@ class Neo4jKnowledgeGraph:
                         e,
                     )
 
-            return await self._build_graph_locked(force_rebuild=force_rebuild, clean=clean)
+            return await self._build_graph_locked(
+                force_rebuild=force_rebuild, clean=clean, reingest_signals=reingest_signals
+            )
 
-    async def _build_graph_locked(self, force_rebuild: bool = False, clean: bool = False) -> dict[str, Any]:
+    async def _build_graph_locked(
+        self,
+        force_rebuild: bool = False,
+        clean: bool = False,
+        reingest_signals: bool = True,
+    ) -> dict[str, Any]:
         """Inner build logic — caller MUST hold self._build_lock.
 
         Reader visibility: The build writes to Neo4j (server-side) and lets
@@ -238,11 +267,13 @@ class Neo4jKnowledgeGraph:
         start_time = time.time()
         logger.info("Building knowledge graph from document metadata → Neo4j...")
 
-        # Get all markdown files
-        all_files = []
+        # Get all markdown files. Keep the content read_markdown_files() has
+        # already loaded — the old loop re-read every file through read_file(),
+        # doubling corpus I/O and log volume on every startup.
+        documents: list[tuple[str, str | None]] = []
         try:
             files_obj = await self.git_ops.read_markdown_files()
-            all_files = [f.path for f in files_obj]
+            documents = [(f.path, f.content) for f in files_obj]
         except Exception:
             logger.exception("Error getting markdown files")
             for root, _, files in os.walk(self.git_ops.repo_path):
@@ -251,34 +282,13 @@ class Neo4jKnowledgeGraph:
                         rel_path = os.path.relpath(
                             os.path.join(root, f), self.git_ops.repo_path
                         )
-                        all_files.append(rel_path)
+                        documents.append((rel_path, None))
 
-        markdown_files = [f for f in all_files if not f.endswith("README.md")]
-        processed = 0
+        markdown_files = [(p, c) for p, c in documents if not p.endswith("README.md")]
 
-        for file_path in markdown_files:
-            try:
-                content = await self.git_ops.read_file(file_path)
-                if not content:
-                    continue
-
-                metadata = self._extract_metadata(content)
-                if not metadata:
-                    continue
-
-                # Skip archived entities — soft-deleted via purge or UI
-                archived = metadata.get("is_archived")
-                if isinstance(archived, str):
-                    archived = archived.strip().lower() in ("true", "1", "yes")
-                if archived:
-                    continue
-
-                await self._ingest_file(file_path, metadata)
-                processed += 1
-
-            except Exception:
-                logger.warning("Error processing %s", file_path, exc_info=True)
-                continue
+        # Every per-file write is collected and flushed as UNWIND batches —
+        # one statement per ~500 rows instead of one per node/edge.
+        processed = await self._ingest_documents_batched(markdown_files)
 
         # Build co-occurrence relationships
         await self._build_co_occurrence_relationships()
@@ -286,8 +296,10 @@ class Neo4jKnowledgeGraph:
         # Build explicit relationships from entity metadata
         await self._build_explicit_relationships()
 
-        # Re-ingest signals from disk (lost during clean rebuild)
-        await self._reingest_signals()
+        # Re-ingest signals from disk (lost during clean rebuild). The rebuild
+        # orchestrator's "source" tier skips this because replay re-extracts.
+        if reingest_signals:
+            await self._reingest_signals()
 
         self.last_build = datetime.utcnow()
 
@@ -310,6 +322,126 @@ class Neo4jKnowledgeGraph:
             f"in {elapsed:.1f}s"
         )
         return stats
+
+    # ──────────────────────────────────────────────────────────────
+    # Batched / incremental ingestion
+    # ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_archived_metadata(metadata: dict[str, Any]) -> bool:
+        archived = metadata.get("is_archived")
+        if isinstance(archived, str):
+            return archived.strip().lower() in ("true", "1", "yes")
+        return bool(archived)
+
+    async def _ingest_content(self, file_path: str, content: str | None) -> bool:
+        """Parse one markdown document and ingest it. Returns True if ingested."""
+        if not content:
+            return False
+        metadata = self._extract_metadata(content)
+        if not metadata:
+            return False
+        # Skip archived entities — soft-deleted via purge or UI
+        if self._is_archived_metadata(metadata):
+            return False
+        await self._ingest_file(file_path, metadata)
+        return True
+
+    def _batch_chunk_size(self) -> int:
+        try:
+            from app.config import settings
+
+            return int(getattr(settings, "GRAPH_BUILD_BATCH_SIZE", 500) or 500)
+        except Exception:
+            return 500
+
+    async def _ingest_documents_batched(
+        self, documents: list[tuple[str, str | None]]
+    ) -> int:
+        """Ingest ``(path, content)`` pairs through the batch writer.
+
+        ``content`` may be None (fallback directory walk), in which case the
+        file is read on demand. The write helpers see ``self._batch`` and
+        buffer; a single ``flush()`` at the end issues the UNWIND statements.
+        """
+        batch = Neo4jBatchWriter(self.neo4j, chunk_size=self._batch_chunk_size())
+        token = _active_batch.set(batch)
+        processed = 0
+        try:
+            for index, (file_path, content) in enumerate(documents):
+                try:
+                    if content is None:
+                        content = await self.git_ops.read_file(file_path)
+                    if await self._ingest_content(file_path, content):
+                        processed += 1
+                except Exception:
+                    logger.warning("Error processing %s", file_path, exc_info=True)
+                # Parsing is CPU-bound and nothing in the loop awaits real I/O
+                # while batching — hand the loop back periodically.
+                if index % 200 == 199:
+                    await asyncio.sleep(0)
+            await batch.flush(record_type_usage=self._record_type_usage)
+        finally:
+            _active_batch.reset(token)
+        return processed
+
+    async def has_entities(self) -> bool:
+        """True when Neo4j already holds entity nodes (ignoring signals)."""
+        rows = await self.neo4j.execute_read(
+            "MATCH (n:Entity) WHERE NOT n:Signal RETURN n.id LIMIT 1"
+        )
+        return bool(rows)
+
+    async def ingest_files(self, paths: list[str]) -> int:
+        """(Re-)ingest specific corpus files — the startup reconcile path.
+
+        Reads the files in one batched call, writes through the batch writer,
+        refreshes co-occurrence edges and (if caches are populated) the
+        in-memory mirrors. Returns the number of files ingested.
+        """
+        wanted = [p for p in paths if p.endswith(".md") and not p.endswith("README.md")]
+        if not wanted:
+            return 0
+        files_obj = await self.git_ops.read_markdown_files(wanted)
+        documents = [(f.path, f.content) for f in files_obj]
+        async with self._build_lock:
+            processed = await self._ingest_documents_batched(documents)
+            if processed:
+                await self._build_co_occurrence_relationships()
+                if self.last_build is not None:
+                    await self._sync_from_neo4j()
+        logger.info("[GRAPH] incrementally ingested %d/%d files", processed, len(wanted))
+        return processed
+
+    async def remove_files(self, paths: list[str]) -> dict[str, int]:
+        """Drop graph artefacts for corpus files that no longer exist on disk.
+
+        Document nodes are deleted outright. Entity nodes whose profile file
+        disappeared are demoted to stubs (kept, because other documents may
+        still reference them) rather than deleted.
+        """
+        if not paths:
+            return {"documents_deleted": 0, "entities_stubbed": 0}
+        ts = datetime.utcnow().isoformat()
+        doc_rows = await self.neo4j.execute_write(
+            "UNWIND $ids AS id MATCH (d:Document {id: id}) "
+            "DETACH DELETE d RETURN count(*) AS n",
+            {"ids": [f"doc:{p}" for p in paths]},
+        )
+        ent_rows = await self.neo4j.execute_write(
+            "UNWIND $paths AS p MATCH (n:Entity {source_file: p}) "
+            "SET n.stub = true, n.source_file = null, n.updated_at = $ts "
+            "RETURN count(*) AS n",
+            {"paths": list(paths), "ts": ts},
+        )
+        for p in paths:
+            self.document_entities.pop(p, None)
+        result = {
+            "documents_deleted": int(doc_rows[0]["n"]) if doc_rows else 0,
+            "entities_stubbed": int(ent_rows[0]["n"]) if ent_rows else 0,
+        }
+        logger.info("[GRAPH] removed %d deleted corpus files: %s", len(paths), result)
+        return result
 
     @staticmethod
     def _parse_datetime(value) -> datetime:
@@ -688,6 +820,11 @@ class Neo4jKnowledgeGraph:
         safe_props["entity_type"] = entity_type
         safe_props["updated_at"] = datetime.utcnow().isoformat()
 
+        if self._batch is not None:
+            self._batch.add_node(entity_id, label, safe_props)
+            self._batch.record_type_usage("entity", entity_type)
+            return
+
         query = (
             f"MERGE (n:Entity:{label} {{id: $id}}) "
             f"SET n += $props"
@@ -717,6 +854,10 @@ class Neo4jKnowledgeGraph:
             if key in metadata and isinstance(metadata[key], (str, int, float)):
                 props[key] = metadata[key]
 
+        if self._batch is not None:
+            self._batch.add_document(doc_id, props)
+            return
+
         query = "MERGE (d:Document {id: $id}) SET d += $props"
         await self.neo4j.execute_write(query, {"id": doc_id, "props": props})
 
@@ -734,6 +875,20 @@ class Neo4jKnowledgeGraph:
             return
 
         label = entity_type_to_label(entity_type)
+        if self._batch is not None:
+            self._batch.add_stub(
+                entity_id,
+                label,
+                {
+                    "id": entity_id,
+                    "name": name,
+                    "canonical": name.lower().strip(),
+                    "etype": entity_type,
+                    "ts": datetime.utcnow().isoformat(),
+                },
+            )
+            return
+
         query = (
             f"MERGE (n:Entity:{label} {{id: $id}}) "
             f"ON CREATE SET n.name = $name, n.canonical_name = $canonical, "
@@ -762,6 +917,11 @@ class Neo4jKnowledgeGraph:
         props = serialize_metadata_for_neo4j(properties or {})
         props["updated_at"] = datetime.utcnow().isoformat()
 
+        if self._batch is not None:
+            self._batch.add_relationship(source_id, target_id, rel_type, props)
+            self._batch.record_type_usage("relationship", rel_type)
+            return
+
         query = (
             f"MATCH (a:Entity {{id: $source}}) "
             f"MATCH (b:Entity {{id: $target}}) "
@@ -780,6 +940,10 @@ class Neo4jKnowledgeGraph:
     async def _link_entity_to_document(self, entity_id: str, file_path: str) -> None:
         """Create MENTIONED_IN relationship between entity and document."""
         doc_id = f"doc:{file_path}"
+        if self._batch is not None:
+            self._batch.add_mention(entity_id, doc_id, file_path, os.path.basename(file_path))
+            return
+
         query = (
             "MATCH (e:Entity {id: $eid}) "
             "MERGE (d:Document {id: $did}) "

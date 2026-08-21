@@ -28,15 +28,7 @@ import yaml
 
 from app.domain.entities.services.entity_repository import EntityRepository
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Ensure INFO level logging for diagnostic messages
-# Add handler to ensure logs output even with WARNING root logger
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(levelname)s: %(name)s: %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+logger = logging.getLogger(__name__)  # root handler/level: app.core.logging_setup
 
 # Constants for entity processing
 VALID_ENTITY_TYPES = [

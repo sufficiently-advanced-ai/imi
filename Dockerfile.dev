@@ -100,8 +100,11 @@ ENV DOMAIN_CONFIG_DIR=/app/config/domains
 EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+# Startup probe on the app itself: 503 until app.main.startup_event has
+# finished loading the graph/vector/db layers, 200 afterwards. The old target
+# (nginx :8080/health) was a static "healthy" string that never consulted the app.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=40 \
+  CMD curl -fsS http://localhost:8000/health/startup || exit 1
 
 # Start services via entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]

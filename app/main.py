@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import re
@@ -226,6 +225,12 @@ def _configure(app: "FastAPI") -> None:
     if os.path.exists(ui_dir):
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
 
+# Root logging: without this every logger.info() in app/ was dropped (no root
+# handler), leaving only print()/stderr lines in docker logs.
+from .core.logging_setup import configure_logging  # noqa: E402
+
+configure_logging()
+
 # Initialize shared services
 from .services.claude_client import ClaudeClient  # noqa: E402 — after conditional UI mount
 from .services.file_cache import FileCache  # noqa: E402
@@ -243,6 +248,10 @@ async def startup_event():
 
     await lifecycle_manager.startup()
     sys.stderr.write("Lifecycle manager initialized\n")
+
+    # Work that must not delay the port bind: run after mark_ready(), in order.
+    deferred_startup_tasks: list[tuple[str, Any]] = []
+    startup_mode = "unknown"
 
     # Initialize production telemetry system (Issue #526)
     initialize_telemetry()
@@ -319,80 +328,67 @@ async def startup_event():
             except Exception as sem_err:
                 sys.stderr.write(f"Warning: Semantica initialization failed: {sem_err}\n")
 
-            # Rebuild knowledge graph from scratch on startup (stateless deploy)
+            # Knowledge graph startup strategy — see app/services/graph_rebuild.py
+            from .services import graph_rebuild
+
             if settings.NEO4J_REBUILD_ON_STARTUP:
-                # 1) Always run the legacy Neo4j graph build synchronously.
-                #    This populates .nodes/.edges caches that the visualization
-                #    adapter reads. It's fast (~5-15s, no embeddings).
+                # Stateless deploy: full build from the corpus before serving.
+                # Writes are batched (UNWIND), so this is seconds, not minutes.
+                startup_mode = "rebuild"
                 try:
                     from .services.graph import get_knowledge_graph
-                    kg = get_knowledge_graph()
-                    if kg:
-                        sys.stderr.write("Rebuilding knowledge graph (clean=False)...\n")
-                        stats = await kg.build_graph(force_rebuild=True, clean=False)
+                    if get_knowledge_graph():
+                        sys.stderr.write("Rebuilding knowledge graph from corpus (NEO4J_REBUILD_ON_STARTUP=true)...\n")
+                        status = await graph_rebuild.run_full_rebuild(
+                            source="startup", include_semantica=False
+                        )
+                        g = status.get("stats", {}).get("graph", {})
                         sys.stderr.write(
-                            f"Knowledge graph rebuilt: {stats.get('total_nodes', stats.get('nodes', 0))} nodes, "
-                            f"{stats.get('total_edges', stats.get('edges', 0))} edges\n"
+                            f"Knowledge graph rebuilt: {g.get('total_nodes', g.get('nodes', 0))} nodes, "
+                            f"{g.get('total_edges', g.get('edges', 0))} edges\n"
                         )
                     else:
                         sys.stderr.write("Warning: Knowledge graph not available for startup rebuild\n")
                 except Exception as rebuild_err:
                     sys.stderr.write(f"Warning: Knowledge graph rebuild failed: {rebuild_err}\n")
-
-                # 2) If Semantica is available, schedule its index build as an
-                #    async task. This indexes entities into the vector store for
-                #    hybrid search. Runs on the same event loop, not a separate thread.
-                try:
-                    from .services.graph.factory import get_semantica_knowledge
-                    _sk = get_semantica_knowledge()
-                    if _sk:
-                        sys.stderr.write("Scheduling Semantica vector index build as async task...\n")
-
-                        async def _bg_semantica_build():
-                            try:
-                                stats = await _sk.build_graph(force_rebuild=True, clean=False)
-                                sys.stderr.write(
-                                    f"Semantica build complete (background): "
-                                    f"{stats.get('nodes', 0)} nodes, "
-                                    f"{stats.get('edges', 0)} edges\n"
-                                )
-                            except Exception as e:
-                                sys.stderr.write(f"Semantica background build failed: {e}\n")
-
-                        asyncio.create_task(_bg_semantica_build())
-                except Exception as sem_build_err:
-                    sys.stderr.write(f"Warning: Semantica background build setup failed: {sem_build_err}\n")
+                # Entity vectors are rebuilt after the port is bound; every
+                # Semantica call now runs off the event loop (blocking.py).
+                deferred_startup_tasks.append(("semantica-build", graph_rebuild.semantica_full_build))
             else:
-                # Pre-warm the in-memory graph cache from Neo4j on startup.
-                # Without this, the first user request to anything that calls
-                # build_graph() (e.g. /api/entities/{id}/profile) pays the
-                # smart-sync cost (~4s) on the cold path. Pre-warming moves
-                # that cost out of the user's first interaction.
+                # Stateful deploy (persistent Neo4j volume): trust the graph,
+                # sync the in-memory caches from it (~1 s), reconcile the corpus
+                # delta and the vector index after we are serving.
+                startup_mode = "stateful"
                 try:
                     from .services.graph import get_knowledge_graph
                     kg = get_knowledge_graph()
                     if kg and hasattr(kg, "build_graph"):
-                        sys.stderr.write("Pre-warming graph cache from Neo4j...\n")
-                        stats = await kg.build_graph()
-                        sys.stderr.write(
-                            f"Graph cache pre-warmed: {stats.get('total_nodes', stats.get('nodes', 0))} nodes, "
-                            f"{stats.get('total_edges', stats.get('edges', 0))} edges\n"
-                        )
+                        if hasattr(kg, "has_entities") and not await kg.has_entities():
+                            # Empty volume: don't build before the port binds —
+                            # the deferred reconcile runs the full build instead.
+                            sys.stderr.write(
+                                "Neo4j holds no entities yet — full build will run in the background\n"
+                            )
+                        else:
+                            sys.stderr.write("Syncing graph caches from persistent Neo4j...\n")
+                            stats = await kg.build_graph()
+                            sys.stderr.write(
+                                f"Graph caches synced: {stats.get('total_nodes', stats.get('nodes', 0))} nodes, "
+                                f"{stats.get('total_edges', stats.get('edges', 0))} edges\n"
+                            )
                 except Exception as warm_err:
-                    sys.stderr.write(f"Warning: Graph pre-warm failed: {warm_err}\n")
+                    sys.stderr.write(f"Warning: Graph cache sync failed: {warm_err}\n")
+                if settings.STARTUP_RECONCILE:
+                    deferred_startup_tasks.append(("corpus-reconcile", graph_rebuild.startup_reconcile))
+                if settings.STARTUP_VECTOR_BOOTSTRAP:
+                    deferred_startup_tasks.append(("vector-bootstrap", graph_rebuild.bootstrap_vector_index))
 
         except Exception as e:
             sys.stderr.write(f"Warning: Could not load default domain: {e}\n")
 
-        # Import and initialize optimization services
-        from .services.dependency_tracker import dependency_tracker
-
-        # Initialize dependency tracker in background task
-        asyncio.create_task(dependency_tracker.initialize())
-        sys.stderr.write("Dependency tracker initialization started\n")
-
-        # Warm up file cache with most frequently used files
-        sys.stderr.write("File cache initialized\n")
+        # NOTE: the dependency tracker (people-mention index) is no longer
+        # primed at startup — nothing reads it before first use, and priming it
+        # was a fourth full corpus read. It initialises lazily on first call.
 
         # Initialize database - Issue #360
         try:
@@ -408,6 +404,29 @@ async def startup_event():
         sys.stderr.write("Application starting in degraded state\n")
         # Don't re-raise - allow app to start without full functionality
 
+    # Everything the request path needs is loaded: flip readiness now. uvicorn
+    # binds the port when this handler returns; /health/startup turns 200 here.
+    lifecycle_manager.startup_detail = startup_mode
+    lifecycle_manager.mark_ready(detail=f"mode={startup_mode}")
+    sys.stderr.write(f"Startup complete (mode={startup_mode}) — accepting requests\n")
+
+    if deferred_startup_tasks:
+        from .services.graph_rebuild import spawn_background
+
+        async def _run_deferred() -> dict[str, Any]:
+            results: dict[str, Any] = {}
+            for name, fn in deferred_startup_tasks:
+                try:
+                    sys.stderr.write(f"Deferred startup task '{name}' starting\n")
+                    results[name] = await fn()
+                    sys.stderr.write(f"Deferred startup task '{name}' done: {results[name]}\n")
+                except Exception as task_err:
+                    results[name] = {"error": str(task_err)}
+                    sys.stderr.write(f"Deferred startup task '{name}' failed: {task_err}\n")
+            return results
+
+        spawn_background(_run_deferred(), "startup-deferred")
+
 
 async def shutdown_event():
     """Clean up resources on shutdown."""
@@ -418,6 +437,12 @@ async def shutdown_event():
     lifecycle_manager = get_lifecycle_manager()
     await lifecycle_manager.shutdown()
     sys.stderr.write("Lifecycle manager shutdown complete\n")
+
+    try:
+        from .services.blocking import shutdown_blocking_executor
+        shutdown_blocking_executor(wait=False)
+    except Exception as e:
+        sys.stderr.write(f"Warning: blocking executor shutdown failed: {e}\n")
 
     # Additional cleanup for resources not managed by lifecycle manager
     # (Legacy code - gradually migrate to lifecycle handlers)

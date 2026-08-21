@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,6 +16,9 @@ from pydantic import BaseModel
 from .config import settings
 from .models import DocumentMetadata, File
 from .utils.timeout import timeout
+
+# Per-file read progress goes here at DEBUG; everything else still prints to stderr.
+_ops_logger = logging.getLogger("app.git_ops.operations")
 
 
 class Folder(BaseModel):
@@ -242,7 +246,33 @@ class GitOperations:
         }
         if error:
             log_entry["error"] = str(error)
-        print(json.dumps(log_entry), file=sys.stderr)
+        line = json.dumps(log_entry)
+        # One line per file read turned a corpus scan into ~50k log lines per
+        # boot. Per-file progress is DEBUG-only; summaries and errors still
+        # print unconditionally.
+        if error is None and operation in self._PER_FILE_OPERATIONS and "path" in details:
+            _ops_logger.debug(line)
+            return
+        print(line, file=sys.stderr)
+
+    _PER_FILE_OPERATIONS = frozenset({"read_file", "read_markdown_files"})
+
+    async def get_head_commit(self) -> str | None:
+        """Current HEAD sha of the corpus repo, or None if unavailable."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0:
+            return None
+        sha = result.stdout.strip()
+        return sha or None
 
     def _is_markdown_file(self, path: str) -> bool:
         """Check if a file is a markdown file."""
@@ -642,30 +672,33 @@ class GitOperations:
                         "https://github.com/", auth_url
                     )
 
-                # Always clean up existing directory
-                if os.path.exists(self.repo_path):
-                    # Clean up all contents including .git
-                    shutil.rmtree(self.repo_path, ignore_errors=True)
-
-                # Create directory if it doesn't exist
                 os.makedirs(self.repo_path, exist_ok=True)
-
-                self._log_operation(
-                    operation,
-                    {
-                        "action": "cleanup",
-                        "path": self.repo_path,
-                        "status": "completed",
-                    },
-                )
-
-                # Clone into existing directory
-                subprocess.run(
-                    ["git", "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
-                    cwd=self.repo_path,
-                    check=True,
-                    timeout=300,  # Cloning can take longer, especially for large repos
-                )
+                if os.path.isdir(os.path.join(self.repo_path, ".git")):
+                    # Persistent checkout: refresh in place. The old code
+                    # rm -rf'd the directory and re-cloned on every boot,
+                    # which on a persistent volume destroys every file git has
+                    # not seen yet (on LCARS ~3.8k untracked memory records).
+                    self._refresh_existing_checkout(repo_url, operation)
+                elif os.listdir(self.repo_path):
+                    # Non-empty but not a repo: fail closed rather than wipe.
+                    raise GitOperationError(
+                        operation,
+                        f"{self.repo_path} is non-empty but not a git repository; "
+                        "refusing to delete it. Move it aside, or unset GIT_REPO_URL "
+                        "for local-only mode.",
+                    )
+                else:
+                    # Clone into the (empty) directory
+                    subprocess.run(
+                        ["git", "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
+                        cwd=self.repo_path,
+                        check=True,
+                        timeout=300,  # Cloning can take longer, especially for large repos
+                    )
+                    self._log_operation(
+                        operation,
+                        {"action": "clone", "branch": settings.GIT_BRANCH, "status": "completed"},
+                    )
 
             # Mark directory as safe (fixes dubious ownership issues in containers)
             subprocess.run(
@@ -700,16 +733,97 @@ class GitOperations:
             self._log_operation(
                 operation,
                 {
-                    "action": "clone",
+                    "action": "configured",
                     "branch": settings.GIT_BRANCH,
+                    "local_only": self.local_only,
                     "status": "completed",
                 },
             )
 
+        except GitOperationError:
+            raise
         except Exception as e:
             error = GitOperationError(operation, f"Git operation failed: {str(e)}")
             self._log_operation(operation, {"status": "failed"}, error)
             raise error
+
+    def _refresh_existing_checkout(self, repo_url: str, operation: str) -> None:
+        """Fetch the remote and fast-forward an existing checkout, never wiping.
+
+        * untracked files are left untouched;
+        * local commits that cannot be fast-forwarded are kept (logged as a
+          warning) instead of discarded — data loss is never the automatic
+          answer on a persistent volume.
+        """
+        branch = settings.GIT_BRANCH
+        cwd = self.repo_path
+
+        remotes = subprocess.run(
+            ["git", "remote"], cwd=cwd, capture_output=True, text=True, timeout=30
+        )
+        if "origin" in remotes.stdout.split():
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", repo_url], cwd=cwd, check=True, timeout=30
+            )
+        else:
+            subprocess.run(
+                ["git", "remote", "add", "origin", repo_url], cwd=cwd, check=True, timeout=30
+            )
+
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", branch],
+            cwd=cwd, capture_output=True, text=True, timeout=300,
+        )
+        if fetch.returncode != 0:
+            self._log_operation(
+                operation,
+                {
+                    "action": "refresh",
+                    "stage": "fetch",
+                    "status": "failed",
+                    "reason": (fetch.stderr or "").strip()[-500:],
+                    "message": "continuing with the existing local checkout",
+                },
+            )
+            return
+
+        current = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        if current != branch:
+            checkout = subprocess.run(
+                ["git", "checkout", branch], cwd=cwd, capture_output=True, text=True, timeout=60
+            )
+            if checkout.returncode != 0:
+                self._log_operation(
+                    operation,
+                    {
+                        "action": "refresh",
+                        "stage": "checkout",
+                        "status": "skipped",
+                        "current_branch": current,
+                        "reason": (checkout.stderr or "").strip()[-300:],
+                    },
+                )
+                return
+
+        merge = subprocess.run(
+            ["git", "merge", "--ff-only", f"origin/{branch}"],
+            cwd=cwd, capture_output=True, text=True, timeout=120,
+        )
+        self._log_operation(
+            operation,
+            {
+                "action": "refresh",
+                "stage": "fast-forward",
+                "branch": branch,
+                "status": "completed" if merge.returncode == 0 else "skipped",
+                "reason": None if merge.returncode == 0 else
+                "local history has diverged from origin; keeping local commits "
+                "(resolve manually)",
+            },
+        )
 
     async def _commit_exists(self, commit_hash: str) -> bool:
         """Check if a commit exists in the repository."""

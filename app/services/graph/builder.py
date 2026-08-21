@@ -322,12 +322,15 @@ class KnowledgeGraph:
         self.document_entities.clear()
         self.entity_documents.clear()
 
-        # Get all markdown files using existing method
+        # Get all markdown files using existing method. Keep the content that
+        # read_markdown_files() already loaded — re-reading every file through
+        # read_file() doubled the corpus I/O (and the log volume) on startup.
         all_files = []
+        contents: dict[str, str] = {}
         try:
-            # Use the existing read_markdown_files method but get paths only
             files_obj = await self.git_ops.read_markdown_files()
             all_files = [f.path for f in files_obj]
+            contents = {f.path: f.content for f in files_obj}
         except Exception as e:
             print(f"Error getting markdown files: {e}")
             # Fallback: scan directory directly
@@ -351,7 +354,9 @@ class KnowledgeGraph:
 
         for file_path in markdown_files:
             try:
-                content = await self.git_ops.read_file(file_path)
+                content = contents.get(file_path)
+                if content is None:
+                    content = await self.git_ops.read_file(file_path)
                 if not content:
                     continue
 

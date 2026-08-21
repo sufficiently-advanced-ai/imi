@@ -88,8 +88,21 @@ class SqliteVectorStore:
     def __init__(self, db_path: str, tenant_id: str | None = None) -> None:
         self._db_path = db_path
         self._tenant_id = _normalise_tenant(tenant_id)
+        # Embedding dimension already present for this tenant (lazily read).
+        # ``dim`` is a per-row column, so without a guard a generator that
+        # resolved to a different model would silently create a mixed-dim
+        # table that search (which filters on dim) could never fully see.
+        self._known_dim: int | None = None
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+
+    def _existing_dim(self, conn: sqlite3.Connection) -> int | None:
+        if self._known_dim is None:
+            row = conn.execute(
+                "SELECT dim FROM vectors WHERE tenant_id = ? LIMIT 1", (self._tenant_id,)
+            ).fetchone()
+            self._known_dim = int(row[0]) if row else None
+        return self._known_dim
 
     @contextlib.contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -142,7 +155,19 @@ class SqliteVectorStore:
                 )
             )
             out_ids.append(vec_id)
+        incoming_dims = {row[5] for row in rows}
+        if len(incoming_dims) > 1:
+            raise ValueError(f"store_vectors: mixed embedding dimensions in one call: {sorted(incoming_dims)}")
         with self._connect() as conn:
+            existing = self._existing_dim(conn)
+            if rows and existing is not None and rows[0][5] != existing:
+                raise ValueError(
+                    f"store_vectors: embedding dimension {rows[0][5]} does not match the "
+                    f"{existing}-dim vectors already stored for tenant {self._tenant_id!r} — "
+                    "the embedding model changed; rebuild the vector store instead of mixing"
+                )
+            if rows and existing is None:
+                self._known_dim = rows[0][5]
             conn.executemany(
                 "INSERT INTO vectors (id, tenant_id, content_type, metadata, embedding, dim) "
                 "VALUES (?, ?, ?, ?, ?, ?) "
@@ -217,3 +242,18 @@ class SqliteVectorStore:
                 "DELETE FROM vectors WHERE id = ? AND tenant_id = ?",
                 (vector_id, self._tenant_id),
             )
+
+    # ------------------------------------------------------------------
+    # count — cheap "is this index populated?" probe
+    # ------------------------------------------------------------------
+
+    def count(self, content_type: str | None = None) -> int:
+        """Number of vectors for this tenant, optionally for one content_type."""
+        sql = "SELECT COUNT(*) FROM vectors WHERE tenant_id = ?"
+        params: list[Any] = [self._tenant_id]
+        if content_type is not None:
+            sql += " AND content_type = ?"
+            params.append(content_type)
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0

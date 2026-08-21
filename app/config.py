@@ -241,6 +241,24 @@ class Settings(JSONConfigSettings):
     NEO4J_PASSWORD: SecretStr = Field(SecretStr("dev-password-2024"), env="NEO4J_PASSWORD", description="Neo4j password")
     NEO4J_REBUILD_ON_STARTUP: bool = Field(True, env="NEO4J_REBUILD_ON_STARTUP", description="Wipe and rebuild knowledge graph on container startup")
 
+    # Stateful-startup settings (persistent Neo4j + data volumes). With
+    # NEO4J_REBUILD_ON_STARTUP=false the graph is trusted across restarts and
+    # only corpus files that changed while the container was down are
+    # re-ingested (see app/services/corpus_manifest.py).
+    STARTUP_RECONCILE: bool = Field(
+        True, description="On boot, diff the corpus against the last build and ingest only the delta (stateful mode)"
+    )
+    STARTUP_VECTOR_BOOTSTRAP: bool = Field(
+        True, description="On boot, rebuild the entity vector index from Neo4j when it is empty"
+    )
+    GRAPH_BUILD_BATCH_SIZE: int = Field(
+        500, ge=1, description="Rows per UNWIND statement during full graph builds"
+    )
+    VECTOR_BOOTSTRAP_THROTTLE_MS: int = Field(
+        0, ge=0, description="Pause between entities while rebuilding the vector index on boot (memory/CPU-constrained hosts)"
+    )
+    LOG_LEVEL: str = Field("INFO", description="Root log level for the server process")
+
     # MCP Server Settings
     # The MCP SDK's DNS-rebinding-protection middleware (mcp.server.transport_security)
     # rejects requests whose Host header isn't on this allowlist with HTTP 421.
