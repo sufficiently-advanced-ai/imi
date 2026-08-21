@@ -65,6 +65,7 @@ class CaptureRecord(BaseModel):
     valid_from: str | None = None
     valid_to: str | None = None
     tenant_id: str | None = None
+    source_date: str | None = None
     created_at: str
 
 

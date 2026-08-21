@@ -39,6 +39,10 @@ export interface Capture {
   valid_from: string | null;
   valid_to: string | null;
   tenant_id: string | null;
+  // Original publish/sent date when the capture was backfilled from an
+  // external source; null for captures created in place. Mirrors
+  // CaptureRecord in app/routes/captures.py.
+  source_date: string | null;
   created_at: string;
 }
 
