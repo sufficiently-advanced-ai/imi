@@ -21,6 +21,9 @@ Config shape (all sections optional)::
         type: bedrock
         litellm_model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
         aws_region: us-east-1
+      subscription-agent-sdk:
+        type: agent_sdk            # Claude Agent SDK subprocess; ~/.claude auth,
+        pricing: { input: 0.0, output: 0.0 }   # not ANTHROPIC_API_KEY
     aliases:                         # model-tier string -> endpoint name
       "claude-haiku-4-5-20251001": tailnet-vllm
     operations:                      # operation label -> endpoint name (wins over alias)
@@ -67,6 +70,9 @@ class ResolvedEndpoint:
     # For anthropic: the bare model id (e.g. "claude-haiku-4-5-...").
     # For litellm: the provider-prefixed string (e.g. "hosted_vllm/qwen...").
     model: str
+    # Routes through the Claude Agent SDK (Claude Code subprocess), which
+    # carries Claude Code's own auth — including subscription OAuth creds.
+    is_agent_sdk: bool = False
     api_base: str | None = None
     api_key: str | None = None
     aws_region: str | None = None
@@ -205,6 +211,20 @@ class InferenceRegistry:
                 api_key=api_key or self._anthropic_key(),
                 pricing=spec.get("pricing"),
                 allow_tools=spec.get("allow_tools", True),
+            )
+
+        if etype == "agent_sdk":
+            # Single-shot plain generation via the Claude Agent SDK subprocess.
+            # Auth comes from Claude Code's credentials (~/.claude), not an API
+            # key — this is how subscription-authenticated deployments route
+            # tool-free operations. Plain-generation only by contract.
+            return ResolvedEndpoint(
+                name=name,
+                is_anthropic=False,
+                is_agent_sdk=True,
+                model=spec.get("model") or requested_model,
+                pricing=spec.get("pricing") or {"input": 0.0, "output": 0.0},
+                allow_tools=False,
             )
 
         if etype == "digitalocean":

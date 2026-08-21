@@ -555,3 +555,140 @@ async def test_non_anthropic_route_calls_litellm_and_translates(monkeypatch):
     assert resp.content[0].text == "routed answer"
     assert resp.usage.input_tokens == 5
     assert resp.stop_reason == "end_turn"
+
+
+# --- agent_sdk endpoint type -----------------------------------------------
+
+
+def _agent_sdk_registry(spec_extra=None):
+    spec = {"type": "agent_sdk"}
+    spec.update(spec_extra or {})
+    return InferenceRegistry(
+        config={
+            "endpoints": {"subscription": spec},
+            "operations": {"metadata_extraction": "subscription"},
+        }
+    )
+
+
+def test_agent_sdk_endpoint_resolves():
+    ep = _agent_sdk_registry().resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.is_agent_sdk is True
+    assert ep.is_anthropic is False
+    # No api_base/api_key: auth comes from ~/.claude, not config.
+    assert ep.api_base is None
+    assert ep.api_key is None
+
+
+def test_agent_sdk_defaults_to_zero_pricing():
+    # Subscription auth is not metered per token, so an unpriced endpoint must
+    # not fall back to a paid model's rates.
+    ep = _agent_sdk_registry().resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.pricing == {"input": 0.0, "output": 0.0}
+
+
+def test_agent_sdk_rejects_tools_even_when_config_asks_for_them():
+    """Plain-generation-only is a contract, not a default.
+
+    The dispatch flattens messages+system into a single prompt and has nowhere
+    to put a tool result, so allow_tools must be forced off regardless of what
+    the config says.
+    """
+    ep = _agent_sdk_registry({"allow_tools": True}).resolve(
+        "claude-haiku-4-5-20251001", "metadata_extraction"
+    )
+    assert ep.allow_tools is False
+
+
+def test_agent_sdk_uses_requested_model_when_unset():
+    ep = _agent_sdk_registry().resolve("claude-sonnet-4-5-20250929", "metadata_extraction")
+    assert ep.model == "claude-sonnet-4-5-20250929"
+    ep = _agent_sdk_registry({"model": "pinned-model"}).resolve(
+        "claude-sonnet-4-5-20250929", "metadata_extraction"
+    )
+    assert ep.model == "pinned-model"
+
+
+def test_non_agent_sdk_endpoints_are_not_flagged():
+    reg = InferenceRegistry(
+        config={
+            "endpoints": {"tailnet": {"type": "openai", "litellm_model": "hosted_vllm/qwen"}},
+            "operations": {"metadata_extraction": "tailnet"},
+        }
+    )
+    assert reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction").is_agent_sdk is False
+
+
+# --- agent_sdk security boundary -------------------------------------------
+
+
+# Stated independently of the implementation ON PURPOSE. Deriving this from
+# _AGENT_SDK_BLANKED_ENV would make the test pass whenever the scrubber and its
+# constant omit the same variable — i.e. it would be blind to exactly the
+# mistake it exists to catch. Adding a variable here should require a
+# deliberate edit in both places.
+_REQUIRED_BLANKED_ENV = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    }
+)
+
+
+def test_agent_sdk_env_blanks_every_auth_redirect_var():
+    """ClaudeAgentOptions.env MERGES with the parent environment, so each of
+    these must be present-and-empty; omitting one lets the parent value through
+    and can route the call off subscription auth."""
+    from app.services.claude_client import ClaudeClient
+
+    env = ClaudeClient._dispatch_agent_sdk_env()
+    missing = _REQUIRED_BLANKED_ENV - set(env)
+    assert not missing, f"would be inherited from the parent process: {sorted(missing)}"
+    assert env == dict.fromkeys(_REQUIRED_BLANKED_ENV, "")
+
+
+def test_agent_sdk_options_are_tool_free(monkeypatch):
+    """The tool-free contract must be enforced on every axis the SDK exposes.
+
+    allowed_tools=[] alone only empties the auto-approve allowlist — it leaves
+    built-ins, inherited MCP servers, and on-disk settings able to reintroduce
+    tools into a route that has nowhere to put a tool result.
+    """
+    import claude_agent_sdk
+
+    captured = {}
+
+    class _CapturingOptions:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    async def _empty_query(prompt, options):  # noqa: ARG001
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _CapturingOptions)
+    monkeypatch.setattr(claude_agent_sdk, "query", _empty_query)
+
+    from app.services.claude_client import ClaudeClient
+    from app.services.inference.registry import ResolvedEndpoint
+
+    ep = ResolvedEndpoint(
+        name="subscription", is_anthropic=False, is_agent_sdk=True, model="m"
+    )
+    ClaudeClient()._dispatch_agent_sdk(ep, {"messages": [{"role": "user", "content": "hi"}]})
+
+    assert captured["tools"] == []
+    assert captured["allowed_tools"] == []
+    assert captured["mcp_servers"] == {}
+    assert captured["strict_mcp_config"] is True
+    assert captured["setting_sources"] == []
+    assert captured["permission_mode"] == "dontAsk"
+    assert captured["max_turns"] == 1
+    assert captured["env"]["ANTHROPIC_API_KEY"] == ""

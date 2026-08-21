@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 import time
 from datetime import datetime
@@ -30,6 +31,30 @@ except ImportError:
         "Warning: OpenTelemetry not available, continuing without tracing",
         file=sys.stderr,
     )
+
+_module_logger = logging.getLogger(__name__)
+
+# Environment variables blanked for the Agent SDK subprocess. Any of these
+# inherited from the server process would redirect the CLI away from the
+# subscription credentials the endpoint was chosen for — to a gateway, a proxy,
+# or a cloud provider. Blanked rather than omitted: ClaudeAgentOptions.env is
+# MERGED with the parent environment, so omission just lets the parent through.
+_AGENT_SDK_BLANKED_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    # Overrides the stored credentials outright — the single most direct way to
+    # take this call off the subscription auth the endpoint was chosen for.
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+)
+
+# Warn once per process per control, not once per request.
+_AGENT_SDK_WARNED: set[str] = set()
 
 
 class ClaudeRateLimiter:
@@ -275,6 +300,9 @@ class ClaudeClient:
             client = self._anthropic_client_for(ep)
             return client.messages.create(**{**api_kwargs, "model": ep.model})
 
+        if getattr(ep, "is_agent_sdk", False):
+            return self._dispatch_agent_sdk(ep, api_kwargs)
+
         # Non-Anthropic → LiteLLM (lazy import: the dependency is only needed
         # when a deployment actually routes off Anthropic).
         import litellm
@@ -321,6 +349,122 @@ class ClaudeClient:
         # Stash the raw LiteLLM response so cost can be computed from it.
         response._litellm_raw = raw  # type: ignore[attr-defined]
         return response
+
+    @staticmethod
+    def _dispatch_agent_sdk_env() -> dict[str, str]:
+        """Blank every variable that could redirect the CLI off subscription auth.
+
+        ``ClaudeAgentOptions.env`` is MERGED with the parent environment, so
+        clearing ``ANTHROPIC_API_KEY`` alone is not enough: an auth token, a
+        gateway base URL, or a cloud-provider flag inherited from the server
+        process would silently route this call somewhere other than
+        ``~/.claude/.credentials.json`` — the opposite of what an endpoint
+        chosen *for* subscription auth is asking for.
+        """
+        return dict.fromkeys(_AGENT_SDK_BLANKED_ENV, "")
+
+    def _dispatch_agent_sdk(self, ep, api_kwargs: dict[str, Any]) -> Any:
+        """Single-shot plain generation through the Claude Agent SDK.
+
+        The SDK spawns the Claude Code CLI, which authenticates with Claude
+        Code's own credentials (~/.claude/.credentials.json) — this is the only
+        path that rides subscription auth. Tool-free by contract
+        (allow_tools=False on the endpoint); messages+system are flattened to a
+        single prompt. Runs on a worker thread (asyncio.to_thread), so we own a
+        private event loop here.
+        """
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            CLIConnectionError,
+            ProcessError,
+            ResultMessage,
+            TextBlock,
+            query,
+        )
+
+        from .inference.base import AnthropicLikeResponse, ContentBlock, Usage
+
+        parts: list[str] = []
+        for msg in api_kwargs.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                parts.extend(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+        prompt = "\n\n".join(p for p in parts if p)
+
+        # Unsupported controls: ClaudeAgentOptions exposes no max_tokens or
+        # temperature, and max_turns=1 bounds conversation turns, not output
+        # length. Warned rather than rejected — callers pass max_tokens
+        # unconditionally, so rejecting would make the endpoint unusable — but
+        # it must never look like the cap was honored.
+        for _unsupported in ("max_tokens", "temperature"):
+            if api_kwargs.get(_unsupported) is not None and _unsupported not in _AGENT_SDK_WARNED:
+                _AGENT_SDK_WARNED.add(_unsupported)
+                _module_logger.warning(
+                    "[AGENT-SDK] %r is not supported on agent_sdk endpoints and is "
+                    "being ignored — the Agent SDK exposes no such control. Output "
+                    "length is bounded only by the model.",
+                    _unsupported,
+                )
+
+        options = ClaudeAgentOptions(
+            model=ep.model,
+            system_prompt=api_kwargs.get("system") or None,
+            max_turns=1,
+            # Tool-free by contract, enforced on every axis the SDK exposes.
+            # allowed_tools=[] alone only empties the auto-approve allowlist; it
+            # does not disable the built-ins, MCP servers inherited from settings
+            # files, or on-disk settings that could reintroduce them.
+            tools=[],
+            allowed_tools=[],
+            mcp_servers={},
+            strict_mcp_config=True,      # ignore MCP servers from settings files
+            setting_sources=[],          # no user/project/local settings
+            permission_mode="dontAsk",   # deny, never prompt a headless CLI
+            env=self._dispatch_agent_sdk_env(),
+        )
+
+        async def _run() -> tuple[str, dict]:
+            text_parts: list[str] = []
+            usage: dict = {}
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            text_parts.append(block.text)
+                elif isinstance(message, ResultMessage):
+                    usage = getattr(message, "usage", None) or {}
+                    if getattr(message, "is_error", False):
+                        # Usage-window exhaustion / CLI-side failures surface
+                        # here; retryable so the caller backs off (and the seed
+                        # driver stops cleanly when retries run out).
+                        raise InferenceRetryableError(
+                            f"agent_sdk result error: {getattr(message, 'result', '')!r}"
+                        )
+                    if not text_parts and getattr(message, "result", None):
+                        text_parts.append(message.result)
+            return "".join(text_parts), usage
+
+        try:
+            text, usage = asyncio.run(_run())
+        except (ProcessError, CLIConnectionError) as e:
+            raise InferenceRetryableError(f"{type(e).__name__}: {e}") from e
+
+        return AnthropicLikeResponse(
+            content=[ContentBlock(text=text)],
+            usage=Usage(
+                input_tokens=int(usage.get("input_tokens") or 0),
+                output_tokens=int(usage.get("output_tokens") or 0),
+            ),
+            stop_reason="end_turn",
+            model=ep.model,
+        )
 
     async def generate_messages_batch(
         self, requests: list[dict[str, Any]]
