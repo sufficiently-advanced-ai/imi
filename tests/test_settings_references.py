@@ -51,3 +51,27 @@ def test_every_bare_settings_reference_is_defined():
         "Settings fields referenced in app/ but not defined in app/config.py "
         f"(sync drift — copy the definitions from upstream): {missing}"
     )
+
+
+def test_claude_max_concurrency_is_a_real_setting():
+    """The ClaudeClient semaphore knob must actually exist.
+
+    get_claude_client() reads it as
+        settings.CLAUDE_MAX_CONCURRENCY if hasattr(...) else 3
+    and the sweep above exempts hasattr-guarded access by construction — so a
+    missing field here degrades silently to the hardcoded 3 forever rather than
+    raising. That is exactly how it went unnoticed.
+    """
+    from app.config import Settings
+
+    assert "CLAUDE_MAX_CONCURRENCY" in Settings.model_fields
+    assert Settings.model_fields["CLAUDE_MAX_CONCURRENCY"].default == 3
+
+
+def test_claude_client_honors_the_concurrency_setting(monkeypatch):
+    import app.services.claude_client as cc
+
+    monkeypatch.setattr(cc, "_claude_client_instance", None, raising=False)
+    monkeypatch.setattr(cc.settings, "CLAUDE_MAX_CONCURRENCY", 7, raising=False)
+    client = cc.get_claude_client()
+    assert client.semaphore._value == 7
