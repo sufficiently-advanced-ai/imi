@@ -192,6 +192,27 @@ class TestListAndDetail:
         assert c.get("/api/captures/nope").status_code == 404
 
 
+def test_capture_record_preserves_source_date():
+    """CaptureRecord must carry every persisted field the UI reads.
+
+    The routes build responses as `CaptureRecord(**memory.model_dump())`, so a
+    field missing from CaptureRecord is silently dropped rather than erroring —
+    which is how source_date got lost on the way out despite being persisted.
+    """
+    import app.routes.captures as captures_route
+
+    memory = capture_memory(
+        "A backfilled thought.",
+        source="openbrain",
+        source_date="2026-03-14T09:00:00+00:00",
+    )
+    assert memory.source_date == "2026-03-14T09:00:00+00:00"
+
+    record = captures_route.CaptureRecord(**memory.model_dump())
+    assert record.source_date == "2026-03-14T09:00:00+00:00"
+    assert record.created_at != record.source_date  # distinct fields, not aliases
+
+
 class TestReviewCapture:
     def test_review_confirm_delegates(self, client):
         c, calls, _ = client

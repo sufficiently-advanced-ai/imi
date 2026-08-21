@@ -167,12 +167,45 @@ def _parse_entity_items(items, entity_types: list[str]) -> list[dict]:
     return labeled
 
 
+# Hard ceiling on NEW entities promoted per document. The prompt asks the model
+# to budget itself ("at most 6 participant/subject"); this backstop guarantees
+# it even when the model doesn't comply. Resolver-matched mentions (existing
+# entities) don't count — linking to known entities is never pollution.
+MAX_NEW_PROMOTED_PER_DOC = 6
+
+
 def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
     """Apply the promotion rule. resolver is an EntityResolver (or None —
     then mentions are dropped outright)."""
+    # Highest-confidence first so the per-doc cap keeps the most central ones.
+    labeled = sorted(labeled, key=lambda e: e.get("confidence") or 0, reverse=True)
+    new_promoted = 0
     promoted: list[dict] = []
     for entity in labeled:
         if entity["salience"] in PROMOTED_SALIENCE:
+            if resolver is not None:
+                try:
+                    resolved = resolver.resolve(entity["type"], entity["canonical_name"])
+                    if resolved.matched_via != "new":
+                        # Existing entity: link freely, exempt from the cap.
+                        promoted.append(
+                            {**entity, "canonical_name": resolved.canonical_name}
+                        )
+                        continue
+                except Exception as e:
+                    logger.debug(
+                        "[SALIENT-EXTRACT] Promotion resolution failed for %r: %s",
+                        entity["canonical_name"],
+                        e,
+                    )
+            if new_promoted >= MAX_NEW_PROMOTED_PER_DOC:
+                logger.debug(
+                    "[SALIENT-EXTRACT] Per-doc promotion cap hit; dropping %s/%r",
+                    entity["type"],
+                    entity["canonical_name"],
+                )
+                continue
+            new_promoted += 1
             promoted.append(entity)
             continue
         if resolver is not None:

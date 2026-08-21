@@ -461,7 +461,7 @@ function CaptureRow({
                 <span key={topic}>#{topic}</span>
               ))}
               <span>
-                · {new Date(capture.created_at).toLocaleDateString()}
+                · {new Date(capture.source_date ?? capture.created_at).toLocaleDateString()}
               </span>
             </div>
           </div>
