@@ -275,6 +275,9 @@ class ClaudeClient:
             client = self._anthropic_client_for(ep)
             return client.messages.create(**{**api_kwargs, "model": ep.model})
 
+        if getattr(ep, "is_agent_sdk", False):
+            return self._dispatch_agent_sdk(ep, api_kwargs)
+
         # Non-Anthropic → LiteLLM (lazy import: the dependency is only needed
         # when a deployment actually routes off Anthropic).
         import litellm
@@ -321,6 +324,87 @@ class ClaudeClient:
         # Stash the raw LiteLLM response so cost can be computed from it.
         response._litellm_raw = raw  # type: ignore[attr-defined]
         return response
+
+    def _dispatch_agent_sdk(self, ep, api_kwargs: dict[str, Any]) -> Any:
+        """Single-shot plain generation through the Claude Agent SDK.
+
+        The SDK spawns the Claude Code CLI, which authenticates with Claude
+        Code's own credentials (~/.claude/.credentials.json) — this is the only
+        path that rides subscription auth. Tool-free by contract
+        (allow_tools=False on the endpoint); messages+system are flattened to a
+        single prompt. Runs on a worker thread (asyncio.to_thread), so we own a
+        private event loop here.
+        """
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            CLIConnectionError,
+            ProcessError,
+            ResultMessage,
+            TextBlock,
+            query,
+        )
+
+        from .inference.base import AnthropicLikeResponse, ContentBlock, Usage
+
+        parts: list[str] = []
+        for msg in api_kwargs.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                parts.extend(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+        prompt = "\n\n".join(p for p in parts if p)
+
+        options = ClaudeAgentOptions(
+            model=ep.model,
+            system_prompt=api_kwargs.get("system") or None,
+            max_turns=1,
+            allowed_tools=[],
+            # The CLI prefers an env API key over subscription creds; scrub the
+            # (possibly placeholder) key so subscription auth is actually used.
+            env={"ANTHROPIC_API_KEY": ""},
+        )
+
+        async def _run() -> tuple[str, dict]:
+            text_parts: list[str] = []
+            usage: dict = {}
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            text_parts.append(block.text)
+                elif isinstance(message, ResultMessage):
+                    usage = getattr(message, "usage", None) or {}
+                    if getattr(message, "is_error", False):
+                        # Usage-window exhaustion / CLI-side failures surface
+                        # here; retryable so the caller backs off (and the seed
+                        # driver stops cleanly when retries run out).
+                        raise InferenceRetryableError(
+                            f"agent_sdk result error: {getattr(message, 'result', '')!r}"
+                        )
+                    if not text_parts and getattr(message, "result", None):
+                        text_parts.append(message.result)
+            return "".join(text_parts), usage
+
+        try:
+            text, usage = asyncio.run(_run())
+        except (ProcessError, CLIConnectionError) as e:
+            raise InferenceRetryableError(f"{type(e).__name__}: {e}") from e
+
+        return AnthropicLikeResponse(
+            content=[ContentBlock(text=text)],
+            usage=Usage(
+                input_tokens=int(usage.get("input_tokens") or 0),
+                output_tokens=int(usage.get("output_tokens") or 0),
+            ),
+            stop_reason="end_turn",
+            model=ep.model,
+        )
 
     async def generate_messages_batch(
         self, requests: list[dict[str, Any]]

@@ -555,3 +555,65 @@ async def test_non_anthropic_route_calls_litellm_and_translates(monkeypatch):
     assert resp.content[0].text == "routed answer"
     assert resp.usage.input_tokens == 5
     assert resp.stop_reason == "end_turn"
+
+
+# --- agent_sdk endpoint type -----------------------------------------------
+
+
+def _agent_sdk_registry(spec_extra=None):
+    spec = {"type": "agent_sdk"}
+    spec.update(spec_extra or {})
+    return InferenceRegistry(
+        config={
+            "endpoints": {"subscription": spec},
+            "operations": {"metadata_extraction": "subscription"},
+        }
+    )
+
+
+def test_agent_sdk_endpoint_resolves():
+    ep = _agent_sdk_registry().resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.is_agent_sdk is True
+    assert ep.is_anthropic is False
+    # No api_base/api_key: auth comes from ~/.claude, not config.
+    assert ep.api_base is None
+    assert ep.api_key is None
+
+
+def test_agent_sdk_defaults_to_zero_pricing():
+    # Subscription auth is not metered per token, so an unpriced endpoint must
+    # not fall back to a paid model's rates.
+    ep = _agent_sdk_registry().resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.pricing == {"input": 0.0, "output": 0.0}
+
+
+def test_agent_sdk_rejects_tools_even_when_config_asks_for_them():
+    """Plain-generation-only is a contract, not a default.
+
+    The dispatch flattens messages+system into a single prompt and has nowhere
+    to put a tool result, so allow_tools must be forced off regardless of what
+    the config says.
+    """
+    ep = _agent_sdk_registry({"allow_tools": True}).resolve(
+        "claude-haiku-4-5-20251001", "metadata_extraction"
+    )
+    assert ep.allow_tools is False
+
+
+def test_agent_sdk_uses_requested_model_when_unset():
+    ep = _agent_sdk_registry().resolve("claude-sonnet-4-5-20250929", "metadata_extraction")
+    assert ep.model == "claude-sonnet-4-5-20250929"
+    ep = _agent_sdk_registry({"model": "pinned-model"}).resolve(
+        "claude-sonnet-4-5-20250929", "metadata_extraction"
+    )
+    assert ep.model == "pinned-model"
+
+
+def test_non_agent_sdk_endpoints_are_not_flagged():
+    reg = InferenceRegistry(
+        config={
+            "endpoints": {"tailnet": {"type": "openai", "litellm_model": "hosted_vllm/qwen"}},
+            "operations": {"metadata_extraction": "tailnet"},
+        }
+    )
+    assert reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction").is_agent_sdk is False

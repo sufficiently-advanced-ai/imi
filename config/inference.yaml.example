@@ -88,6 +88,22 @@ endpoints:
     aws_region: us-east-1
     allow_tools: false
 
+  # Single-shot generation through the Claude Agent SDK (a Claude Code
+  # subprocess). Auth comes from Claude Code's own credentials in ~/.claude,
+  # NOT from ANTHROPIC_API_KEY — this is how a subscription-authenticated
+  # deployment routes tool-free operations without metered API billing.
+  #
+  # Requirements: the `claude-agent-sdk` package, and a logged-in ~/.claude
+  # readable by the server process (in Docker, mount the directory — a
+  # single-file bind mount pins the inode and goes stale on credential refresh).
+  #
+  # Plain generation only, by contract: allow_tools is forced false. Ops that
+  # need tools should not be pinned here — route them to an `anthropic`
+  # endpoint, or leave them on paths that use the Agent SDK natively.
+  subscription-agent-sdk:
+    type: agent_sdk
+    pricing: { input: 0.0, output: 0.0 }   # subscription, not metered per token
+
 # Map model-tier strings to endpoint names. Keys are the literal values of
 # CLAUDE_HAIKU_MODEL / CLAUDE_SONNET_MODEL / CLAUDE_AGENT_MODEL in this
 # deployment. Anything not listed falls through to `default`.
