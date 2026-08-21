@@ -31,6 +31,13 @@ COPY imi-frontend/package*.json ./imi-frontend/
 # Install Node dependencies
 WORKDIR /app/imi-frontend
 RUN npm ci --legacy-peer-deps
+# npm ci can skip platform-specific optional deps on linux/arm64 (npm/cli#4828);
+# install the native binaries Next's CSS toolchain needs on that arch.
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        npm install --no-save --legacy-peer-deps \
+            lightningcss-linux-arm64-gnu@1.29.2 \
+            @tailwindcss/oxide-linux-arm64-gnu@4.1.6; \
+    fi
 
 # Copy application code
 WORKDIR /app

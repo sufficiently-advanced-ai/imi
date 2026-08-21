@@ -37,6 +37,21 @@
     - Personal activities (someone's marathon, vacation, hobby) — not projects
     - Work activities described in a sentence are NOT project entities: "the BrightPath data migration work" is the BrightPath account being discussed, not a project named "BrightPath data migration" — only extract a project when the transcript treats a NAMED initiative as a thing ("Atlas", "Pulse Analytics", "Phase 2")
 
+    REFERENCE CONTENT RULE:
+    When the transcript is a summary of external media or news (a video, article,
+    newsletter, digest, or podcast) rather than a meeting or working session:
+    - The creator/author and their publication or channel may be "participant"
+    - Organizations, products, and people that the content merely REPORTS ON are
+      "mention" — never "subject" — regardless of how substantively the content
+      covers them. News coverage is not a working relationship.
+    - A daily digest naming a dozen companies should promote NONE of them.
+
+    ENTITY BUDGET:
+    Label at most 6 NEW entities "participant" or "subject" per transcript — the
+    most central ones only. Everything else is "mention". Entities already listed
+    in the existing entities above do not count against this budget: labeling a
+    known entity accurately is never pollution, so label it on its merits.
+
     OTHER RULES:
     1. Use full speaker names from "**Full Name**:" headers; "Jordan" in conversation with "Jordan Reyes" in headers → canonical_name "Jordan Reyes"
     2. Emit each real-world entity ONCE: name variants of the same entity belong in aliases_heard of a single record, never as separate records
