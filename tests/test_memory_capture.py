@@ -121,3 +121,40 @@ def test_distinct_content_is_not_deduped(tmp_path):
     assert a.deduped is False
     assert b.deduped is False
     assert a.memory.id != b.memory.id
+
+
+# ---------------------------------------------------------------------------
+# created_after filter
+# ---------------------------------------------------------------------------
+
+
+def test_created_after_filters_list_and_count(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    older = store.capture("older note", source="manual").memory
+    newer = store.capture("newer note", source="manual").memory
+
+    # created_at is an ISO-8601 string compared lexicographically, so the
+    # newer record's own timestamp is an inclusive floor.
+    assert [m.id for m in store.list(created_after=newer.created_at)] == [newer.id]
+    assert store.count(created_after=newer.created_at) == 1
+
+    assert store.count(created_after=older.created_at) == 2
+    assert store.count(created_after="9999-01-01T00:00:00") == 0
+
+
+def test_created_after_composes_with_source_filter(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("web note", source="web")
+    manual = store.capture("manual note", source="manual").memory
+
+    # Both predicates must apply, not just the last one evaluated.
+    assert store.count(source="manual", created_after="0001-01-01T00:00:00") == 1
+    assert store.count(source="web", created_after=manual.created_at) == 0
+
+
+def test_no_created_after_returns_everything(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path)
+    store.capture("one", source="manual")
+    store.capture("two", source="manual")
+    assert store.count() == 2
+    assert len(store.list()) == 2

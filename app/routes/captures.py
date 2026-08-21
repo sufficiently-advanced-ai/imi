@@ -115,12 +115,25 @@ async def list_captures(
     review_status: str | None = Query(None, description="Review status filter"),
     source: str | None = Query(None, description="Capture source filter"),
     limit: int = Query(50, ge=1, le=500),
+    created_after: str | None = Query(
+        None,
+        description="ISO-8601 timestamp; only returns captures created after this time",
+    ),
 ):
     """List captures, newest first. ``total`` is the full match count."""
     store = CaptureStore()
-    records = store.list(review_status=review_status, source=source, limit=limit)
+    records = store.list(
+        review_status=review_status,
+        source=source,
+        limit=limit,
+        created_after=created_after,
+    )
     captures = [CaptureRecord(**m.model_dump()) for m in records]
-    total = store.count(review_status=review_status, source=source)
+    total = store.count(
+        review_status=review_status,
+        source=source,
+        created_after=created_after,
+    )
     return CaptureListResponse(captures=captures, total=total)
 
 

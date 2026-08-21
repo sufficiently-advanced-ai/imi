@@ -160,6 +160,7 @@ class CaptureStore:
         review_status: str | None = None,
         source: str | None = None,
         limit: int = 50,
+        created_after: str | None = None,
     ) -> list[CapturedMemory]:
         """List captures, newest first, with optional exact-field filters."""
         records = [
@@ -167,6 +168,7 @@ class CaptureStore:
             for mem in self._iter_memories()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
+            and (created_after is None or mem.created_at >= created_after)
         ]
         records.sort(key=lambda m: m.created_at, reverse=True)
         return records[:limit]
@@ -176,6 +178,7 @@ class CaptureStore:
         *,
         review_status: str | None = None,
         source: str | None = None,
+        created_after: str | None = None,
     ) -> int:
         """Full match count for the same filters as ``list`` (pre-truncation)."""
         return sum(
@@ -183,6 +186,7 @@ class CaptureStore:
             for mem in self._iter_memories()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
+            and (created_after is None or mem.created_at >= created_after)
         )
 
     def capture(
