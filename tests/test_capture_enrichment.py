@@ -39,7 +39,8 @@ async def test_enrich_parses_llm_metadata():
         response_text=(
             '{"type": "person_note", "topics": ["career", "consulting"],'
             ' "people": ["Sarah Chen"], "action_items": ["follow up with Sarah"],'
-            ' "dates_mentioned": ["2026-07-10"]}'
+            ' "dates_mentioned": ["2026-07-10"],'
+            ' "summary": "Sarah is considering leaving to start a consulting business."}'
         )
     )
     meta = await enrich_capture(
@@ -51,6 +52,7 @@ async def test_enrich_parses_llm_metadata():
     assert meta["people"] == ["Sarah Chen"]
     assert meta["action_items"] == ["follow up with Sarah"]
     assert meta["dates_mentioned"] == ["2026-07-10"]
+    assert meta["summary"] == "Sarah is considering leaving to start a consulting business."
     # exactly one LLM call, with the capture text in the user prompt
     assert len(client.calls) == 1
     assert "Sarah" in client.calls[0]["messages"][0]["content"]
@@ -118,4 +120,5 @@ def test_fallback_metadata_shape():
         "people": [],
         "action_items": [],
         "dates_mentioned": [],
+        "summary": None,
     }
