@@ -259,6 +259,7 @@ class CorpusReconciler:
 
         logger.info("[RECONCILE] corpus changed since last build: %s", delta.counts())
         summary: dict[str, Any] = {"action": "reconciled", **delta.counts()}
+        failed: set[str] = set()  # keep their old stamps so the next boot retries
 
         if delta.removed:
             try:
@@ -266,6 +267,7 @@ class CorpusReconciler:
             except Exception as e:
                 logger.warning("[RECONCILE] removing %d files from graph failed: %s", len(delta.removed), e)
                 summary["graph_removed_error"] = str(e)
+                failed.update(delta.removed)
 
         if delta.changed:
             try:
@@ -273,6 +275,7 @@ class CorpusReconciler:
             except Exception as e:
                 logger.warning("[RECONCILE] ingesting %d files into graph failed: %s", len(delta.changed), e)
                 summary["graph_ingest_error"] = str(e)
+                failed.update(delta.changed)
 
             if self.sk is not None and hasattr(self.sk, "ingest_file"):
                 indexed = 0
@@ -287,8 +290,33 @@ class CorpusReconciler:
                         logger.debug("[RECONCILE] semantica ingest skipped for %s: %s", path, e)
                 summary["semantica_indexed"] = indexed
 
-        manifest = Manifest(build_id=graph_build_id, built_at=_now_iso(), files=disk)
-        save_manifest(self.manifest_path, manifest)
+        # A full rebuild may have run concurrently (admin endpoint) and written
+        # a new baseline; never overwrite it with a manifest for the old graph.
+        current_build_id = await read_graph_build_id(self.neo4j)
+        if current_build_id != graph_build_id:
+            logger.warning(
+                "[RECONCILE] graph build_id changed during reconcile (%s → %s); "
+                "leaving the newer manifest in place",
+                graph_build_id[:8], (current_build_id or "none")[:8],
+            )
+            summary["manifest"] = "skipped_build_id_changed"
+            return summary
+
+        # Retain the previous stamp for anything that failed so the next
+        # reconcile sees it as changed again instead of silently moving on.
+        next_files = dict(disk)
+        for path in failed:
+            prev = manifest.files.get(path)
+            if prev is not None:
+                next_files[path] = prev
+            else:
+                next_files.pop(path, None)
+        if failed:
+            summary["retry_next_boot"] = len(failed)
+        save_manifest(
+            self.manifest_path,
+            Manifest(build_id=graph_build_id, built_at=_now_iso(), files=next_files),
+        )
         return summary
 
     async def _adopt(self, reason: str, graph_build_id: str | None = None) -> dict[str, Any]:

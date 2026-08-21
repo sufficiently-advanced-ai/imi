@@ -87,3 +87,46 @@ class _FakeMetadataFilterModule:
 
         def in_list(self, *_):
             return self
+
+
+class _RecordingMetadataFilterModule:
+    class MetadataFilter:
+        def __init__(self):
+            self.conditions = []
+
+        def eq(self, field, value):
+            self.conditions.append({"field": field, "operator": "eq", "value": value})
+            return self
+
+        def in_list(self, field, values):
+            self.conditions.append({"field": field, "operator": "in_list", "value": list(values)})
+            return self
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_finds_requested_type_ranked_below_the_overfetch_window(tmp_path, monkeypatch):
+    """Regression: 60 projects outrank the only person; limit=5 over-fetches 10.
+    The entity_type filter must apply in the store query, not after the cut."""
+    from app.core.tenancy.backends.sqlite_vector_store import SqliteVectorStore
+
+    store = SqliteVectorStore(str(tmp_path / "v.db"))
+    q = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+    class Embedder:
+        def generate_embeddings(self, text, data_type="text"):
+            return q.reshape(1, -1)
+
+    s = ss.SemanticaSearch(vector_store=object(), embedding_generator=Embedder(), graph_store=None)
+    monkeypatch.setattr(ss.SemanticaSearch, "store", property(lambda self: store))
+    for i in range(60):
+        await s.index_entity(entity_id=f"project-{i}", name=f"P{i}", entity_type="project", attributes={})
+    # the person is deliberately less similar than every project
+    store.store_vectors(
+        [np.array([0.6, 0.8, 0.0], dtype=np.float32)],
+        metadata=[{"id": "person-x", "name": "X", "entity_type": "person", "content_type": "entity"}],
+        ids=["person-x"],
+    )
+    monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", _RecordingMetadataFilterModule())
+
+    hits = await s.hybrid_search("x", entity_types=["person"], limit=5)
+    assert [h["id"] for h in hits] == ["person-x"]

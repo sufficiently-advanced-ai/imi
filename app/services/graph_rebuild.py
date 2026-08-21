@@ -34,7 +34,9 @@ _status: dict[str, Any] = {
     "stats": {},
     "error": None,
 }
-_rebuild_lock = asyncio.Lock()
+# Set synchronously (no await between check and set) so two callers that reach
+# the guard in the same event-loop tick cannot both start a rebuild.
+_running = False
 
 
 def _accepts_kwarg(fn: Any, name: str) -> bool:
@@ -55,7 +57,7 @@ def get_rebuild_status() -> dict[str, Any]:
 
 
 def is_rebuild_running() -> bool:
-    return _rebuild_lock.locked()
+    return _running
 
 
 # ── dependency lookups (late imports: this module is imported by app.main) ──
@@ -122,10 +124,12 @@ async def run_full_rebuild(
     Raises ``RuntimeError`` if a rebuild is already running. Records the corpus
     manifest baseline on success so the next stateful boot reconciles from it.
     """
-    if _rebuild_lock.locked():
+    global _running
+    if _running:
         raise RuntimeError("A graph rebuild is already running")
+    _running = True
 
-    async with _rebuild_lock:
+    try:
         _status.update(
             state="running", source=source, clean=clean,
             started_at=_now(), finished_at=None, stats={}, error=None,
@@ -144,6 +148,12 @@ async def run_full_rebuild(
             stats["graph"] = {k: v for k, v in (graph_stats or {}).items() if isinstance(v, int | float | str)}
 
             sk = _get_sk()
+            if clean and sk is not None:
+                # The legacy clean wiped Neo4j; persistent entity vectors would
+                # otherwise keep returning entities that no longer exist.
+                search = getattr(sk, "search", None)
+                if search is not None and hasattr(search, "clear_entity_vectors"):
+                    stats["entity_vectors_cleared"] = await search.clear_entity_vectors()
             if include_semantica and sk is not None:
                 stats["semantica"] = await semantica_full_build(sk)
 
@@ -158,6 +168,8 @@ async def run_full_rebuild(
             _status.update(state="failed", finished_at=_now(), stats=stats, error=str(e))
             logger.exception("[REBUILD] failed")
             raise
+    finally:
+        _running = False
     return get_rebuild_status()
 
 
@@ -191,7 +203,7 @@ async def startup_reconcile() -> dict[str, Any]:
     logger.info("[RECONCILE] %s", result)
 
     if result.get("action") == "full_rebuild_required":
-        logger.info("[RECONCILE] graph is empty — running a full build in the background")
+        logger.info("[RECONCILE] graph is empty — running a full build now (deferred startup task)")
         status = await run_full_rebuild(source="startup_empty_graph")
         result["rebuild"] = status.get("state")
         result["rebuild_stats"] = status.get("stats")
@@ -245,7 +257,7 @@ def spawn_background(coro: Coroutine[Any, Any, Any] | Awaitable[Any], name: str)
 
         get_lifecycle_manager().add_background_task(task, name)
     except Exception:
-        pass
+        logger.warning("[BACKGROUND] %s not registered with the lifecycle manager", name, exc_info=True)
     return task
 
 

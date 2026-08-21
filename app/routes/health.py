@@ -98,6 +98,7 @@ def _startup_state() -> dict[str, Any]:
         "ready": lm.is_ready(),
         "state": lm.state.value,
         "startup": getattr(lm, "startup_detail", None),
+        "failures": list(getattr(lm, "startup_failures", []) or []),
     }
 
 

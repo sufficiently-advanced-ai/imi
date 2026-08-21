@@ -1,7 +1,7 @@
 # Startup and persistent state
 
 imi was first deployed on a stateless container host, so the original startup
-sequence assumed nothing survived a restart: wipe-free rebuild the Neo4j graph
+sequence assumed nothing survived a restart: wipe and rebuild the Neo4j graph
 from the corpus, re-embed every entity into an in-memory FAISS index, re-clone
 the corpus repo. Self-hosted with docker-compose, all of that state *is*
 persistent (`imi-neo4j-data`, `./data`, `./repo`), and the old sequence cost a
@@ -25,7 +25,7 @@ Code: `app/main.py::startup_event`, `app/services/graph_rebuild.py`.
 
 ## Startup sequence
 
-```
+```text
 lifecycle.startup()            state=RUNNING, NOT ready
 telemetry, metrics
 neo4j client + schema
@@ -88,7 +88,10 @@ edges.
 | `GET /health/nginx` | static nginx liveness |
 
 `LifecycleManager.mark_ready()` is called at the *end* of `startup_event`
-(it used to be set on the first line).
+(it used to be set on the first line) — and only if no readiness-critical
+dependency (Neo4j client, domain config, database, or the startup sequence
+itself) failed. A degraded instance keeps serving `/health` (liveness) and
+whatever still works, but `/health/startup` stays 503 and lists `failures`.
 
 ## Logging
 

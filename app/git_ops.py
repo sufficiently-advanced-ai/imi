@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -345,7 +346,7 @@ class GitOperations:
 
             # Pull those changes like we mean it
             subprocess.run(
-                ["git", "pull", "origin", settings.GIT_BRANCH, "--force"],
+                ["git", *self._git_auth_args(), "pull", "origin", settings.GIT_BRANCH, "--force"],
                 cwd=self.repo_path,
                 check=True,
                 timeout=300,  # Use a longer timeout for pull operations
@@ -478,7 +479,7 @@ class GitOperations:
                     )
                     return
 
-                push_command = ["git", "push", "origin", settings.GIT_BRANCH]
+                push_command = ["git", *self._git_auth_args(), "push", "origin", settings.GIT_BRANCH]
                 if force_push:
                     push_command.append("--force")
 
@@ -664,13 +665,11 @@ class GitOperations:
                     },
                 )
             else:
-                # Set up auth if needed
+                # The canonical, token-free URL is what gets persisted in
+                # .git/config; credentials ride along per command as an
+                # ephemeral header (never written to disk, never in `remote -v`).
                 repo_url = settings.GIT_REPO_URL
-                if settings.GITHUB_TOKEN:
-                    auth_url = f"https://{settings.GITHUB_TOKEN}@github.com/"
-                    repo_url = settings.GIT_REPO_URL.replace(
-                        "https://github.com/", auth_url
-                    )
+                auth = self._git_auth_args(repo_url)
 
                 os.makedirs(self.repo_path, exist_ok=True)
                 if os.path.isdir(os.path.join(self.repo_path, ".git")):
@@ -678,7 +677,7 @@ class GitOperations:
                     # rm -rf'd the directory and re-cloned on every boot,
                     # which on a persistent volume destroys every file git has
                     # not seen yet (on LCARS ~3.8k untracked memory records).
-                    self._refresh_existing_checkout(repo_url, operation)
+                    self._refresh_existing_checkout(repo_url, operation, auth)
                 elif os.listdir(self.repo_path):
                     # Non-empty but not a repo: fail closed rather than wipe.
                     raise GitOperationError(
@@ -690,7 +689,7 @@ class GitOperations:
                 else:
                     # Clone into the (empty) directory
                     subprocess.run(
-                        ["git", "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
+                        ["git", *auth, "clone", repo_url, ".", "--branch", settings.GIT_BRANCH],
                         cwd=self.repo_path,
                         check=True,
                         timeout=300,  # Cloning can take longer, especially for large repos
@@ -747,16 +746,38 @@ class GitOperations:
             self._log_operation(operation, {"status": "failed"}, error)
             raise error
 
-    def _refresh_existing_checkout(self, repo_url: str, operation: str) -> None:
+    @staticmethod
+    def _git_auth_args(repo_url: str | None = None) -> list[str]:
+        """Per-command git auth for GitHub HTTPS remotes, without persisting a token.
+
+        Returns ``-c http.extraheader=Authorization: Basic <b64>`` when
+        ``GITHUB_TOKEN`` is set and the remote is github.com over HTTPS;
+        otherwise an empty list. The header is passed on the command line of
+        each clone/fetch/pull/push only, so ``.git/config`` keeps the canonical
+        token-free URL.
+        """
+        url = repo_url if repo_url is not None else (settings.GIT_REPO_URL or "")
+        token = settings.GITHUB_TOKEN
+        if not token or not url.startswith("https://github.com/"):
+            return []
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        return ["-c", f"http.extraheader=Authorization: Basic {basic}"]
+
+    def _refresh_existing_checkout(
+        self, repo_url: str, operation: str, auth: list[str] | None = None
+    ) -> None:
         """Fetch the remote and fast-forward an existing checkout, never wiping.
 
         * untracked files are left untouched;
         * local commits that cannot be fast-forwarded are kept (logged as a
           warning) instead of discarded — data loss is never the automatic
-          answer on a persistent volume.
+          answer on a persistent volume;
+        * a checkout with no commits yet (``git init`` + remote) or without the
+          target branch is pointed at ``origin/<branch>`` explicitly.
         """
         branch = settings.GIT_BRANCH
         cwd = self.repo_path
+        auth = auth if auth is not None else self._git_auth_args(repo_url)
 
         remotes = subprocess.run(
             ["git", "remote"], cwd=cwd, capture_output=True, text=True, timeout=30
@@ -770,8 +791,10 @@ class GitOperations:
                 ["git", "remote", "add", "origin", repo_url], cwd=cwd, check=True, timeout=30
             )
 
+        # Explicit refspec: updates refs/remotes/origin/<branch> even when the
+        # remote was added by hand without a fetch refspec.
         fetch = subprocess.run(
-            ["git", "fetch", "origin", branch],
+            ["git", *auth, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
             cwd=cwd, capture_output=True, text=True, timeout=300,
         )
         if fetch.returncode != 0:
@@ -783,6 +806,34 @@ class GitOperations:
                     "status": "failed",
                     "reason": (fetch.stderr or "").strip()[-500:],
                     "message": "continuing with the existing local checkout",
+                },
+            )
+            return
+
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).returncode == 0
+        has_branch = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        ).returncode == 0
+        if not has_commits or not has_branch:
+            # Unborn HEAD (fresh `git init`) or missing target branch: create
+            # the branch from the remote-tracking ref. Untracked files survive.
+            cmd = (
+                ["git", "checkout", "-B", branch, f"origin/{branch}"] if not has_commits
+                else ["git", "checkout", "-b", branch, "--track", f"origin/{branch}"]
+            )
+            created = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60)
+            self._log_operation(
+                operation,
+                {
+                    "action": "refresh",
+                    "stage": "create-branch",
+                    "branch": branch,
+                    "status": "completed" if created.returncode == 0 else "failed",
+                    "reason": None if created.returncode == 0 else (created.stderr or "").strip()[-300:],
                 },
             )
             return

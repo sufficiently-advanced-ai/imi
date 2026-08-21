@@ -144,7 +144,7 @@ async def test_reconcile_adopts_existing_graph_without_build_id(tmp_path, caplog
     assert manifest is not None and "a.md" in manifest.files
     assert kg.ingested == []
     # adoption is loud: counts in a WARNING so silent blessing of unseen files is visible
-    assert any(r.levelname == "WARNING" and "ADOPTED" in r.message and "26351 entities" in r.message
+    assert any(r.levelname == "WARNING" and "ADOPTED" in r.getMessage() and "26351 entities" in r.getMessage()
                for r in caplog.records)
 
 
@@ -218,3 +218,45 @@ async def test_record_full_build_stamps_neo4j_and_disk(tmp_path):
     assert params["props"]["build_id"] == manifest.build_id
     assert params["props"]["source"] == "test"
     assert load_manifest(rec.manifest_path).build_id == manifest.build_id
+
+
+class FailingKG(FakeKG):
+    async def ingest_files(self, paths):
+        raise RuntimeError("neo4j down")
+
+
+@pytest.mark.asyncio
+async def test_failed_ingest_keeps_old_stamps_so_next_boot_retries(tmp_path):
+    kg = FailingKG()
+    repo = tmp_path / "repo"
+    rec = _reconciler(tmp_path, kg, _neo4j(build_id="b1"))
+    _write(repo, "a.md", "v1")
+    baseline = scan_corpus(str(repo))
+    save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files=baseline))
+    _write(repo, "a.md", "v2 longer")
+    _write(repo, "new.md", "new")
+
+    result = await rec.reconcile()
+    assert result["action"] == "reconciled" and "graph_ingest_error" in result
+    assert result["retry_next_boot"] == 2
+
+    saved = load_manifest(rec.manifest_path)
+    assert saved.files["a.md"] == baseline["a.md"]  # old stamp retained → still "modified" next time
+    assert "new.md" not in saved.files  # never recorded → still "added" next time
+    again = diff_stamps(saved.files, scan_corpus(str(repo)))
+    assert again.modified == ["a.md"] and again.added == ["new.md"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_manifest_write_if_build_id_changed_underneath(tmp_path):
+    kg = FakeKG()
+    repo = tmp_path / "repo"
+    neo4j = _neo4j(build_id="b1")
+    # first read → b1 (reconcile start), second read → b2 (a rebuild finished meanwhile)
+    neo4j.execute_read = AsyncMock(side_effect=[[{"build_id": "b1"}], [{"build_id": "b2"}]])
+    rec = _reconciler(tmp_path, kg, neo4j)
+    _write(repo, "a.md", "v1")
+    save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files={}))
+    result = await rec.reconcile()
+    assert result["action"] == "reconciled" and result["manifest"] == "skipped_build_id_changed"
+    assert load_manifest(rec.manifest_path).build_id == "b1"  # untouched; the rebuild owns the newer one

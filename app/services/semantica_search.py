@@ -70,6 +70,18 @@ class SemanticaSearch:
             logger.debug(f"entity_vector_count unavailable: {e}")
             return None
 
+    async def clear_entity_vectors(self) -> int:
+        """Drop every entity vector for the current tenant (clean rebuilds).
+
+        Persistent stores expose ``delete_by_content_type``; the in-memory
+        Semantica store has no bulk delete and is rebuilt wholesale anyway.
+        """
+        store = self.store
+        if hasattr(store, "delete_by_content_type"):
+            return int(await run_blocking(store.delete_by_content_type, "entity"))
+        logger.debug("clear_entity_vectors: store %s has no bulk delete; skipped", type(store).__name__)
+        return 0
+
     async def delete_entity_vector(self, entity_id: str) -> None:
         store = self.store
         if hasattr(store, "delete"):
@@ -124,8 +136,9 @@ class SemanticaSearch:
                 **search_kwargs,
             )
 
-            # Stores only honour content_type filters server-side (see
-            # SqliteVectorStore); apply the entity_type restriction here.
+            # SqliteVectorStore applies the entity_type filter in the query
+            # (before the top-k cut); this pass only trims stores that ignore
+            # MetadataFilter fields (the Semantica FAISS facade).
             if entity_types:
                 wanted = set(entity_types)
                 results = [

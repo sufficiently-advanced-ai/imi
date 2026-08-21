@@ -61,10 +61,10 @@ def _normalise_tenant(tenant_id: str | None) -> str:
     return tenant_id if tenant_id is not None else ""
 
 
-def _content_type_values(filter: Any) -> list[str] | None:
-    """Extract content_type constraints from a (duck-typed) MetadataFilter.
+def _filter_values(filter: Any, field: str) -> list[str] | None:
+    """Extract eq/in constraints on ``field`` from a (duck-typed) MetadataFilter.
 
-    Returns None when the filter places no constraint on content_type —
+    Returns None when the filter places no constraint on that field —
     unknown fields/operators must fall through, never over-restrict.
     """
     conditions = getattr(filter, "conditions", None)
@@ -72,7 +72,7 @@ def _content_type_values(filter: Any) -> list[str] | None:
         return None
     values: list[str] = []
     for cond in conditions:
-        if cond.get("field") != "content_type":
+        if cond.get("field") != field:
             continue
         operator, value = cond.get("operator"), cond.get("value")
         if operator == "eq" and isinstance(value, str):
@@ -82,27 +82,18 @@ def _content_type_values(filter: Any) -> list[str] | None:
     return values or None
 
 
+def _content_type_values(filter: Any) -> list[str] | None:
+    return _filter_values(filter, "content_type")
+
+
 class SqliteVectorStore:
     """Tenant-scoped vector store over a single SQLite file (WAL mode)."""
 
     def __init__(self, db_path: str, tenant_id: str | None = None) -> None:
         self._db_path = db_path
         self._tenant_id = _normalise_tenant(tenant_id)
-        # Embedding dimension already present for this tenant (lazily read).
-        # ``dim`` is a per-row column, so without a guard a generator that
-        # resolved to a different model would silently create a mixed-dim
-        # table that search (which filters on dim) could never fully see.
-        self._known_dim: int | None = None
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
-
-    def _existing_dim(self, conn: sqlite3.Connection) -> int | None:
-        if self._known_dim is None:
-            row = conn.execute(
-                "SELECT dim FROM vectors WHERE tenant_id = ? LIMIT 1", (self._tenant_id,)
-            ).fetchone()
-            self._known_dim = int(row[0]) if row else None
-        return self._known_dim
 
     @contextlib.contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -159,15 +150,24 @@ class SqliteVectorStore:
         if len(incoming_dims) > 1:
             raise ValueError(f"store_vectors: mixed embedding dimensions in one call: {sorted(incoming_dims)}")
         with self._connect() as conn:
-            existing = self._existing_dim(conn)
+            # ``dim`` is a per-row column, so a generator that resolved to a
+            # different model would silently create a mixed-dim table that
+            # search (which filters on dim) could never fully see. The check
+            # runs inside an IMMEDIATE transaction so two writers cannot both
+            # observe an empty tenant and store different dimensions, and it
+            # reads the table every time — no process-local cache to go stale
+            # after another instance deletes the tenant's vectors.
+            conn.execute("BEGIN IMMEDIATE")
+            existing_row = conn.execute(
+                "SELECT dim FROM vectors WHERE tenant_id = ? LIMIT 1", (self._tenant_id,)
+            ).fetchone()
+            existing = int(existing_row[0]) if existing_row else None
             if rows and existing is not None and rows[0][5] != existing:
                 raise ValueError(
                     f"store_vectors: embedding dimension {rows[0][5]} does not match the "
                     f"{existing}-dim vectors already stored for tenant {self._tenant_id!r} — "
                     "the embedding model changed; rebuild the vector store instead of mixing"
                 )
-            if rows and existing is None:
-                self._known_dim = rows[0][5]
             conn.executemany(
                 "INSERT INTO vectors (id, tenant_id, content_type, metadata, embedding, dim) "
                 "VALUES (?, ?, ?, ?, ?, ?) "
@@ -207,6 +207,16 @@ class SqliteVectorStore:
         if kinds:
             sql += f" AND content_type IN ({','.join('?' * len(kinds))})"
             params.extend(kinds)
+        # entity_type lives in the metadata JSON; filtering it here (not after
+        # the top-k cut) means a requested type ranked below many other types
+        # is still found.
+        entity_types = _filter_values(filter, "entity_type")
+        if entity_types:
+            sql += (
+                " AND json_extract(metadata, '$.entity_type') IN "
+                f"({','.join('?' * len(entity_types))})"
+            )
+            params.extend(entity_types)
 
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -242,6 +252,15 @@ class SqliteVectorStore:
                 "DELETE FROM vectors WHERE id = ? AND tenant_id = ?",
                 (vector_id, self._tenant_id),
             )
+
+    def delete_by_content_type(self, content_type: str) -> int:
+        """Remove every vector of one content_type for this tenant. Returns the count."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM vectors WHERE tenant_id = ? AND content_type = ?",
+                (self._tenant_id, content_type),
+            )
+            return int(cur.rowcount or 0)
 
     # ------------------------------------------------------------------
     # count — cheap "is this index populated?" probe

@@ -26,6 +26,7 @@ async def test_startup_does_not_mark_ready_until_mark_ready():
 def _client(monkeypatch, lm):
     monkeypatch.setattr(health_routes, "_startup_state", lambda: {
         "ready": lm.is_ready(), "state": lm.state.value, "startup": getattr(lm, "startup_detail", None),
+        "failures": list(getattr(lm, "startup_failures", []) or []),
     })
     app = FastAPI()
     app.include_router(health_routes.router)
@@ -51,3 +52,12 @@ def test_health_startup_is_503_then_200(monkeypatch):
     assert r.status_code == 200
     assert r.json()["ready"] is True
     assert r.json()["startup"] == "stateful"
+
+
+def test_health_startup_reports_failures_and_stays_503(monkeypatch):
+    lm = LifecycleManager()
+    lm.startup_failures = ["neo4j: connection refused"]
+    client = _client(monkeypatch, lm)
+    r = client.get("/health/startup")
+    assert r.status_code == 503
+    assert r.json()["failures"] == ["neo4j: connection refused"]

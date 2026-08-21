@@ -252,6 +252,10 @@ async def startup_event():
     # Work that must not delay the port bind: run after mark_ready(), in order.
     deferred_startup_tasks: list[tuple[str, Any]] = []
     startup_mode = "unknown"
+    # Readiness-critical failures. Startup keeps going so /health (liveness)
+    # and degraded features stay reachable, but the instance is NOT marked
+    # ready — /health/startup and /health/ready report 503 with the reasons.
+    startup_failures: list[str] = []
 
     # Initialize production telemetry system (Issue #526)
     initialize_telemetry()
@@ -288,6 +292,7 @@ async def startup_event():
                 f"Warning: Type registry constraint setup failed (non-fatal): {tr_err}\n"
             )
     except Exception as e:
+        startup_failures.append(f"neo4j: {e}")
         sys.stderr.write(f"Warning: Neo4j initialization failed: {e}\n")
         sys.stderr.write("Application starting without Neo4j — graph features degraded\n")
 
@@ -384,6 +389,7 @@ async def startup_event():
                     deferred_startup_tasks.append(("vector-bootstrap", graph_rebuild.bootstrap_vector_index))
 
         except Exception as e:
+            startup_failures.append(f"domain: {e}")
             sys.stderr.write(f"Warning: Could not load default domain: {e}\n")
 
         # NOTE: the dependency tracker (people-mention index) is no longer
@@ -397,18 +403,28 @@ async def startup_event():
             await initialize_database()
             sys.stderr.write("Database initialized successfully\n")
         except Exception as e:
+            startup_failures.append(f"database: {e}")
             sys.stderr.write(f"Warning: Database initialization failed: {str(e)}\n")
             # Continue without database - some features may be degraded
     except Exception as e:
+        startup_failures.append(f"startup: {e}")
         sys.stderr.write(f"Warning: Startup initialization failed: {str(e)}\n")
         sys.stderr.write("Application starting in degraded state\n")
         # Don't re-raise - allow app to start without full functionality
 
-    # Everything the request path needs is loaded: flip readiness now. uvicorn
-    # binds the port when this handler returns; /health/startup turns 200 here.
+    # uvicorn binds the port when this handler returns either way. Readiness
+    # flips only if every readiness-critical dependency came up; otherwise the
+    # failures are exposed on /health/startup and the instance stays 503.
     lifecycle_manager.startup_detail = startup_mode
-    lifecycle_manager.mark_ready(detail=f"mode={startup_mode}")
-    sys.stderr.write(f"Startup complete (mode={startup_mode}) — accepting requests\n")
+    lifecycle_manager.startup_failures = list(startup_failures)
+    if startup_failures:
+        sys.stderr.write(
+            f"Startup finished DEGRADED (mode={startup_mode}) — NOT marking ready: "
+            f"{'; '.join(startup_failures)}\n"
+        )
+    else:
+        lifecycle_manager.mark_ready(detail=f"mode={startup_mode}")
+        sys.stderr.write(f"Startup complete (mode={startup_mode}) — accepting requests\n")
 
     if deferred_startup_tasks:
         from .services.graph_rebuild import spawn_background

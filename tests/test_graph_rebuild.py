@@ -11,7 +11,9 @@ from app.services import graph_rebuild as gr
 @pytest.fixture(autouse=True)
 def _reset_status():
     gr._status.update(state="idle", source=None, clean=False, started_at=None, finished_at=None, stats={}, error=None)
+    gr._running = False
     yield
+    gr._running = False
 
 
 def _kg():
@@ -25,6 +27,7 @@ async def test_run_full_rebuild_builds_graph_semantica_and_manifest(monkeypatch)
     kg = _kg()
     sk = MagicMock()
     sk.build_graph = AsyncMock(return_value={"nodes": 3, "edges": 1, "status": "built"})
+    sk.search.clear_entity_vectors = AsyncMock(return_value=0)
     reconciler = MagicMock()
     reconciler.record_full_build = AsyncMock()
     monkeypatch.setattr(gr, "_get_kg", lambda: kg)
@@ -116,4 +119,48 @@ async def test_spawn_background_swallows_and_logs_exceptions(caplog):
 
     task = gr.spawn_background(bad(), "unit-bad")
     assert await task is None
-    assert any("unit-bad failed" in r.message for r in caplog.records)
+    assert any("unit-bad failed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_two_rebuilds_started_in_the_same_tick_only_run_once(monkeypatch):
+    kg = _kg()
+    calls = 0
+
+    async def yielding_build(**_):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)  # a real build suspends; an AsyncMock would not
+        return {"total_nodes": 1}
+
+    kg.build_graph = yielding_build
+    monkeypatch.setattr(gr, "_get_kg", lambda: kg)
+    monkeypatch.setattr(gr, "_get_sk", lambda: None)
+    monkeypatch.setattr(gr, "make_reconciler", lambda *a, **k: None)
+
+    results = await asyncio.gather(
+        gr.run_full_rebuild(source="a"), gr.run_full_rebuild(source="b"), return_exceptions=True
+    )
+    errors = [r for r in results if isinstance(r, RuntimeError)]
+    assert len(errors) == 1 and "already running" in str(errors[0])
+    assert calls == 1
+    assert gr.is_rebuild_running() is False
+
+
+@pytest.mark.asyncio
+async def test_clean_rebuild_clears_persistent_entity_vectors(monkeypatch):
+    kg = _kg()
+    sk = MagicMock()
+    sk.build_graph = AsyncMock(return_value={"nodes": 1})
+    sk.search.clear_entity_vectors = AsyncMock(return_value=26351)
+    monkeypatch.setattr(gr, "_get_kg", lambda: kg)
+    monkeypatch.setattr(gr, "_get_sk", lambda: sk)
+    monkeypatch.setattr(gr, "make_reconciler", lambda *a, **k: None)
+
+    status = await gr.run_full_rebuild(clean=True, source="t")
+    sk.search.clear_entity_vectors.assert_awaited_once()
+    assert status["stats"]["entity_vectors_cleared"] == 26351
+
+    sk.search.clear_entity_vectors.reset_mock()
+    await gr.run_full_rebuild(clean=False, source="t")
+    sk.search.clear_entity_vectors.assert_not_awaited()

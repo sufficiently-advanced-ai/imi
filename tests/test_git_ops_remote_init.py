@@ -112,3 +112,35 @@ async def test_non_empty_non_git_dir_fails_closed(remote_ops):
     with pytest.raises(GitOperationError):
         await remote_ops.initialize()
     assert open(remote_ops.repo_path + "/precious.md").read() == "keep me"
+
+
+@pytest.mark.asyncio
+async def test_github_token_is_never_persisted_in_git_config(remote_ops, monkeypatch, origin):
+    bare, _ = origin
+    monkeypatch.setattr(git_ops_module.settings, "GITHUB_TOKEN", "ghp_supersecret", raising=False)
+    await remote_ops.initialize()
+    await remote_ops.initialize()  # refresh path too
+    config = open(remote_ops.repo_path + "/.git/config").read()
+    assert "ghp_supersecret" not in config
+    assert str(bare) in config
+    # the header is only generated for github.com HTTPS remotes
+    assert remote_ops._git_auth_args(str(bare)) == []
+    args = remote_ops._git_auth_args("https://github.com/org/repo.git")
+    assert args[0] == "-c" and args[1].startswith("http.extraheader=Authorization: Basic ")
+    assert "ghp_supersecret" not in args[1]  # base64-encoded, not plaintext
+
+
+@pytest.mark.asyncio
+async def test_initialised_repo_without_commits_is_pointed_at_origin(remote_ops, origin):
+    """`git init` + remote, no commits (unborn HEAD): must end up on origin/main."""
+    import os
+
+    bare, _ = origin
+    os.makedirs(remote_ops.repo_path)
+    _git("init", "-b", "main", cwd=remote_ops.repo_path)
+    _git("remote", "add", "origin", str(bare), cwd=remote_ops.repo_path)
+    open(remote_ops.repo_path + "/untracked.json", "w").write("{}")
+    await remote_ops.initialize()
+    assert open(remote_ops.repo_path + "/a.md").read() == "one\n"
+    assert open(remote_ops.repo_path + "/untracked.json").read() == "{}"
+    assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=remote_ops.repo_path).stdout.strip() == "main"

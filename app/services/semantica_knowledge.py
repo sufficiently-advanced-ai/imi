@@ -296,6 +296,12 @@ class SemanticaKnowledge:
         """Clear all graph data."""
         try:
             await self._query("MATCH (n) DETACH DELETE n")
+            # Persistent entity vectors must not outlive the nodes they point at.
+            try:
+                cleared = await self.search.clear_entity_vectors()
+                logger.info("Cleared %d entity vectors", cleared)
+            except Exception as vec_err:
+                logger.warning("Entity vector clear skipped: %s", vec_err)
             self.nodes.clear()
             self.edges.clear()
             self.semantic_edges.clear()
