@@ -196,6 +196,39 @@ def test_created_after_accepts_z_suffix_and_naive_values(tmp_path):
     assert store.count(created_after=before.replace(tzinfo=None).isoformat()) == 1
 
 
+def test_list_sorts_by_instant_across_offsets(tmp_path):
+    """Newest-first ordering must survive mixed UTC offsets on stored records.
+
+    Chosen so raw string sorting is actively wrong, not merely lucky:
+    '2026-08-21T17:30:00-04:00' is 21:30Z -- the *later* instant -- but sorts
+    before '2026-08-21T20:00:00+00:00' as text, so a string sort puts it last.
+    """
+    store = CaptureStore(capture_dir=tmp_path)
+    earlier = store.capture("earlier", source="manual").memory
+    later = store.capture("later", source="manual").memory
+
+    earlier = earlier.model_copy(update={"created_at": "2026-08-21T20:00:00+00:00"})
+    later = later.model_copy(update={"created_at": "2026-08-21T17:30:00-04:00"})
+    store.update(earlier)
+    store.update(later)
+
+    assert [m.id for m in store.list()] == [later.id, earlier.id]
+
+
+def test_list_keeps_undated_records_last(tmp_path):
+    # Unfiltered listing still returns records whose timestamp cannot be
+    # parsed; they just need a deterministic position rather than whatever
+    # raw string comparison produced.
+    store = CaptureStore(capture_dir=tmp_path)
+    good = store.capture("good", source="manual").memory
+    bad = store.capture("bad", source="manual").memory
+    store.update(bad.model_copy(update={"created_at": "not-a-timestamp"}))
+
+    listed = [m.id for m in store.list()]
+    assert listed[0] == good.id
+    assert listed[-1] == bad.id
+
+
 def test_malformed_created_after_raises(tmp_path):
     store = CaptureStore(capture_dir=tmp_path)
     store.capture("a note", source="manual")

@@ -55,21 +55,41 @@ def parse_instant(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+# Unparseable stored timestamps sort as oldest so they land last under
+# newest-first ordering, rather than wherever raw string comparison put them.
+_UNDATED = datetime.min.replace(tzinfo=UTC)
+
+
+def _created_at_instant(mem: CapturedMemory) -> datetime | None:
+    """``mem.created_at`` as an aware UTC instant, or None if unparseable."""
+    try:
+        return parse_instant(mem.created_at)
+    except ValueError:
+        logger.warning(
+            "[CAPTURE] Unparseable created_at %r on %s",
+            mem.created_at,
+            mem.id,
+        )
+        return None
+
+
 def _created_at_or_after(mem: CapturedMemory, after: datetime | None) -> bool:
     """Whether ``mem`` was created at or after ``after`` (None -> always true)."""
     if after is None:
         return True
-    try:
-        return parse_instant(mem.created_at) >= after
-    except ValueError:
-        # A stored timestamp that predates the write path (or was hand-edited)
-        # cannot be placed on the timeline, so it cannot satisfy a lower bound.
-        logger.warning(
-            "[CAPTURE] Unparseable created_at %r on %s; excluded from created_after filter",
-            mem.created_at,
-            mem.id,
-        )
-        return False
+    instant = _created_at_instant(mem)
+    # A stored timestamp that predates the write path (or was hand-edited)
+    # cannot be placed on the timeline, so it cannot satisfy a lower bound.
+    return instant is not None and instant >= after
+
+
+def _sort_key(mem: CapturedMemory) -> datetime:
+    """Ordering key for newest-first listing.
+
+    Must normalize for the same reason the filter does: raw ISO-8601 strings
+    only sort chronologically when every value carries the same UTC offset.
+    """
+    return _created_at_instant(mem) or _UNDATED
 
 # Guards the dedup check-then-save against thread-executor callers (the
 # section is synchronous, so it is already atomic on the event loop).
@@ -211,7 +231,7 @@ class CaptureStore:
             and (source is None or mem.source == source)
             and _created_at_or_after(mem, after)
         ]
-        records.sort(key=lambda m: m.created_at, reverse=True)
+        records.sort(key=_sort_key, reverse=True)
         return records[:limit]
 
     def count(
