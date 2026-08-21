@@ -128,7 +128,10 @@ class SemanticaKnowledge:
         """Ingest one markdown document (entity profile) into graph + vectors.
 
         Shared by the full build and the startup reconcile path. Returns True
-        when the file described an entity that was upserted.
+        when the file described an entity that was upserted, False when the
+        file is intentionally skipped (no frontmatter, unknown type, archived),
+        and RAISES when the upsert failed — callers that track retries must be
+        able to tell a skip from a failure.
         """
         metadata = self._extract_metadata(content)
         if not metadata:
@@ -147,9 +150,12 @@ class SemanticaKnowledge:
             properties=metadata,
             file_path=file_path,
         )
-        if ok:
-            await self._process_relationships(entity_id, entity_type, metadata)
-        return ok
+        if not ok:
+            # add_entity converts graph/vector errors into False; surface that
+            # as a failure so the reconcile keeps the file for retry.
+            raise RuntimeError(f"add_entity failed for {entity_id} ({file_path})")
+        await self._process_relationships(entity_id, entity_type, metadata)
+        return True
 
     async def remove_entities_for_file(self, file_path: str) -> int:
         """Drop entity vectors for every entity whose profile was ``file_path``.

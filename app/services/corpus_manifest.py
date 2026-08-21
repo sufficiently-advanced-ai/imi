@@ -262,22 +262,29 @@ class CorpusReconciler:
         failed: set[str] = set()  # keep their old stamps so the next boot retries
 
         if delta.removed:
-            try:
-                summary["graph_removed"] = await self.kg.remove_files(delta.removed)
-            except Exception as e:
-                logger.warning("[RECONCILE] removing %d files from graph failed: %s", len(delta.removed), e)
-                summary["graph_removed_error"] = str(e)
-                failed.update(delta.removed)
-
+            # Vectors first: a vector whose node is gone is the harmful state
+            # (hybrid_search returns ghosts). Only paths whose vector cleanup
+            # succeeded proceed to graph removal; the rest retry next boot.
+            removable = list(delta.removed)
             if self.sk is not None and hasattr(self.sk, "remove_entities_for_file"):
                 vectors_removed = 0
+                removable = []
                 for path in delta.removed:
                     try:
                         vectors_removed += int(await self.sk.remove_entities_for_file(path) or 0)
+                        removable.append(path)
                     except Exception as e:
                         logger.warning("[RECONCILE] semantica removal failed for %s: %s", path, e)
                         failed.add(path)
                 summary["semantica_vectors_removed"] = vectors_removed
+
+            if removable:
+                try:
+                    summary["graph_removed"] = await self.kg.remove_files(removable)
+                except Exception as e:
+                    logger.warning("[RECONCILE] removing %d files from graph failed: %s", len(removable), e)
+                    summary["graph_removed_error"] = str(e)
+                    failed.update(removable)
 
         if delta.changed:
             try:
@@ -293,7 +300,11 @@ class CorpusReconciler:
                     try:
                         content = await self._read(path)
                         if content is None:
-                            continue
+                            # Unreadable (vanished/permission) is an operational
+                            # failure, not a skip — keep it in the retry set.
+                            raise OSError(f"could not read {path}")
+                        # ingest_file: True = entity indexed, False = not an
+                        # entity profile (intentional skip), raises on failure.
                         if await self.sk.ingest_file(path, content):
                             indexed += 1
                     except Exception as e:

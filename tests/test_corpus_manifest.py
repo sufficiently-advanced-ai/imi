@@ -294,11 +294,43 @@ async def test_semantica_failures_also_keep_stamps_for_retry(tmp_path):
     _write(repo, "new.md", "z")
 
     result = await rec.reconcile()
-    # graph side succeeded, semantica side failed → both paths retried next boot
-    assert kg.removed == [["gone.md"]] and kg.ingested == [["new.md"]]
+    # vector cleanup failed → the graph removal is NOT attempted for that path
+    # (vectors first); ingest of new.md reached the graph but its vector failed
+    assert kg.removed == [] and kg.ingested == [["new.md"]]
     assert result["retry_next_boot"] == 2
     saved = load_manifest(rec.manifest_path)
     assert "gone.md" in saved.files and "new.md" not in saved.files
+
+
+class SkippingSK(FakeSK):
+    async def ingest_file(self, path, content):
+        return False  # not an entity profile — an intentional skip
+
+
+@pytest.mark.asyncio
+async def test_intentional_skip_advances_stamp_but_unreadable_file_does_not(tmp_path):
+    kg = FakeKG()
+    repo = tmp_path / "repo"
+    sk = SkippingSK()
+    rec = _reconciler(tmp_path, kg, _neo4j(build_id="b1"), sk=sk)
+    save_manifest(rec.manifest_path, Manifest(build_id="b1", built_at="", files={}))
+    _write(repo, "meeting.md", "no frontmatter")
+    _write(repo, "vanishes.md", "x")
+
+    original_read = rec._read
+
+    async def flaky_read(path):
+        if path == "vanishes.md":
+            return None  # e.g. deleted between scan and read, or unreadable
+        return await original_read(path)
+
+    rec._read = flaky_read
+    result = await rec.reconcile()
+    assert result["semantica_indexed"] == 0
+    assert result["retry_next_boot"] == 1
+    saved = load_manifest(rec.manifest_path)
+    assert "meeting.md" in saved.files          # skip is final
+    assert "vanishes.md" not in saved.files     # failure retries
 
 
 class RemovingSK(FakeSK):
@@ -323,3 +355,23 @@ async def test_removed_files_drop_semantica_vectors(tmp_path):
     result = await rec.reconcile()
     assert sk.removed == ["gone.md"] and result["semantica_vectors_removed"] == 3
     assert "gone.md" not in load_manifest(rec.manifest_path).files
+
+
+@pytest.mark.asyncio
+async def test_semantica_ingest_file_distinguishes_skip_from_failure():
+    from unittest.mock import AsyncMock
+
+    from app.services.semantica_knowledge import SemanticaKnowledge
+
+    sk = SemanticaKnowledge.__new__(SemanticaKnowledge)
+    sk.domain = None
+    sk.add_entity = AsyncMock(return_value=True)
+    sk._process_relationships = AsyncMock(return_value=0)
+    entity_md = "---\ntype: person\nname: Alice\n---\nbody\n"
+
+    assert await sk.ingest_file("entities/person/alice.md", entity_md) is True
+    assert await sk.ingest_file("notes.md", "no frontmatter here") is False  # skip, not failure
+
+    sk.add_entity = AsyncMock(return_value=False)  # add_entity swallowed an error
+    with pytest.raises(RuntimeError, match="add_entity failed"):
+        await sk.ingest_file("entities/person/alice.md", entity_md)
