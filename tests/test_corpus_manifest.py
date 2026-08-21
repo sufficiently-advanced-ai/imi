@@ -392,7 +392,11 @@ def _relationship_domain():
             "person": DomainEntity(
                 name="person", description="p", plural="people",
                 attributes=[DomainAttribute(name="name", type="string", required=True)],
-                relationships=[DomainRelationship(type="has_projects", target="project", cardinality="one-to-many")],
+                relationships=[
+                    DomainRelationship(
+                        type="has_projects", target="project", cardinality="one-to-many", inverse_name="project_of"
+                    )
+                ],
             ),
             "project": DomainEntity(
                 name="project", description="pr", plural="projects",
@@ -416,10 +420,14 @@ async def test_process_relationships_propagates_write_failures():
     sk.add_relationship = AsyncMock(return_value=True)
     meta = {"has_projects": ["Apollo"]}
 
-    assert await sk._process_relationships("person-alice", "person", meta) == 1
+    assert await sk._process_relationships("person-alice", "person", meta) == 2  # direct + inverse
 
-    sk.add_relationship = AsyncMock(return_value=False)  # edge write swallowed an error
-    with pytest.raises(RuntimeError, match="relationship write failed"):
+    sk.add_relationship = AsyncMock(return_value=False)  # direct edge write swallowed an error
+    with pytest.raises(RuntimeError, match="^relationship write failed"):
+        await sk._process_relationships("person-alice", "person", meta)
+
+    sk.add_relationship = AsyncMock(side_effect=[True, False])  # inverse edge write failed
+    with pytest.raises(RuntimeError, match="inverse relationship write failed"):
         await sk._process_relationships("person-alice", "person", meta)
 
     sk.add_relationship = AsyncMock(return_value=True)
@@ -427,7 +435,22 @@ async def test_process_relationships_propagates_write_failures():
     with pytest.raises(RuntimeError, match="stub write failed"):
         await sk._process_relationships("person-alice", "person", meta)
 
-    # ingest_file surfaces it too, so the reconcile keeps the file for retry
+    # ingest_file surfaces every required write's failure, so the reconcile
+    # keeps the file for retry: stub, direct edge, inverse edge.
+    profile = "---\ntype: person\nname: Alice\nhas_projects:\n  - Apollo\n---\n"
     sk.add_entity = AsyncMock(side_effect=[True, False])  # profile ok, stub fails
+    sk.add_relationship = AsyncMock(return_value=True)
     with pytest.raises(RuntimeError, match="stub write failed"):
-        await sk.ingest_file("entities/person/alice.md", "---\ntype: person\nname: Alice\nhas_projects:\n  - Apollo\n---\n")
+        await sk.ingest_file("entities/person/alice.md", profile)
+
+    sk.add_entity = AsyncMock(return_value=True)
+    sk.add_relationship = AsyncMock(side_effect=[False])  # direct edge fails
+    with pytest.raises(RuntimeError, match="^relationship write failed"):
+        await sk.ingest_file("entities/person/alice.md", profile)
+
+    sk.add_relationship = AsyncMock(side_effect=[True, False])  # inverse edge fails
+    with pytest.raises(RuntimeError, match="inverse relationship write failed"):
+        await sk.ingest_file("entities/person/alice.md", profile)
+
+    sk.add_relationship = AsyncMock(return_value=True)
+    assert await sk.ingest_file("entities/person/alice.md", profile) is True
