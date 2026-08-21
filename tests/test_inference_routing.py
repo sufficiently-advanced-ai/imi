@@ -125,6 +125,59 @@ def test_no_extra_body_leaves_extra_empty():
     assert ep.extra == {}
 
 
+def test_timeout_flows_into_endpoint_extra():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "timeout": 90,
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    # Coerced to float: litellm.completion() expects a number, and YAML would
+    # otherwise hand it through as an int or a quoted string.
+    assert ep.extra == {"timeout": 90.0}
+    assert isinstance(ep.extra["timeout"], float)
+
+
+def test_timeout_coexists_with_extra_body():
+    cfg = {
+        "endpoints": {
+            "local-mlx": {
+                "type": "openai",
+                "litellm_model": "hosted_vllm/qwen",
+                "timeout": 90,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            }
+        },
+        "operations": {"metadata_extraction": "local-mlx"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert ep.extra == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        "timeout": 90.0,
+    }
+
+
+def test_no_timeout_leaves_it_out_of_extra():
+    # Absent -> LiteLLM's own default applies; we must not inject None, which
+    # litellm would treat as an explicit "no timeout" override.
+    cfg = {
+        "endpoints": {
+            "tailnet": {"type": "openai", "litellm_model": "hosted_vllm/qwen"}
+        },
+        "operations": {"metadata_extraction": "tailnet"},
+    }
+    reg = InferenceRegistry(config=cfg)
+    ep = reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction")
+    assert "timeout" not in ep.extra
+
+
 def test_unknown_endpoint_reference_is_config_error():
     cfg = {"endpoints": {}, "aliases": {"some-model": "does-not-exist"}}
     with pytest.raises(InferenceConfigError):
