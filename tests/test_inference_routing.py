@@ -617,3 +617,66 @@ def test_non_agent_sdk_endpoints_are_not_flagged():
         }
     )
     assert reg.resolve("claude-haiku-4-5-20251001", "metadata_extraction").is_agent_sdk is False
+
+
+# --- agent_sdk security boundary -------------------------------------------
+
+
+def test_agent_sdk_env_blanks_every_auth_redirect_var():
+    """ClaudeAgentOptions.env MERGES with the parent environment, so each of
+    these must be present-and-empty; omitting one lets the parent value through
+    and can route the call off subscription auth."""
+    from app.services.claude_client import _AGENT_SDK_BLANKED_ENV, ClaudeClient
+
+    env = ClaudeClient._dispatch_agent_sdk_env()
+    for var in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+    ):
+        assert var in env, f"{var} would be inherited from the parent process"
+        assert env[var] == ""
+    assert set(env) == set(_AGENT_SDK_BLANKED_ENV)
+
+
+def test_agent_sdk_options_are_tool_free(monkeypatch):
+    """The tool-free contract must be enforced on every axis the SDK exposes.
+
+    allowed_tools=[] alone only empties the auto-approve allowlist — it leaves
+    built-ins, inherited MCP servers, and on-disk settings able to reintroduce
+    tools into a route that has nowhere to put a tool result.
+    """
+    import claude_agent_sdk
+
+    captured = {}
+
+    class _CapturingOptions:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    async def _empty_query(prompt, options):  # noqa: ARG001
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _CapturingOptions)
+    monkeypatch.setattr(claude_agent_sdk, "query", _empty_query)
+
+    from app.services.claude_client import ClaudeClient
+    from app.services.inference.registry import ResolvedEndpoint
+
+    ep = ResolvedEndpoint(
+        name="subscription", is_anthropic=False, is_agent_sdk=True, model="m"
+    )
+    ClaudeClient()._dispatch_agent_sdk(ep, {"messages": [{"role": "user", "content": "hi"}]})
+
+    assert captured["tools"] == []
+    assert captured["allowed_tools"] == []
+    assert captured["mcp_servers"] == {}
+    assert captured["strict_mcp_config"] is True
+    assert captured["setting_sources"] == []
+    assert captured["permission_mode"] == "dontAsk"
+    assert captured["max_turns"] == 1
+    assert captured["env"]["ANTHROPIC_API_KEY"] == ""

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 import time
 from datetime import datetime
@@ -30,6 +31,27 @@ except ImportError:
         "Warning: OpenTelemetry not available, continuing without tracing",
         file=sys.stderr,
     )
+
+_module_logger = logging.getLogger(__name__)
+
+# Environment variables blanked for the Agent SDK subprocess. Any of these
+# inherited from the server process would redirect the CLI away from the
+# subscription credentials the endpoint was chosen for — to a gateway, a proxy,
+# or a cloud provider. Blanked rather than omitted: ClaudeAgentOptions.env is
+# MERGED with the parent environment, so omission just lets the parent through.
+_AGENT_SDK_BLANKED_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+)
+
+# Warn once per process per control, not once per request.
+_AGENT_SDK_WARNED: set[str] = set()
 
 
 class ClaudeRateLimiter:
@@ -325,6 +347,19 @@ class ClaudeClient:
         response._litellm_raw = raw  # type: ignore[attr-defined]
         return response
 
+    @staticmethod
+    def _dispatch_agent_sdk_env() -> dict[str, str]:
+        """Blank every variable that could redirect the CLI off subscription auth.
+
+        ``ClaudeAgentOptions.env`` is MERGED with the parent environment, so
+        clearing ``ANTHROPIC_API_KEY`` alone is not enough: an auth token, a
+        gateway base URL, or a cloud-provider flag inherited from the server
+        process would silently route this call somewhere other than
+        ``~/.claude/.credentials.json`` — the opposite of what an endpoint
+        chosen *for* subscription auth is asking for.
+        """
+        return dict.fromkeys(_AGENT_SDK_BLANKED_ENV, "")
+
     def _dispatch_agent_sdk(self, ep, api_kwargs: dict[str, Any]) -> Any:
         """Single-shot plain generation through the Claude Agent SDK.
 
@@ -360,14 +395,36 @@ class ClaudeClient:
                 )
         prompt = "\n\n".join(p for p in parts if p)
 
+        # Unsupported controls: ClaudeAgentOptions exposes no max_tokens or
+        # temperature, and max_turns=1 bounds conversation turns, not output
+        # length. Warned rather than rejected — callers pass max_tokens
+        # unconditionally, so rejecting would make the endpoint unusable — but
+        # it must never look like the cap was honored.
+        for _unsupported in ("max_tokens", "temperature"):
+            if api_kwargs.get(_unsupported) is not None and _unsupported not in _AGENT_SDK_WARNED:
+                _AGENT_SDK_WARNED.add(_unsupported)
+                _module_logger.warning(
+                    "[AGENT-SDK] %r is not supported on agent_sdk endpoints and is "
+                    "being ignored — the Agent SDK exposes no such control. Output "
+                    "length is bounded only by the model.",
+                    _unsupported,
+                )
+
         options = ClaudeAgentOptions(
             model=ep.model,
             system_prompt=api_kwargs.get("system") or None,
             max_turns=1,
+            # Tool-free by contract, enforced on every axis the SDK exposes.
+            # allowed_tools=[] alone only empties the auto-approve allowlist; it
+            # does not disable the built-ins, MCP servers inherited from settings
+            # files, or on-disk settings that could reintroduce them.
+            tools=[],
             allowed_tools=[],
-            # The CLI prefers an env API key over subscription creds; scrub the
-            # (possibly placeholder) key so subscription auth is actually used.
-            env={"ANTHROPIC_API_KEY": ""},
+            mcp_servers={},
+            strict_mcp_config=True,      # ignore MCP servers from settings files
+            setting_sources=[],          # no user/project/local settings
+            permission_mode="dontAsk",   # deny, never prompt a headless CLI
+            env=self._dispatch_agent_sdk_env(),
         )
 
         async def _run() -> tuple[str, dict]:
