@@ -622,24 +622,36 @@ def test_non_agent_sdk_endpoints_are_not_flagged():
 # --- agent_sdk security boundary -------------------------------------------
 
 
+# Stated independently of the implementation ON PURPOSE. Deriving this from
+# _AGENT_SDK_BLANKED_ENV would make the test pass whenever the scrubber and its
+# constant omit the same variable — i.e. it would be blind to exactly the
+# mistake it exists to catch. Adding a variable here should require a
+# deliberate edit in both places.
+_REQUIRED_BLANKED_ENV = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    }
+)
+
+
 def test_agent_sdk_env_blanks_every_auth_redirect_var():
     """ClaudeAgentOptions.env MERGES with the parent environment, so each of
     these must be present-and-empty; omitting one lets the parent value through
     and can route the call off subscription auth."""
-    from app.services.claude_client import _AGENT_SDK_BLANKED_ENV, ClaudeClient
+    from app.services.claude_client import ClaudeClient
 
     env = ClaudeClient._dispatch_agent_sdk_env()
-    for var in (
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "CLAUDE_CODE_USE_VERTEX",
-        "CLAUDE_CODE_USE_FOUNDRY",
-    ):
-        assert var in env, f"{var} would be inherited from the parent process"
-        assert env[var] == ""
-    assert set(env) == set(_AGENT_SDK_BLANKED_ENV)
+    missing = _REQUIRED_BLANKED_ENV - set(env)
+    assert not missing, f"would be inherited from the parent process: {sorted(missing)}"
+    assert env == dict.fromkeys(_REQUIRED_BLANKED_ENV, "")
 
 
 def test_agent_sdk_options_are_tool_free(monkeypatch):

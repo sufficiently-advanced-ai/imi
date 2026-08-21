@@ -42,6 +42,9 @@ _module_logger = logging.getLogger(__name__)
 _AGENT_SDK_BLANKED_ENV = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
+    # Overrides the stored credentials outright — the single most direct way to
+    # take this call off the subscription auth the endpoint was chosen for.
+    "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CODE_USE_BEDROCK",
