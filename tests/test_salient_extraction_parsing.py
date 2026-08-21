@@ -10,7 +10,11 @@ logs the same shape as "Salient extraction returned nothing").
 
 import json
 
-from app.services.salient_entity_extractor import parse_salient_entities
+from app.services.salient_entity_extractor import (
+    MAX_NEW_PROMOTED_PER_DOC,
+    filter_salient_entities,
+    parse_salient_entities,
+)
 
 ENTITY_TYPES = ["person", "account", "project", "team"]
 
@@ -76,3 +80,94 @@ def test_parses_json_with_preamble_and_no_fence():
 def test_garbage_degrades_to_empty():
     assert parse_salient_entities("no json here at all", ENTITY_TYPES) == []
     assert parse_salient_entities("", ENTITY_TYPES) == []
+
+
+# --- per-doc promotion cap -------------------------------------------------
+
+
+def _labeled(name, salience="subject", confidence=0.5, etype="topic"):
+    return {
+        "type": etype,
+        "canonical_name": name,
+        "salience": salience,
+        "confidence": confidence,
+    }
+
+
+class _Resolved:
+    def __init__(self, canonical_name, matched_via):
+        self.canonical_name = canonical_name
+        self.matched_via = matched_via
+
+
+class _Resolver:
+    """Resolves anything in `known` to an existing entity, else 'new'."""
+
+    def __init__(self, known=()):
+        self.known = set(known)
+
+    def resolve(self, _type, name):
+        via = "exact" if name in self.known else "new"
+        return _Resolved(name, via)
+
+
+def test_new_promotions_are_capped_per_doc():
+    labeled = [_labeled(f"Topic {i}") for i in range(MAX_NEW_PROMOTED_PER_DOC + 4)]
+    promoted = filter_salient_entities(labeled, resolver=_Resolver())
+    assert len(promoted) == MAX_NEW_PROMOTED_PER_DOC
+
+
+def test_cap_keeps_the_highest_confidence_entities():
+    # Ascending confidence in input order — the cap must not just take the
+    # first N as supplied.
+    labeled = [
+        _labeled(f"Topic {i}", confidence=i / 100)
+        for i in range(MAX_NEW_PROMOTED_PER_DOC + 4)
+    ]
+    promoted = filter_salient_entities(labeled, resolver=_Resolver())
+    kept = {e["canonical_name"] for e in promoted}
+    expected = {
+        f"Topic {i}"
+        for i in range(len(labeled) - MAX_NEW_PROMOTED_PER_DOC, len(labeled))
+    }
+    assert kept == expected
+
+
+def test_existing_entities_are_exempt_from_the_cap():
+    """Linking to already-known entities is never pollution, so it must not
+    consume the new-entity budget."""
+    known = [f"Known {i}" for i in range(5)]
+    labeled = [_labeled(n) for n in known] + [
+        _labeled(f"Fresh {i}") for i in range(MAX_NEW_PROMOTED_PER_DOC)
+    ]
+    promoted = filter_salient_entities(labeled, resolver=_Resolver(known=known))
+    names = {e["canonical_name"] for e in promoted}
+    assert set(known) <= names, "resolver-matched entities were dropped by the cap"
+    assert len(promoted) == len(known) + MAX_NEW_PROMOTED_PER_DOC
+
+
+def test_mentions_are_dropped_without_a_resolver():
+    labeled = [_labeled("Passing Co", salience="mention")]
+    assert filter_salient_entities(labeled, resolver=None) == []
+
+
+def test_known_entities_survive_the_prompt_budget_as_mentions():
+    """A known entity pushed to "mention" by the prompt's 6-entity budget is
+    still promoted, because the mention branch resolves too.
+
+    This is why the prompt-side budget and the code-side cap can disagree
+    without losing data: the budget only shifts an entity's salience label,
+    and to_entities_mentioned() collapses salience away entirely.
+    """
+    known = [f"Known {i}" for i in range(10)]
+    # Prompt honors its budget: 6 promoted, the remaining 4 demoted to mention.
+    labeled = [_labeled(n, salience="subject") for n in known[:6]] + [
+        _labeled(n, salience="mention") for n in known[6:]
+    ]
+    promoted = filter_salient_entities(labeled, resolver=_Resolver(known=known))
+    assert {e["canonical_name"] for e in promoted} == set(known)
+
+    from app.services.salient_entity_extractor import to_entities_mentioned
+
+    mentioned = to_entities_mentioned(promoted)
+    assert sorted(mentioned["topic"]) == sorted(known)
