@@ -53,6 +53,13 @@ if raw_total:
         raise SystemExit(f"SEED_TOTAL must be an integer, got {raw_total!r}")
     if total < 0:
         raise SystemExit(f"SEED_TOTAL must be non-negative, got {total}")
+    # The corpus cannot be smaller than what a pass has already launched;
+    # otherwise the denominator produces nonsense like "2/1 ingested (200.0%)".
+    if total < len(manifest):
+        raise SystemExit(
+            f"SEED_TOTAL={total} is below the {len(manifest)} sources already in the "
+            f"manifest — the corpus cannot be smaller than what has been launched"
+        )
     pct = f" ({done / total:.1%})" if total else ""
     print(f"{done}/{total} ingested{pct}  {dict(counts)}")
 else:

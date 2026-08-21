@@ -23,10 +23,14 @@ while true; do
   # NOT best-effort. A swallowed failure here is the exact bug this sync
   # exists to fix: the container keeps stale credentials, every pass dies on
   # auth, and the retry loop hides the cause behind hours of failed passes.
-  # Destination must be the directory the container mounts at /root/.claude
-  # (docker-compose.dev.yml: ./.claude-auth:/root/.claude). Overridable so a
-  # deployment that mounts elsewhere can point this at the right place.
-  CLAUDE_AUTH_DIR=${CLAUDE_AUTH_DIR:-$HOME/Developer/imi/.claude-auth}
+  # Destination must be the SAME directory Compose mounts at /root/.claude.
+  # Both sides read CLAUDE_AUTH_DIR (docker-compose.dev.yml volume source is
+  # ${CLAUDE_AUTH_DIR:-./.claude-auth}), and the default is derived from this
+  # repo's root rather than a hardcoded $HOME path — so it stays correct
+  # wherever the repo is checked out, and an override moves both ends together.
+  REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+  CLAUDE_AUTH_DIR=${CLAUDE_AUTH_DIR:-$REPO_ROOT/.claude-auth}
+  export CLAUDE_AUTH_DIR
   if [ ! -d "$CLAUDE_AUTH_DIR" ]; then
     echo "FATAL: credential mount dir $CLAUDE_AUTH_DIR does not exist" >&2
     echo "       (set CLAUDE_AUTH_DIR to the host path mounted at /root/.claude)" >&2

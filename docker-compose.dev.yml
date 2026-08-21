@@ -104,7 +104,7 @@ services:
       # the container keeps reading the old inode until it is recreated — auth
       # then fails hours later, nowhere near the cause. See scripts/drip-seed.sh,
       # which syncs into this directory between passes.
-      - ./.claude-auth:/root/.claude
+      - ${CLAUDE_AUTH_DIR:-./.claude-auth}:/root/.claude
     restart: unless-stopped
     networks:
       - default
