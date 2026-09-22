@@ -141,3 +141,26 @@ operations:
 
 # Endpoint used when neither an operation override nor an alias matches.
 default: anthropic-default
+
+# ---------------------------------------------------------------------------
+# Decision models (TypeSafe "System One" / Jev). Separate from the chat routing
+# above: these endpoints take a `state` + typed `questions` and return calibrated
+# probabilities, via app/services/inference/decisions.py (DecisionClient). The
+# `InferenceRegistry` ignores this section entirely. Same fail-closed rules: a
+# missing key or dangling reference is a config error at startup, and a failed
+# call raises DecisionUnavailable — the caller owns any heuristic fallback.
+# ---------------------------------------------------------------------------
+decisions:
+  endpoints:
+    do-jev:
+      type: digitalocean                  # or `typesafe` (api.typesafe.ai, TYPESAFE_API_KEY)
+      model: typesafe-jev-1.13.0          # DO catalog id; jev-latest on TypeSafe direct
+      api_key_env: DIGITALOCEAN_MODEL_ACCESS_KEY
+      pricing: { input: 0.042 }           # USD per 1M input tokens; output tokens are free
+      timeout: 30                         # per-attempt seconds (typical call is 70-500 ms)
+      max_concurrency: 8                  # public endpoint rate-limits above ~8 in flight
+      # max_state_chars: 100000           # reject oversized states; the model's state budget is 32k tokens
+  operations:
+    entity_resolution_tiebreak: do-jev
+    signal_promotion_triage: do-jev
+  default: do-jev

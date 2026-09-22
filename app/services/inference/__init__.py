@@ -25,6 +25,16 @@ from .base import (
     InferenceRetryableError,
     Usage,
 )
+from .decisions import (
+    Choice,
+    DecisionClient,
+    DecisionResult,
+    DecisionUnavailable,
+    Noul,
+    Score,
+    get_decision_client,
+    reset_decision_client,
+)
 from .registry import (
     InferenceRegistry,
     ResolvedEndpoint,
@@ -39,6 +49,14 @@ __all__ = [
     "Usage",
     "InferenceConfigError",
     "InferenceRetryableError",
+    "Choice",
+    "DecisionClient",
+    "DecisionResult",
+    "DecisionUnavailable",
+    "Noul",
+    "Score",
+    "get_decision_client",
+    "reset_decision_client",
     "InferenceRegistry",
     "ResolvedEndpoint",
     "get_inference_registry",
