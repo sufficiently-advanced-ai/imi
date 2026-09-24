@@ -76,6 +76,11 @@ services:
       - CLAUDE_SONNET_MODEL=${CLAUDE_SONNET_MODEL:-claude-sonnet-4-5-20250929}
       - CLAUDE_HAIKU_MODEL=${CLAUDE_HAIKU_MODEL:-claude-haiku-4-5-20251001}
 
+      # Decision models (config/inference.yaml `decisions:`); empty is fine
+      # when no decisions endpoint is configured.
+      - DIGITALOCEAN_MODEL_ACCESS_KEY=${DIGITALOCEAN_MODEL_ACCESS_KEY:-}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+
       # Optional observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
