@@ -7,6 +7,7 @@ wire contract (docs.typesafe.ai/api) verbatim.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -279,3 +280,107 @@ async def test_structured_log_lines(monkeypatch, capsys):
     success = lines[-1]["details"]
     assert success["operation"] == "tiebreak" and success["endpoint"] == "do-jev"
     assert success["input_tokens"] == 392 and "cost_usd" in success and "duration_ms" in success
+
+
+# ---- review hardening ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"type": "choice", "choice": "a", "confidence": 0.9},  # no probabilities
+        {"type": "choice", "choice": "a", "probabilities": {"a": 1.0}},  # no confidence
+        {"type": "choice", "choice": "a", "probabilities": [1.0], "confidence": 0.9},  # not a mapping
+    ],
+)
+@pytest.mark.asyncio
+async def test_choice_missing_contract_fields_rejected(monkeypatch, answer):
+    c = _client(lambda req: httpx.Response(200, json={"answers": {"q": answer}}), monkeypatch)
+    with pytest.raises(DecisionUnavailable, match="malformed choice"):
+        await c.decide("x", {"q": Choice(instructions="x", criteria={"a": "1", "b": "2"})}, operation="tiebreak")
+    await c.aclose()
+
+
+@pytest.mark.parametrize("drop", ["probabilities", "confidence", "legend"])
+@pytest.mark.asyncio
+async def test_score_missing_contract_fields_rejected(monkeypatch, drop):
+    answer = dict(QUICKSTART_RESPONSE["answers"]["frustration"])
+    del answer[drop]
+    c = _client(lambda req: httpx.Response(200, json={"answers": {"q": answer}}), monkeypatch)
+    with pytest.raises(DecisionUnavailable, match="malformed score"):
+        await c.decide("x", {"q": QUESTIONS["frustration"]}, operation="tiebreak")
+    await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_answer_type_must_match_question_type(monkeypatch):
+    answer = QUICKSTART_RESPONSE["answers"]["department"]  # a well-formed choice
+    c = _client(lambda req: httpx.Response(200, json={"answers": {"q": answer}}), monkeypatch)
+    with pytest.raises(DecisionUnavailable, match="question was 'noul'"):
+        await c.decide("x", {"q": Noul(instructions="x")}, operation="tiebreak")
+    await c.aclose()
+
+
+@pytest.mark.parametrize("payload", [[], "ok", {"answers": {"q": {"type": "noul", "noul": 1}}, "usage": [1]}])
+@pytest.mark.asyncio
+async def test_non_object_response_or_usage_is_unavailable(monkeypatch, payload):
+    c = _client(lambda req: httpx.Response(200, json=payload), monkeypatch)
+    with pytest.raises(DecisionUnavailable):
+        await c.decide("x", {"q": Noul(instructions="x")}, operation="tiebreak")
+    await c.aclose()
+
+
+@pytest.mark.parametrize("key,value", [("max_concurrency", 0), ("max_concurrency", -1), ("timeout", 0),
+                                       ("max_state_chars", 0), ("max_concurrency", "lots"), ("max_concurrency", 2.5)])
+def test_non_positive_limits_rejected(monkeypatch, key, value):
+    monkeypatch.setenv(KEY_ENV, "x")
+    with pytest.raises(InferenceConfigError, match=key):
+        DecisionClient(_config(**{key: value}))
+
+
+def test_key_found_in_dotenv_file_when_not_exported(monkeypatch, tmp_path):
+    monkeypatch.delenv(KEY_ENV, raising=False)
+    env = tmp_path / ".env"
+    env.write_text(f'{KEY_ENV}="doo_from_dotenv"\n')
+    monkeypatch.setenv("ENV_FILE", str(env))
+    assert DecisionClient(_config()).resolve("tiebreak").api_key == "doo_from_dotenv"
+
+
+@pytest.mark.asyncio
+async def test_long_retry_after_fails_fast_instead_of_sleeping(monkeypatch):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(429, json={"error": "slow down"}, headers={"retry-after": "3600"})
+
+    c = _client(handler, monkeypatch)
+    with pytest.raises(DecisionUnavailable, match="exceeds") as ei:
+        await asyncio.wait_for(c.decide("x", QUESTIONS, operation="tiebreak"), timeout=2)
+    assert calls["n"] == 1 and ei.value.status == 429
+    await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_backoff_releases_the_endpoint_slot(monkeypatch):
+    # One slot. The first call is throttled once (1s backoff); the second call
+    # must get through during that sleep rather than queue behind it.
+    order: list[str] = []
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        state = json.loads(request.content)["state"]
+        order.append(state)
+        if state == "slow" and calls["n"] == 1:
+            return httpx.Response(429, json={}, headers={"retry-after": "1"})
+        return httpx.Response(200, json={"answers": {"q": {"type": "noul", "noul": 0.5}}})
+
+    c = _client(handler, monkeypatch, max_concurrency=1)
+    q = {"q": Noul(instructions="x")}
+    slow = asyncio.create_task(c.decide("slow", q, operation="tiebreak"))
+    await asyncio.sleep(0.1)
+    await asyncio.wait_for(c.decide("fast", q, operation="tiebreak"), timeout=0.5)
+    await slow
+    assert order == ["slow", "fast", "slow"]
+    await c.aclose()

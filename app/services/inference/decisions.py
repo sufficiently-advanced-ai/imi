@@ -50,9 +50,11 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import dotenv_values
 
 from .base import InferenceConfigError
 from .registry import InferenceRegistry
@@ -71,6 +73,28 @@ _DEFAULT_MODELS = {
 # headroom for the questions block.
 _DEFAULT_MAX_STATE_CHARS = 100_000
 _RETRYABLE = {408, 409, 429, 500, 502, 503, 504, 529}
+# Longest Retry-After honored between attempts. Decisions sit on the request
+# path (ingest phases); a longer server-requested wait fails the call instead.
+_MAX_RETRY_DELAY = 10.0
+
+
+def _backoff(attempt: int) -> float:
+    return float(min(2 ** (attempt - 1), 8))
+
+
+def _retry_delay(retry_after: str | None, attempt: int) -> float | None:
+    """Seconds to wait before the next attempt, or None if the server's
+    Retry-After exceeds ``_MAX_RETRY_DELAY``. Only the delta-seconds form is
+    parsed; an HTTP-date or garbage value falls back to exponential backoff."""
+    if retry_after:
+        try:
+            delay = float(retry_after)
+        except ValueError:
+            return _backoff(attempt)
+        if delay > _MAX_RETRY_DELAY:
+            return None
+        return max(delay, 0.0)
+    return _backoff(attempt)
 
 
 class DecisionUnavailable(RuntimeError):
@@ -188,25 +212,39 @@ class DecisionResult:
         return a
 
 
-def _parse_answer(name: str, raw: Any) -> Answer:
+_QUESTION_TYPES: dict[type, str] = {Noul: "noul", Choice: "choice", Score: "score"}
+
+
+def _mapping(raw: dict[str, Any], key: str) -> dict[str, Any]:
+    # Contract fields are required: a missing or non-object value is a
+    # malformed answer, never an empty default handed to the caller.
+    v = raw[key]
+    if not isinstance(v, dict):
+        raise TypeError(f"{key!r} must be an object, got {type(v).__name__}")
+    return v
+
+
+def _parse_answer(name: str, raw: Any, expected: str) -> Answer:
     if not isinstance(raw, dict) or "type" not in raw:
         raise DecisionUnavailable(f"malformed answer for {name!r}: {raw!r}")
     t = raw["type"]
+    if t != expected:
+        raise DecisionUnavailable(f"answer for {name!r} is type {t!r}, but the question was {expected!r}")
     try:
         if t == "noul":
             return NoulAnswer(noul=float(raw["noul"]))
         if t == "choice":
             return ChoiceAnswer(
                 choice=str(raw["choice"]),
-                probabilities={str(k): float(v) for k, v in raw.get("probabilities", {}).items()},
-                confidence=float(raw.get("confidence", 0.0)),
+                probabilities={str(k): float(v) for k, v in _mapping(raw, "probabilities").items()},
+                confidence=float(raw["confidence"]),
             )
         if t == "score":
             return ScoreAnswer(
                 score=float(raw["score"]),
-                probabilities={str(k): float(v) for k, v in raw.get("probabilities", {}).items()},
-                confidence=float(raw.get("confidence", 0.0)),
-                legend={str(k): str(v) for k, v in raw.get("legend", {}).items()},
+                probabilities={str(k): float(v) for k, v in _mapping(raw, "probabilities").items()},
+                confidence=float(raw["confidence"]),
+                legend={str(k): str(v) for k, v in _mapping(raw, "legend").items()},
             )
     except (KeyError, TypeError, ValueError) as e:
         raise DecisionUnavailable(f"malformed {t} answer for {name!r}: {e}") from e
@@ -235,7 +273,7 @@ def _build_endpoint(name: str, spec: dict[str, Any]) -> DecisionEndpoint:
             f"decisions endpoint {name!r}: type must be one of {sorted(_DEFAULT_BASE_URLS)}, got {etype!r}"
         )
     key_env = spec.get("api_key_env")
-    api_key = (os.getenv(key_env) or "").strip() if isinstance(key_env, str) else ""
+    api_key = _lookup_key(key_env) if isinstance(key_env, str) else ""
     if not api_key:
         # Same fail-closed posture as the `digitalocean` chat endpoint type.
         raise InferenceConfigError(
@@ -252,10 +290,37 @@ def _build_endpoint(name: str, spec: dict[str, Any]) -> DecisionEndpoint:
         model=str(spec.get("model") or _DEFAULT_MODELS[etype]),
         api_key=api_key,
         input_price_per_mtok=price,
-        timeout=float(spec.get("timeout", 30.0)),
-        max_concurrency=int(spec.get("max_concurrency", 8)),
-        max_state_chars=int(spec.get("max_state_chars", _DEFAULT_MAX_STATE_CHARS)),
+        timeout=_positive(name, spec, "timeout", 30.0, float),
+        max_concurrency=_positive(name, spec, "max_concurrency", 8, int),
+        max_state_chars=_positive(name, spec, "max_state_chars", _DEFAULT_MAX_STATE_CHARS, int),
     )
+
+
+def _positive(name: str, spec: dict[str, Any], key: str, default: Any, cast: type) -> Any:
+    # A zero max_concurrency would make asyncio.Semaphore(0) block every call
+    # forever; reject non-positive values here rather than at first use.
+    raw = spec.get(key, default)
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError) as e:
+        raise InferenceConfigError(f"decisions endpoint {name!r}: {key} must be a number, got {raw!r}") from e
+    if isinstance(raw, bool) or value <= 0 or (cast is int and value != raw):
+        raise InferenceConfigError(f"decisions endpoint {name!r}: {key} must be a positive {cast.__name__}, got {raw!r}")
+    return value
+
+
+def _lookup_key(key_env: str) -> str:
+    """Resolve ``api_key_env`` from the process environment, then from the
+    app's dotenv file. ``Settings`` reads ``.env`` without exporting undeclared
+    keys to ``os.environ``, so a key that exists only in ``.env`` (the setup
+    the routing docs prescribe for local runs) would otherwise be invisible.
+    Inside Docker the compose file passes the key through explicitly."""
+    value = os.getenv(key_env)
+    if not value:
+        env_file = Path(os.getenv("ENV_FILE") or ".env")
+        if env_file.is_file():
+            value = dotenv_values(env_file).get(key_env)
+    return (value or "").strip()
 
 
 # ---- client -----------------------------------------------------------------
@@ -344,53 +409,73 @@ class DecisionClient:
         url = f"{ep.base_url}/v1/systemone"
 
         started = time.monotonic()
-        last_status: int | None = None
-        last_err = ""
-        async with self._semaphores[ep.name]:
-            for attempt in range(1, self._max_attempts + 1):
-                self._log("sending", operation, ep, attempt=attempt, questions=len(questions), state_chars=state_len)
-                try:
+        # The semaphore bounds in-flight requests only: it is released before
+        # any backoff sleep, so a throttled call never starves the endpoint.
+        for attempt in range(1, self._max_attempts + 1):
+            self._log("sending", operation, ep, attempt=attempt, questions=len(questions), state_chars=state_len)
+            try:
+                async with self._semaphores[ep.name]:
                     resp = await self._http.post(url, json=body, headers=headers, timeout=ep.timeout)
-                except httpx.HTTPError as e:
-                    last_err = f"{type(e).__name__}: {e}"
-                    self._log("error", operation, ep, attempt=attempt, error=last_err)
-                    if attempt < self._max_attempts:
-                        await asyncio.sleep(min(2 ** (attempt - 1), 8))
-                        continue
-                    raise DecisionUnavailable(f"{ep.name}: {last_err}") from e
-
-                last_status = resp.status_code
-                if resp.status_code in _RETRYABLE and attempt < self._max_attempts:
-                    retry_after = resp.headers.get("retry-after")
-                    delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** (attempt - 1), 8)
-                    self._log("retry", operation, ep, attempt=attempt, status=resp.status_code, delay=delay)
-                    await asyncio.sleep(delay)
+            except httpx.HTTPError as e:
+                err = f"{type(e).__name__}: {e}"
+                self._log("error", operation, ep, attempt=attempt, error=err)
+                if attempt < self._max_attempts:
+                    await asyncio.sleep(_backoff(attempt))
                     continue
-                if resp.status_code != 200:
-                    snippet = resp.text[:300]
-                    self._log("error", operation, ep, attempt=attempt, status=resp.status_code, body=snippet)
+                raise DecisionUnavailable(f"{ep.name}: {err}") from e
+
+            if resp.status_code in _RETRYABLE and attempt < self._max_attempts:
+                delay = _retry_delay(resp.headers.get("retry-after"), attempt)
+                if delay is None:
+                    # The server asked for a wait longer than a request-path
+                    # caller should block; fail now so it can fall back.
+                    self._log("error", operation, ep, attempt=attempt, status=resp.status_code,
+                              retry_after=resp.headers.get("retry-after"))
                     raise DecisionUnavailable(
-                        f"{ep.name}: HTTP {resp.status_code}: {snippet}", status=resp.status_code
+                        f"{ep.name}: HTTP {resp.status_code}, retry-after "
+                        f"{resp.headers.get('retry-after')!r} exceeds {_MAX_RETRY_DELAY}s",
+                        status=resp.status_code,
                     )
-                break
-            else:  # pragma: no cover - loop always breaks or raises
-                raise DecisionUnavailable(f"{ep.name}: exhausted retries", status=last_status)
+                self._log("retry", operation, ep, attempt=attempt, status=resp.status_code, delay=delay)
+                await asyncio.sleep(delay)
+                continue
+            if resp.status_code != 200:
+                snippet = resp.text[:300]
+                self._log("error", operation, ep, attempt=attempt, status=resp.status_code, body=snippet)
+                raise DecisionUnavailable(
+                    f"{ep.name}: HTTP {resp.status_code}: {snippet}", status=resp.status_code
+                )
+            break
+        else:  # pragma: no cover - the last attempt always breaks or raises
+            raise DecisionUnavailable(f"{ep.name}: exhausted retries")
 
         try:
             data = resp.json()
         except ValueError as e:
             raise DecisionUnavailable(f"{ep.name}: non-JSON response") from e
+        if not isinstance(data, dict):
+            raise DecisionUnavailable(f"{ep.name}: response is {type(data).__name__}, not an object")
         raw_answers = data.get("answers")
         if not isinstance(raw_answers, dict):
             raise DecisionUnavailable(f"{ep.name}: response has no 'answers' mapping")
         missing = set(questions) - set(raw_answers)
         if missing:
             raise DecisionUnavailable(f"{ep.name}: no answer for {sorted(missing)}")
-        answers = {name: _parse_answer(name, raw_answers[name]) for name in questions}
+        answers = {
+            name: _parse_answer(name, raw_answers[name], _QUESTION_TYPES[type(q)])
+            for name, q in questions.items()
+        }
 
+        # Usage only feeds cost reporting, so tolerate its absence, but a
+        # present-and-wrong shape is still a malformed response.
         usage = data.get("usage") or {}
-        in_tok = int(usage.get("input_tokens", 0) or 0)
-        out_tok = int(usage.get("output_tokens", 0) or 0)
+        if not isinstance(usage, dict):
+            raise DecisionUnavailable(f"{ep.name}: 'usage' is {type(usage).__name__}, not an object")
+        try:
+            in_tok = int(usage.get("input_tokens", 0) or 0)
+            out_tok = int(usage.get("output_tokens", 0) or 0)
+        except (TypeError, ValueError) as e:
+            raise DecisionUnavailable(f"{ep.name}: malformed usage: {e}") from e
         cost = in_tok / 1_000_000 * ep.input_price_per_mtok
         latency_ms = int((time.monotonic() - started) * 1000)
         result = DecisionResult(

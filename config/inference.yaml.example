@@ -149,6 +149,11 @@ default: anthropic-default
 # `InferenceRegistry` ignores this section entirely. Same fail-closed rules: a
 # missing key or dangling reference is a config error at startup, and a failed
 # call raises DecisionUnavailable — the caller owns any heuristic fallback.
+#
+# Keys: put DIGITALOCEAN_MODEL_ACCESS_KEY / TYPESAFE_API_KEY in .env. Local runs
+# read it from there; docker-compose passes both through to the container. The
+# DO team must have commercial serverless models enabled (a support request);
+# otherwise every call is 403 "not available for your subscription tier".
 # ---------------------------------------------------------------------------
 decisions:
   endpoints:

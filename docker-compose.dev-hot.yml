@@ -83,6 +83,11 @@ services:
       # MCP
       - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
 
+      # Decision models (config/inference.yaml `decisions:`); empty is fine
+      # when no decisions endpoint is configured.
+      - DIGITALOCEAN_MODEL_ACCESS_KEY=${DIGITALOCEAN_MODEL_ACCESS_KEY:-}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+
       # Optional observability — set OTEL_EXPORTER_OTLP_ENDPOINT in .env to the
       # OTLP/HTTP URL of an existing collector (e.g. http://host:4318). Left
       # unset, the exporter is disabled and the app runs without telemetry.
