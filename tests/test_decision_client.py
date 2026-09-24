@@ -384,3 +384,16 @@ async def test_backoff_releases_the_endpoint_slot(monkeypatch):
     await slow
     assert order == ["slow", "fast", "slow"]
     await c.aclose()
+
+
+def test_operation_modes(monkeypatch):
+    monkeypatch.setenv(KEY_ENV, "x")
+    cfg = _config()
+    cfg["modes"] = {"tiebreak": "on"}
+    c = DecisionClient(cfg)
+    assert c.mode("tiebreak") == "on"
+    assert c.mode("unlisted") == "shadow"  # served by the default endpoint
+    assert DecisionClient({}).mode("tiebreak") == "off"  # nothing configured
+    cfg["modes"] = {"tiebreak": "yes"}
+    with pytest.raises(InferenceConfigError, match="modes"):
+        DecisionClient(cfg)
