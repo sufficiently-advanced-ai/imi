@@ -59,6 +59,12 @@ class Observation(BaseModel):
     title: str | None = None
     occurred_at: datetime | None = None
     participants: list[str] = Field(default_factory=list)
+    # Resolved graph ids of every entity this observation was linked to at
+    # ingest time. Authoritative for rebuilding MENTIONED_IN from the file:
+    # names in entities_mentioned/participants are surface forms, and
+    # re-slugging them on rebuild would not reproduce ingest-time resolution
+    # ("Dan" -> person-dan-kauppi).
+    entity_ids: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
     status: str = "completed"
     is_finalized: bool = True
@@ -92,6 +98,11 @@ class Observation(BaseModel):
             frontmatter.append("participants:")
             for p in self.participants:
                 frontmatter.append(f"  - {_yaml_escape(p)}")
+
+        if self.entity_ids:
+            frontmatter.append("entity_ids:")
+            for eid in self.entity_ids:
+                frontmatter.append(f"  - {_yaml_escape(eid)}")
 
         if self.key_points:
             frontmatter.append("key_points:")
@@ -142,6 +153,7 @@ class Observation(BaseModel):
             title=frontmatter.get("title"),
             occurred_at=_parse_dt(frontmatter.get("start_time")),
             participants=frontmatter.get("participants") or [],
+            entity_ids=frontmatter.get("entity_ids") or [],
             key_points=frontmatter.get("key_points") or [],
             status=frontmatter.get("status", "completed"),
             is_finalized=frontmatter.get("is_finalized", False),

@@ -777,6 +777,19 @@ class IngestOrchestrator(BaseOrchestrator):
                     len(entities),
                 )
 
+            # Record the resolved ids on the observation so the persisted
+            # meeting file links to exactly these nodes when the graph is
+            # rebuilt from files (see _extract_entity_references).
+            if observation is not None and hasattr(observation, "entity_ids"):
+                known = getattr(self._graph, "nodes", None)
+                observation.entity_ids = sorted(
+                    {
+                        e["id"]
+                        for e in entities
+                        if e.get("id") and (known is None or e["id"] in known)
+                    }
+                )
+
         # Step 2 (B): Write signal nodes to Neo4j — entity nodes now exist so
         # MENTIONS/ASSIGNED_TO/FOR_CLIENT edges will resolve correctly.
         if meeting_signals and self._signal_writer:
@@ -1370,12 +1383,17 @@ class IngestOrchestrator(BaseOrchestrator):
             # also surface ingested observations — otherwise they're invisible.
             meeting_path = f"meetings/meeting-{bot_id}.md"
             meeting_content = observation.to_markdown()
-            await self._git_ops.commit_file(
-                meeting_path,
-                meeting_content,
-                f"[ingest] Add meeting: {observation.title or bot_id}",
-            )
-            logger.info(f"[INGEST] Persisted observation to {meeting_path}")
+            try:
+                await self._git_ops.commit_file(
+                    meeting_path,
+                    meeting_content,
+                    f"[ingest] Add meeting: {observation.title or bot_id}",
+                )
+                logger.info(f"[INGEST] Persisted observation to {meeting_path}")
+            finally:
+                # commit_file writes the file before committing, so link it
+                # even if the commit itself failed.
+                await self._link_document_in_graph(meeting_path)
 
             # 2. Persist signals JSON (for signal feed)
             if meeting_signals and meeting_signals.signal_count > 0:
@@ -1392,6 +1410,19 @@ class IngestOrchestrator(BaseOrchestrator):
 
         except Exception as e:
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
+
+    async def _link_document_in_graph(self, path: str) -> None:
+        """Give a persisted corpus file its graph footprint the same way a
+        rebuild would: Document node, MENTIONED_IN edges, co-occurrence
+        refresh (Neo4jKnowledgeGraph.ingest_files). Without this, live ingest
+        and a rebuild from files produced different graphs — ingested
+        meetings had no Document node and their entities no MENTIONED_IN."""
+        if not self._graph or not hasattr(self._graph, "ingest_files"):
+            return
+        try:
+            await self._graph.ingest_files([path])
+        except Exception as e:
+            logger.warning("[INGEST] Graph document link failed for %s: %s", path, e)
 
     async def _phase_enrich_profiles(
         self, observation, meeting_signals, bot_id: str

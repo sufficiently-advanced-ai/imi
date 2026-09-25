@@ -700,9 +700,28 @@ class Neo4jKnowledgeGraph:
         3. Nested entities_mentioned.participants: pre-formatted entity IDs
         4. Top-level participants/speakers: display names for person entities
         5. Legacy summary.participants format
+
+        A document that carries ``entity_ids`` (written by live ingest after
+        entity resolution) is linked to exactly those ids and nothing else:
+        the name fields above are surface forms, and re-slugging them here
+        would not reproduce ingest-time resolution — rebuilding would mint
+        stubs like person-dan next to the resolved person-dan-kauppi.
         """
         refs: set[str] = set()
         if not self.domain:
+            return refs
+
+        resolved_ids = metadata.get("entity_ids")
+        if isinstance(resolved_ids, list) and resolved_ids:
+            for eid in resolved_ids:
+                if not isinstance(eid, str) or "-" not in eid:
+                    continue
+                etype = eid.split("-", 1)[0]
+                if etype not in self.domain.entities:
+                    continue
+                fallback_name = eid.split("-", 1)[1].replace("-", " ").title()
+                await self._ensure_entity_exists(eid, etype, fallback_name)
+                refs.add(eid)
             return refs
 
         # Map common top-level metadata fields to entity types (plural → type)
