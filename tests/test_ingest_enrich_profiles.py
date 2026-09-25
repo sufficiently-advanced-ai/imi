@@ -147,3 +147,17 @@ async def test_enrich_profiles_skips_when_no_entities(monkeypatch):
     obs.entity_ids = []
     result = await _make_orch()._phase_enrich_profiles(obs, _Signals(), "ingest-abc123")
     assert result == {"rich_profiles_generated": 0}
+
+
+def test_strip_code_fences_from_generated_profile():
+    raw = "```markdown\n---\nname: Anudeep\n---\n```\n\n# Anudeep\n\nDeveloper.\n```"
+    out = DomainAwareEntityProcessor._strip_code_fences(raw)
+    assert "```" not in out and out.startswith("---\nname: Anudeep\n---")
+
+
+def test_profile_prompts_forbid_inferring_gender():
+    from pathlib import Path
+
+    for t in ("person", "project", "team"):
+        text = Path(f"app/prompts/{t}_update.xml").read_text()
+        assert "Never infer anyone's gender" in text and "code fences" in text

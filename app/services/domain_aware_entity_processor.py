@@ -75,6 +75,15 @@ class DomainAwareEntityProcessor:
         return "\n".join(result)
 
     @staticmethod
+    def _strip_code_fences(content: str) -> str:
+        """Drop markdown code-fence lines (``` / ```markdown) that models
+        sometimes wrap a generated document in; a profile never contains
+        fenced code, and a stray fence renders the whole body as code."""
+        return "\n".join(
+            line for line in content.split("\n") if not line.strip().startswith("```")
+        )
+
+    @staticmethod
     def _ensure_required_frontmatter(
         content: str, entity_type: str, entity_id: str
     ) -> str:
@@ -576,6 +585,7 @@ Return the complete updated profile."""
 
         # Sanitize frontmatter — Claude may generate closing --- glued to
         # the last YAML value, or add preamble text before the opening ---.
+        profile_content = self._strip_code_fences(profile_content)
         profile_content = self._sanitize_frontmatter(profile_content)
 
         # Ensure id and entity_type are in frontmatter so the graph builder
