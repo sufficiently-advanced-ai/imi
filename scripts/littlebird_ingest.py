@@ -46,6 +46,22 @@ def summarize_delta(delta: dict) -> str:
     return ", ".join(parts)
 
 
+def _request(client: httpx.Client, method: str, url: str, attempts: int = 6, **kw) -> httpx.Response:
+    """HTTP with retries for transient transport errors (the tailnet proxy
+    occasionally drops a connection mid-run; one blip must not kill a
+    multi-hour backfill)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return client.request(method, url, **kw)
+        except (httpx.TransportError, httpx.TimeoutException) as e:
+            if attempt == attempts:
+                raise
+            wait = min(60, 2 ** attempt)
+            print(f"    ! {type(e).__name__} on {method} {url}; retry {attempt} in {wait}s")
+            time.sleep(wait)
+    raise RuntimeError("unreachable")
+
+
 def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
     body = {
         "content": m["transcript"],
@@ -62,7 +78,7 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
             "duration_minutes": m.get("duration_minutes"),
         },
     }
-    r = client.post("/api/ingest", json=body)
+    r = _request(client, "POST", "/api/ingest", json=body)
     r.raise_for_status()
     accepted = r.json()
     job_id = accepted["job_id"]
@@ -73,7 +89,7 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
     seen: list[str] = []
     started = time.monotonic()
     while True:
-        s = client.get(f"/api/ingest/{job_id}/status").json()
+        s = _request(client, "GET", f"/api/ingest/{job_id}/status").json()
         for phase in s.get("phases_completed", []):
             if phase not in seen:
                 seen.append(phase)
@@ -89,7 +105,7 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
         print(f"    ✗ FAILED: {s.get('error')}")
         return {"job_id": job_id, "status": "failed", "error": s.get("error")}
 
-    delta = client.get(f"/api/ingest/{job_id}/delta")
+    delta = _request(client, "GET", f"/api/ingest/{job_id}/delta")
     delta_json = delta.json() if delta.status_code == 200 else {}
     if delta_json:
         print(f"    Δ {summarize_delta(delta_json)}")
