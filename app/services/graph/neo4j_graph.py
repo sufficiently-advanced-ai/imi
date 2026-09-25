@@ -26,6 +26,7 @@ import yaml
 
 from app.model_schemas.domain_config import DomainConfiguration
 from app.neo4j_client import Neo4jClient
+from app.services.entity_utils import slugify
 
 from .batch_writer import Neo4jBatchWriter
 from .models import GraphEdge, GraphNode
@@ -620,12 +621,12 @@ class Neo4jKnowledgeGraph:
         # Prefer canonical_name (already a slug) over display name
         canonical = metadata.get("canonical_name", "")
         if canonical:
-            slug = re.sub(r"[^a-z0-9]+", "-", canonical.lower()).strip("-")
+            slug = slugify(canonical)
             if slug:
                 return f"{entity_type}-{slug}"
         name = metadata.get("name", "")
-        if name:
-            slug = name.lower().replace(" ", "-")
+        slug = slugify(name)
+        if slug:
             return f"{entity_type}-{slug}"
         # Fallback: use filename
         filename = os.path.basename(file_path)
@@ -671,7 +672,7 @@ class Neo4jKnowledgeGraph:
                     )
 
         # Consistent slug: only a-z0-9 and hyphens (matches EntityService)
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        slug = slugify(name)
         if not slug:
             slug = "unnamed"
         return f"{target_type}-{slug}"
@@ -2246,7 +2247,7 @@ class Neo4jKnowledgeGraph:
 
         # Generate ID if not provided
         if not entity_id:
-            slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+            slug = slugify(name)
             if not slug:
                 raise ValueError("name must contain at least one alphanumeric character")
             entity_id = f"{entity_type}-{slug}"
@@ -3088,7 +3089,7 @@ class Neo4jKnowledgeGraph:
             return f"duplicate_of_real: {stub_id}"
 
         # Compute a canonical slug for comparison
-        canonical_stub = re.sub(r"[^a-z0-9]+", "-", stub_name.lower()).strip("-")
+        canonical_stub = slugify(stub_name)
 
         person_types = {"person", "member", "contact"}
         for real_id, real_info in real_entity_ids.items():
@@ -3098,7 +3099,7 @@ class Neo4jKnowledgeGraph:
             if not type_match:
                 continue
             real_name = real_info.get("name", "")
-            canonical_real = re.sub(r"[^a-z0-9]+", "-", real_name.lower()).strip("-")
+            canonical_real = slugify(real_name)
 
             # Bad: same canonical name as a real entity
             if canonical_stub and canonical_real and canonical_stub == canonical_real:

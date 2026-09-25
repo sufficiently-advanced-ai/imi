@@ -102,12 +102,10 @@ def _get_graph_service():
 
 
 def _slugify(text: str) -> str:
-    """Lowercase + dash-separate; mirrors the convention used by entity IDs."""
-    import re
+    """Entity-id slug (shared rule in entity_utils.slugify), never empty."""
+    from app.services.entity_utils import slugify
 
-    slug = re.sub(r"[^\w\s-]", "", text.lower())
-    slug = re.sub(r"[\s_-]+", "-", slug).strip("-")
-    return slug or "unnamed"
+    return slugify(text) or "unnamed"
 
 
 def _entity_folder(entity_type: str) -> str | None:

@@ -13,6 +13,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from app.services.entity_utils import slugify
+
 from ..entity_utils import extract_entity_type_from_id
 from ..frontmatter import frontmatter
 from .cache import GraphCache
@@ -1248,7 +1250,7 @@ class KnowledgeGraph:
                 if ref_value.startswith(f"{entity_type}-"):
                     eid = ref_value
                 else:
-                    slug = re.sub(r"[^a-z0-9]+", "-", ref_value.lower()).strip("-")
+                    slug = slugify(ref_value)
                     if not slug:
                         continue
                     eid = f"{entity_type}-{slug}"

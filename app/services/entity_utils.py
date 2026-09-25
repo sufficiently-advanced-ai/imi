@@ -4,8 +4,23 @@ Entity utility functions for working with entity IDs and types.
 
 import logging
 import re
+import unicodedata
 
 logger = logging.getLogger(__name__)
+
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(text: str) -> str:
+    """The one slug rule for entity ids and file names.
+
+    Folds accents to ASCII first ("Deloné" -> "delone") — without that the
+    slug regex treats "é" as a separator and silently truncates the name
+    ("delon"), and generators that skipped the regex kept the "é", so the same
+    name produced two different ids.
+    """
+    folded = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return _NON_SLUG_RE.sub("-", folded.lower()).strip("-")
 
 # Control characters (incl. newline, carriage return, tab) never appear in a
 # real entity name. Their presence means transcript text leaked into the
@@ -128,9 +143,8 @@ def ensure_entity_id_format(entity_type: str, name: str) -> str:
     if name.startswith(f"{entity_type}-"):
         return name
 
-    # Otherwise, create the ID
-    normalized_name = name.lower().replace(" ", "-").replace("_", "-")
-    return f"{entity_type}-{normalized_name}"
+    # Otherwise, create the ID (same slug rule as the resolver's make_slug)
+    return f"{entity_type}-{slugify(name)}"
 
 
 def get_valid_entity_types() -> set[str]:

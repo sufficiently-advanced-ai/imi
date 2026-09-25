@@ -6,12 +6,12 @@ entity markdown file, adds the entity to the knowledge graph, and clears caches.
 
 import json
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 
 from app.services.claude_client import get_claude_client
 from app.services.entity_file_service import EntityFileService, clear_entity_cache
+from app.services.entity_utils import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ class ProfileImporter:
 
     def _normalize_entity_id(self, name: str) -> str:
         """Normalize a person name into a consistent entity ID."""
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        slug = slugify(name)
         if not slug:
             slug = "unnamed"
         return f"person-{slug}"

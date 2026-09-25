@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.services.entity_utils import slugify
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -62,7 +64,6 @@ _LEGAL_SUFFIXES = {
 
 _PUNCT_RE = re.compile(r"[^\w\s]")
 _WS_RE = re.compile(r"\s+")
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 # Fuzzy thresholds per entity type. Projects are legitimately similar to each
 # other ("Q3 migration" vs "Q4 migration"), so they get the strictest bar.
@@ -145,7 +146,7 @@ def make_slug(entity_type: str, name: str) -> str:
     "Acme Corp" and "Acme" produce the same id (matches the historical
     add_node slug regex otherwise)."""
     normalized = normalize_entity_name(name, entity_type)
-    slug = _SLUG_RE.sub("-", normalized).strip("-")
+    slug = slugify(normalized)
     return f"{entity_type}-{slug}" if slug else ""
 
 

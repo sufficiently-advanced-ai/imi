@@ -9,7 +9,6 @@ ensuring consistency between the entities interface and domain graph interface.
 
 import logging
 import os
-import re
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +17,7 @@ import yaml
 from app.core.dependencies import get_entity_repository
 from app.git_ops import git_ops
 from app.model_schemas.domain_config import DomainConfiguration
+from app.services.entity_utils import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ class EntityFileService:
         name = attributes.get("name", "")
         if name:
             # Convert to lowercase, replace spaces with hyphens
-            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+            slug = slugify(name)
             return f"{entity_type}-{slug}"
 
         # Fallback to timestamp-based ID
