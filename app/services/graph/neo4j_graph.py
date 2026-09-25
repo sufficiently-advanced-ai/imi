@@ -2265,6 +2265,16 @@ class Neo4jKnowledgeGraph:
         safe_props["entity_type"] = entity_type
         safe_props["updated_at"] = datetime.utcnow().isoformat()
         safe_props["_type_status"] = "canonical"
+        # Record the backing file on the node in the same MERGE. Without it the
+        # update/merge/archive tools (which look up metadata.source_file) skip
+        # the file layer for every ingest-created entity. Node-only: it is not
+        # written into the file's own frontmatter.
+        node_metadata = dict(clean_props)
+        if "source_file" not in clean_props:
+            source_file = self._entity_file_relpath(entity_type, entity_id)
+            if source_file:
+                safe_props["source_file"] = source_file
+                node_metadata["source_file"] = source_file
 
         # Serialize the existence-check / MERGE / persist / rollback per
         # entity_id so two concurrent add_node calls for the same id can't
@@ -2298,7 +2308,7 @@ class Neo4jKnowledgeGraph:
                 id=entity_id,
                 name=name,
                 type=entity_type,
-                metadata=clean_props,
+                metadata=node_metadata,
             )
 
             logger.info(f"Added node: {entity_id} ({entity_type})")
@@ -3385,6 +3395,22 @@ class Neo4jKnowledgeGraph:
                 "Write-through failed for remove %s → %s: %s",
                 source_id, target_id, e,
             )
+
+    def _entity_file_relpath(self, entity_type: str, entity_id: str) -> str | None:
+        """Repo-relative path of the entity's markdown file: the existing file
+        if there is one, else where _persist_node_to_file will create it."""
+        try:
+            existing = self._find_entity_file(entity_id)
+            if existing:
+                return os.path.relpath(existing, self.git_ops.repo_path)
+            from app.services.entity_file_service import EntityFileService
+
+            return EntityFileService(domain_config=self.domain).get_entity_path(
+                entity_type, entity_id
+            )
+        except Exception as e:  # never block a node write on path bookkeeping
+            logger.warning("Could not resolve source_file for %s: %s", entity_id, e)
+            return None
 
     async def _persist_node_to_file(
         self,

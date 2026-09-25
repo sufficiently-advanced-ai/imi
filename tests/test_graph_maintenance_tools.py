@@ -110,6 +110,36 @@ async def test_add_node_valid_entity_type(graph, mock_neo4j):
 
 
 @pytest.mark.asyncio
+async def test_add_node_records_source_file_for_new_entity(graph, mock_neo4j, tmp_path):
+    """Write-through nodes carry source_file (same single MERGE) so the
+    update/merge/archive tools can find the backing file."""
+    graph._git_ops.repo_path = str(tmp_path)
+    graph._persist_node_to_file = AsyncMock(return_value="written")
+
+    await graph.add_node(entity_type="person", name="Alice Smith")
+
+    mock_neo4j.execute_write.assert_called_once()
+    props = mock_neo4j.execute_write.call_args.args[1]["props"]
+    assert props["source_file"] == "people/alice-smith.md"
+    assert graph.nodes["person-alice-smith"].metadata["source_file"] == "people/alice-smith.md"
+    # Node-only bookkeeping: not pushed into the file's own frontmatter.
+    assert "source_file" not in graph._persist_node_to_file.call_args.args[3]
+
+
+@pytest.mark.asyncio
+async def test_add_node_records_existing_file_path(graph, mock_neo4j, tmp_path):
+    (tmp_path / "entities" / "person").mkdir(parents=True)
+    (tmp_path / "entities" / "person" / "bob-jones.md").write_text("---\nname: Bob Jones\n---\n")
+    graph._git_ops.repo_path = str(tmp_path)
+    graph._persist_node_to_file = AsyncMock(return_value="skipped")
+
+    await graph.add_node(entity_type="person", name="Bob Jones")
+
+    props = mock_neo4j.execute_write.call_args.args[1]["props"]
+    assert props["source_file"] == "entities/person/bob-jones.md"
+
+
+@pytest.mark.asyncio
 async def test_add_node_invalid_entity_type(graph):
     """Rejects unknown entity types."""
     with pytest.raises(ValueError, match="Invalid entity type 'unknown_type'"):
@@ -155,7 +185,10 @@ async def test_add_node_with_properties(graph, mock_neo4j):
     )
 
     assert result["properties"] == {"role": "Engineer"}
-    assert graph.nodes["person-carol"].metadata == {"role": "Engineer"}
+    assert graph.nodes["person-carol"].metadata == {
+        "role": "Engineer",
+        "source_file": "people/carol.md",
+    }
 
 
 # ──────────────────────────────────────────────────────────────
