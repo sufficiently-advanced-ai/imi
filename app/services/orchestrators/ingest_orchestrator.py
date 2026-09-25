@@ -13,9 +13,11 @@ Note: The phase name BUILD_MEETING is kept in the job-tracking API for
 backwards compatibility; internally the phase now builds an Observation.
 """
 
+import asyncio
 import email.utils
 import inspect
 import logging
+import os
 import re
 import time
 import uuid
@@ -1561,87 +1563,109 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning("[INGEST] Graph document link failed for %s: %s", path, e)
 
+    # Profiles regenerated per meeting are bounded: each is one model call
+    # carrying the meeting transcript.
+    MAX_PROFILES_PER_MEETING = 12
+    PROFILE_CONCURRENCY = 3
+
     async def _phase_enrich_profiles(
         self, observation, meeting_signals, bot_id: str
     ) -> dict[str, int]:
-        """Phase ENRICH_PROFILES: generate grounded entity narratives + stats.
+        """Phase ENRICH_PROFILES: grounded entity narratives for the entities
+        this meeting touched.
 
-        The ingest pipeline otherwise leaves every entity with a stub body
-        ("# Name\\n\\nEntity ID: ...") and no signal grounding. This phase reuses
-        the SAME chain the live-meeting path uses:
+          1. Save MeetingSignals to the canonical signal_store.
+          2. For each resolved entity (observation.entity_ids) whose type has a
+             rich profile template: merge this meeting's signals naming it
+             into its "## Recent Signals" section (the prompt's grounded
+             attribution source), then regenerate the profile with the meeting
+             as trigger file — the same DomainAwareEntityProcessor chain the
+             webhook path uses. Graph-owned frontmatter (aliases, merged_ids,
+             name, ...) is preserved.
+          3. Commit the rewritten files and re-link them into the graph.
 
-          1. Save MeetingSignals to the canonical signal_store (ingest only
-             wrote git JSON before, so the enricher's signal lookup found
-             nothing). Keyed by bot_id.
-          2. EntityMeetingEnricher.update_entity_files_with_meeting writes each
-             entity's "## Recent Signals" section, persists typed relationships,
-             generates grounded rich profiles, and rebuilds the graph (which
-             also refreshes the in-memory edges the profile endpoint reads).
-
-        Independent of GIT_REPO_URL. Best-effort: any failure is logged and the
-        ingest job still completes.
+        Best-effort per entity: a failure is logged with the entity id and the
+        others still run; the ingest job completes either way.
         """
+        from app.services.domain_aware_entity_processor import DomainAwareEntityProcessor
+        from app.services.signal_store import signal_store
+
+        from ...core.domain_config.domain_config_service import get_domain_config_service
+
         result = {"rich_profiles_generated": 0}
-        entities_mentioned = getattr(observation, "entities_mentioned", None) or {}
-        if not entities_mentioned:
-            logger.info("[INGEST] ENRICH_PROFILES: no entities_mentioned; skipping")
+
+        if meeting_signals and getattr(meeting_signals, "signal_count", 0) > 0:
+            try:
+                signal_store.save(meeting_signals)
+            except Exception as e:
+                logger.warning("[INGEST] ENRICH_PROFILES: signal_store.save failed: %s", e)
+
+        entity_ids = list(getattr(observation, "entity_ids", None) or [])
+        if not entity_ids or not self._claude:
+            logger.info("[INGEST] ENRICH_PROFILES: nothing to enrich")
             return result
 
         try:
-            # 1. Persist signals to the canonical store so the enricher's
-            #    signal_store.load(bot_id) resolves.
-            if meeting_signals and getattr(meeting_signals, "signal_count", 0) > 0:
-                from app.services.signal_store import signal_store
-
-                signal_store.save(meeting_signals)
-                logger.info(
-                    "[INGEST] ENRICH_PROFILES: saved %d signals to signal_store (%s)",
-                    meeting_signals.signal_count,
-                    bot_id,
-                )
-
-            # 2. Run the shared enrichment chain.
-            from app.domain.entities.services import (
-                EntityService,
-                get_entity_repository,
-            )
-            from app.services.entity_meeting_enricher import EntityMeetingEnricher
-
-            enricher = EntityMeetingEnricher(EntityService(), get_entity_repository())
-            transcript = (
-                getattr(observation, "raw_content", None)
-                or getattr(observation, "content", None)
-                or ""
-            )
-            # relationships intentionally empty: the ENRICH_GRAPH phase already
-            # inferred and persisted typed entity-to-entity edges to Neo4j (via
-            # _write_relationship_edges), so relationship_count / top_relationships
-            # are populated from the graph. The enricher's _persist_meeting_
-            # relationships expects a different shape ({entity1, entity2} names vs
-            # our {source, target} ids), so re-passing them here would need an
-            # id->name translation layer. Deferred: surfacing typed relationships
-            # into entity-file frontmatter for the profile's "Key Relationships"
-            # narrative section (follow-up).
-            meeting_data = {
-                "meeting_id": bot_id,
-                "bot_id": bot_id,
-                "entities": entities_mentioned,
-                "transcript_excerpt": transcript[:5000],
-                "relationships": [],
+            domain = get_domain_config_service().get_active_domain()
+            processor = DomainAwareEntityProcessor(self._claude)
+            templated = {
+                t for t in (domain.entities or {}) if processor._get_domain_prompt_template(t, domain)
             }
-            enrich_result = await enricher.update_entity_files_with_meeting(meeting_data)
-            if isinstance(enrich_result, dict):
-                result["rich_profiles_generated"] = enrich_result.get(
-                    "rich_profiles_generated", 0
-                )
-            logger.info(
-                "[INGEST] ENRICH_PROFILES: generated %d rich profiles",
-                result["rich_profiles_generated"],
-            )
         except Exception as e:
-            logger.warning(
-                "[INGEST] ENRICH_PROFILES failed (non-fatal): %s", e, exc_info=True
-            )
+            logger.warning("[INGEST] ENRICH_PROFILES skipped, setup failed: %s", e)
+            return result
+        targets = [e for e in entity_ids if e.split("-", 1)[0] in templated]
+        skipped = len(targets) - self.MAX_PROFILES_PER_MEETING
+        targets = targets[: self.MAX_PROFILES_PER_MEETING]
+        if skipped > 0:
+            logger.info("[INGEST] ENRICH_PROFILES: capped, %d entities not refreshed", skipped)
+
+        meeting_path = f"meetings/meeting-{bot_id}.md"
+        title = getattr(observation, "title", None) or bot_id
+        occurred = getattr(observation, "occurred_at", None)
+        when = occurred.date().isoformat() if occurred else ""
+        signals = list(getattr(meeting_signals, "signals", None) or [])
+        semaphore = asyncio.Semaphore(self.PROFILE_CONCURRENCY)
+
+        async def enrich(entity_id: str) -> str:
+            entity_type = entity_id.split("-", 1)[0]
+            lines = []
+            for sig in signals:
+                owner = bool(sig.owner and sig.owner.id == entity_id)
+                if owner or any(ref.id == entity_id for ref in sig.entities):
+                    lines.append(
+                        f"- [{sig.type}{', owner' if owner else ''}] {sig.content} "
+                        f"({title}{', ' + when if when else ''})"
+                    )
+            await processor.upsert_recent_signals(entity_type, entity_id, lines, domain)
+            async with semaphore:
+                await processor.update_entity_profile(entity_type, entity_id, [meeting_path], domain)
+            path = processor._get_entity_storage_path(entity_type, entity_id, domain)
+            return os.path.relpath(path, processor.git_ops.repo_path)
+
+        outcomes = await asyncio.gather(*(enrich(e) for e in targets), return_exceptions=True)
+        changed = []
+        for entity_id, outcome in zip(targets, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                logger.warning("[INGEST] ENRICH_PROFILES failed for %s: %s", entity_id, outcome)
+            else:
+                changed.append(outcome)
+        result["rich_profiles_generated"] = len(changed)
+
+        if changed:
+            try:
+                await processor.git_ops.commit_and_push(
+                    changed, f"[ingest] Refresh {len(changed)} entity profiles from {title}"
+                )
+            except Exception as e:
+                logger.warning("[INGEST] ENRICH_PROFILES commit failed: %s", e)
+            if self._graph and hasattr(self._graph, "ingest_files"):
+                try:
+                    await self._graph.ingest_files(changed)
+                except Exception as e:
+                    logger.warning("[INGEST] ENRICH_PROFILES graph refresh failed: %s", e)
+
+        logger.info("[INGEST] ENRICH_PROFILES: generated %d rich profiles", len(changed))
         return result
 
     # ------------------------------------------------------------------

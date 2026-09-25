@@ -113,6 +113,96 @@ class DomainAwareEntityProcessor:
         new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
         return f"---\n{new_frontmatter}---{parts[2]}"
 
+    # Frontmatter keys owned by the graph/file layer, not by the profile
+    # writer: a regenerated profile must never drop or rename them (losing
+    # aliases/merged_ids would undo merges; a new name would fork identity).
+    _PRESERVED_KEYS = (
+        "id", "name", "canonical_name", "entity_type", "type", "aliases", "merged_ids",
+        "source", "created_at", "is_archived", "archived_at", "manual_corrections",
+    )
+    RECENT_SIGNALS_HEADER = "## Recent Signals"
+    MAX_RECENT_SIGNALS = 25
+
+    @classmethod
+    def _preserve_bookkeeping(
+        cls, profile_content: str, existing_attrs: dict[str, Any], existing_body: str
+    ) -> str:
+        """Restore graph-owned frontmatter keys and the Recent Signals section
+        from the previous version of the file if the model dropped them."""
+        if not profile_content.startswith("---"):
+            return profile_content
+        parts = profile_content.split("---", 2)
+        if len(parts) < 3:
+            return profile_content
+        try:
+            frontmatter = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            return profile_content
+        if not isinstance(frontmatter, dict):
+            frontmatter = {}
+        for key in cls._PRESERVED_KEYS:
+            if key not in (existing_attrs or {}):
+                continue
+            if key == "aliases":
+                merged = list(existing_attrs.get("aliases") or [])
+                for alias in frontmatter.get("aliases") or []:
+                    if alias not in merged:
+                        merged.append(alias)
+                frontmatter["aliases"] = merged
+            else:
+                frontmatter[key] = existing_attrs[key]
+        body = parts[2]
+        old_section = cls._extract_section(existing_body or "", cls.RECENT_SIGNALS_HEADER)
+        if old_section and cls.RECENT_SIGNALS_HEADER not in body:
+            body = body.rstrip() + "\n\n" + old_section + "\n"
+        new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        return f"---\n{new_frontmatter}---{body}"
+
+    @staticmethod
+    def _extract_section(body: str, header: str) -> str:
+        idx = body.find(header)
+        if idx == -1:
+            return ""
+        section = body[idx:]
+        nxt = section.find("\n## ", len(header))
+        return (section[:nxt] if nxt != -1 else section).strip()
+
+    async def upsert_recent_signals(
+        self,
+        entity_type: str,
+        entity_id: str,
+        lines: list[str],
+        domain_config: DomainConfiguration,
+    ) -> bool:
+        """Merge signal lines into the entity file's "## Recent Signals"
+        section (newest first, deduped, capped). This section is the grounded
+        attribution source the profile prompt reads (_build_grounded_facts)."""
+        if not lines:
+            return False
+        path = self._get_entity_storage_path(entity_type, entity_id, domain_config)
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) < 3:
+                return False
+            head, body = f"---{parts[1]}---", parts[2]
+        else:
+            head, body = "", raw
+        old = self._extract_section(body, self.RECENT_SIGNALS_HEADER)
+        existing = [ln for ln in old.splitlines()[1:] if ln.startswith("- ")]
+        merged = []
+        for ln in [*lines, *existing]:
+            if ln not in merged:
+                merged.append(ln)
+        section = self.RECENT_SIGNALS_HEADER + "\n" + "\n".join(merged[: self.MAX_RECENT_SIGNALS])
+        body = body.replace(old, section) if old else body.rstrip() + "\n\n" + section + "\n"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(head + body)
+        return True
+
     # Default storage path mappings for common entity types
     DEFAULT_STORAGE_PATHS = {
         "person": "people",
@@ -492,6 +582,9 @@ Return the complete updated profile."""
         # can classify this file as an entity (not a generic Document).
         profile_content = self._ensure_required_frontmatter(
             profile_content, entity_type, entity_id
+        )
+        profile_content = self._preserve_bookkeeping(
+            profile_content, context.get("attributes") or {}, context.get("content") or ""
         )
 
         # Save updated profile
