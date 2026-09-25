@@ -24,10 +24,15 @@ import httpx
 
 
 def load_meetings(export_dir: Path) -> list[dict]:
-    # pathlib's glob matches dotfiles, so skip the .ingested.json ledger.
-    meetings = [
-        json.loads(p.read_text()) for p in export_dir.glob("*.json") if not p.name.startswith(".")
-    ]
+    # pathlib's glob matches dotfiles (the .ingested.json ledger); only files
+    # written by littlebird_export.py carry a littlebird_id.
+    meetings = []
+    for path in export_dir.glob("*.json"):
+        if path.name.startswith("."):
+            continue
+        data = json.loads(path.read_text())
+        if isinstance(data, dict) and data.get("littlebird_id"):
+            meetings.append(data)
     return sorted(meetings, key=lambda m: m.get("start_time") or "")
 
 
