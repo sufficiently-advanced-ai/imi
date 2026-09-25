@@ -40,6 +40,8 @@ def remap_entity_refs(
         new_id = id_map.get(ref.id, ref.id)
         if new_id != ref.id:
             ref.id = new_id
+            # ids are "<type>-<slug>"; a retype (team -> account) changes both
+            ref.type = new_id.split("-", 1)[0]
             changed = True
         new_name = names.get(ref.id)
         if new_name and ref.name != new_name:
@@ -60,6 +62,24 @@ def remap_entity_refs(
             _fix(sig.owner)
         if sig.client_id and sig.client_id in id_map:
             sig.client_id = id_map[sig.client_id]
+            changed = True
+    return changed
+
+
+def drop_entity_refs(meeting_signals: MeetingSignals, ids: set[str]) -> bool:
+    """Remove references to entities that were rejected at admission: entity
+    refs dropped, a matching owner cleared, a matching client_id cleared."""
+    changed = False
+    for sig in meeting_signals.signals:
+        kept = [ref for ref in sig.entities if ref.id not in ids]
+        if len(kept) != len(sig.entities):
+            sig.entities = kept
+            changed = True
+        if sig.owner and sig.owner.id in ids:
+            sig.owner = None
+            changed = True
+        if sig.client_id and sig.client_id in ids:
+            sig.client_id = None
             changed = True
     return changed
 

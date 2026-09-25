@@ -40,7 +40,7 @@ Return ONLY a JSON array of signal objects. Each object has these fields:
 - "content": string, 1-2 sentence description
 - "confidence": float between 0.5 and 1.0
 - "entities": array of entity name strings involved in this signal
-- "owner": string name of the person responsible (action_items only, null otherwise)
+- "owner": string name of the person responsible (action_items only, null otherwise). Use the person's actual name; if the owner is unnamed or only described by a role ("the recruiter", "someone on their team"), use null
 - "status": "open" or "done" (action_items only, null otherwise)
 
 Return [] if no substantive signals exist. Return ONLY valid JSON, no markdown fences.

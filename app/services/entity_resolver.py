@@ -392,8 +392,13 @@ def build_tiebreak_state(mention: dict, options: dict[str, dict]) -> dict:
     for key in ("aliases_heard", "role", "evidence"):
         if mention.get(key):
             m[key] = mention[key]
+    state: dict = {"mention": m}
+    if mention.get("meeting"):
+        # The meeting the mention was heard in (title, participants): who was
+        # in the room is often what separates two people sharing a first name.
+        state["heard_in_meeting"] = mention["meeting"]
     return {
-        "mention": m,
+        **state,
         "candidates": {
             key: {
                 "name": c.get("name", ""),
@@ -523,6 +528,9 @@ class EntityResolver:
                 for k in _CANDIDATE_CONTEXT_KEYS
                 if isinstance(metadata.get(k), str | int | float) and str(metadata[k]).strip()
             }
+            co_mentioned = self._co_mentioned_names(node.id)
+            if co_mentioned:
+                context["co_mentioned_with"] = co_mentioned
             candidates.append(
                 {
                     "id": node.id,
@@ -534,7 +542,22 @@ class EntityResolver:
             )
         return candidates
 
-    async def prefetch(self, mentions: list[dict]) -> int:
+    def _co_mentioned_names(self, entity_id: str, limit: int = 8) -> list[str]:
+        """Names of entities that share documents (meetings) with this one —
+        who it is usually talked about with. Lets the tiebreak tell 'Ankit
+        from the cohort calls' from an unrelated Ankit."""
+        entity_documents = getattr(self._kg, "entity_documents", None) or {}
+        document_entities = getattr(self._kg, "document_entities", None) or {}
+        nodes = getattr(self._kg, "nodes", None) or {}
+        counts: dict[str, int] = {}
+        for doc in entity_documents.get(entity_id, ()):
+            for other in document_entities.get(doc, ()):
+                if other != entity_id and other in nodes:
+                    counts[other] = counts.get(other, 0) + 1
+        ranked = sorted(counts, key=lambda o: (-counts[o], o))[:limit]
+        return [getattr(nodes[o], "name", o) for o in ranked]
+
+    async def prefetch(self, mentions: list[dict], meeting: dict | None = None) -> int:
         """Run the decision tiebreak for every mention that needs one.
 
         mentions: [{"type", "name", optional "evidence", "role",
@@ -564,7 +587,10 @@ class EntityResolver:
             zone = fuzzy_zone(etype, name, candidates)
             if not zone:
                 continue
-            jobs.append(self._tiebreak(client, mode, {**m, "type": etype, "name": name}, heuristic, zone))
+            mention = {**m, "type": etype, "name": name}
+            if meeting:
+                mention["meeting"] = meeting
+            jobs.append(self._tiebreak(client, mode, mention, heuristic, zone))
         if not jobs:
             return 0
         changed = await asyncio.gather(*jobs)

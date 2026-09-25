@@ -22,7 +22,11 @@ from datetime import UTC, datetime
 
 from app.models.observation import Observation
 from app.models.signal import EntityRef, MeetingSignals, Signal
-from app.services.entity_utils import ensure_entity_id_format, get_active_entity_types
+from app.services.entity_utils import (
+    ensure_entity_id_format,
+    get_active_entity_types,
+    is_placeholder_entity_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -663,6 +667,11 @@ class SignalPromoter:
         First tries fuzzy match against existing refs (avoids duplicate lookups),
         then falls back to fresh resolution as a person entity.
         """
+        # "the facilitator" / "Speaker 2" is not a person to assign work to;
+        # minting one would create a junk Person node.
+        if is_placeholder_entity_name(owner_name):
+            return None
+
         owner_lower = owner_name.lower()
 
         # Try matching against already-resolved person entities (word boundary match)

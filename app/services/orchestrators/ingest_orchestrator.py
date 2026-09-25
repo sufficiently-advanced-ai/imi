@@ -26,7 +26,11 @@ from typing import Any
 from app.config import settings
 from app.services.conflict_detector import find_conflict_candidates
 
-from ..entity_utils import ensure_entity_id_format, is_valid_entity_name
+from ..entity_utils import (
+    ensure_entity_id_format,
+    is_placeholder_entity_name,
+    is_valid_entity_name,
+)
 from ..graph.factory import get_semantica_knowledge
 from ..ingest_classifier import compute_content_hash
 from .base import BaseOrchestrator
@@ -587,7 +591,11 @@ class IngestOrchestrator(BaseOrchestrator):
             entity_types = sorted(get_active_entity_types() - SYSTEM_ENTITY_TYPES)
             existing = self._existing_entity_context()
             extraction = await extract_salient_entities(
-                self._claude, transcript, entity_types, existing
+                self._claude,
+                transcript,
+                entity_types,
+                existing,
+                type_descriptions=self._entity_type_descriptions(),
             )
             labeled = extraction["entities"]
 
@@ -731,8 +739,27 @@ class IngestOrchestrator(BaseOrchestrator):
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
             entities, id_map = await self._resolve_collected_entities(
-                entities, participants=observation.participants if observation else None
+                entities,
+                participants=observation.participants if observation else None,
+                meeting={
+                    "title": getattr(observation, "title", None),
+                    "participants": sorted(getattr(observation, "participants", None) or []),
+                }
+                if observation is not None
+                else None,
             )
+
+            # Decision-model admission for entities that would be NEW nodes:
+            # drop roles/placeholders/generic groups, fix the type (a company
+            # extracted as a team). Existing nodes and meeting participants
+            # are already vetted and skip it.
+            entities, admission_map, dropped_ids = await self._admit_new_entities(
+                entities, observation
+            )
+            if admission_map:
+                id_map = {k: admission_map.get(v, v) for k, v in id_map.items()}
+                id_map.update(admission_map)
+
             if meeting_signals:
                 # Ids AND names: a ref resolved "Paul" -> person-paul-evers
                 # should read "Paul Evers" in the signal file and delta.
@@ -741,6 +768,10 @@ class IngestOrchestrator(BaseOrchestrator):
                     id_map,
                     {e["id"]: e["name"] for e in entities if e.get("id") and e.get("name")},
                 )
+                if dropped_ids:
+                    from app.services.signal_store import drop_entity_refs
+
+                    drop_entity_refs(meeting_signals, dropped_ids)
 
             logger.info(
                 f"[INGEST] Collected {len(entities)} domain entities for relationship inference"
@@ -824,7 +855,10 @@ class IngestOrchestrator(BaseOrchestrator):
         return result
 
     async def _resolve_collected_entities(
-        self, entities: list[dict], participants: list[str] | None = None
+        self,
+        entities: list[dict],
+        participants: list[str] | None = None,
+        meeting: dict | None = None,
     ) -> tuple[list[dict], dict[str, str]]:
         """Resolve each (type, name) against existing graph entities and
         against the entities minted earlier in this same batch.
@@ -847,7 +881,7 @@ class IngestOrchestrator(BaseOrchestrator):
             return entities, {}
 
         resolver = EntityResolver(knowledge_graph=self._graph)
-        await resolver.prefetch(entities)
+        await resolver.prefetch(entities, meeting=meeting)
         id_map: dict[str, str] = {}
         resolved_entities: list[dict] = []
         seen_ids: set[str] = set()
@@ -898,6 +932,101 @@ class IngestOrchestrator(BaseOrchestrator):
                 updated["name"] = resolved.canonical_name
             resolved_entities.append(updated)
         return resolved_entities, id_map
+
+    @staticmethod
+    def _entity_type_descriptions() -> dict[str, str]:
+        """Domain entity type -> description (empty on any config error)."""
+        try:
+            from ...core.domain_config.domain_config_service import get_domain_config_service
+
+            domain = get_domain_config_service().get_active_domain()
+            return {
+                name: (getattr(ent, "description", "") or "")
+                for name, ent in ((domain.entities or {}) if domain else {}).items()
+            }
+        except Exception as e:
+            logger.warning("[INGEST] Entity type descriptions unavailable: %s", e)
+            return {}
+
+    async def _admit_new_entities(
+        self, entities: list[dict], observation
+    ) -> tuple[list[dict], dict[str, str], set[str]]:
+        """Ask the decision model (operation entity_admission) about entities
+        that would become new graph nodes; apply drop/retype verdicts.
+
+        Returns (entities, old_id->new_id for retypes, dropped ids). A no-op
+        when the operation is off/shadow or no decision model is configured.
+        """
+        from app.services.entity_admission import judge_entities
+
+        known = getattr(self._graph, "nodes", None) or {}
+        participants = {
+            p.strip().lower() for p in (getattr(observation, "participants", None) or [])
+        }
+        salient = {
+            (e.get("type"), (e.get("canonical_name") or "").strip()): e
+            for e in (getattr(observation, "metadata", None) or {}).get("salient_entities", [])
+            if isinstance(e, dict)
+        }
+        mentions = []
+        for e in entities:
+            if e.get("id") in known or (e.get("name") or "").strip().lower() in participants:
+                continue
+            extra = salient.get((e.get("type"), (e.get("name") or "").strip()), {})
+            mentions.append(
+                {
+                    "type": e.get("type"),
+                    "name": e.get("name"),
+                    "evidence": extra.get("evidence"),
+                    "role": extra.get("role"),
+                    "aliases_heard": extra.get("aliases_heard"),
+                }
+            )
+        if not mentions:
+            return entities, {}, set()
+
+        entity_types = self._entity_type_descriptions()
+        if not entity_types:
+            return entities, {}, set()
+
+        verdicts = await judge_entities(
+            mentions,
+            entity_types,
+            meeting={
+                "title": getattr(observation, "title", None),
+                "participants": sorted(getattr(observation, "participants", None) or []),
+            },
+        )
+        if not verdicts:
+            return entities, {}, set()
+
+        from app.services.entity_resolver import EntityResolver
+
+        resolver = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        kept: list[dict] = []
+        remap: dict[str, str] = {}
+        dropped: set[str] = set()
+        seen: set[str] = set()
+        for e in entities:
+            verdict = verdicts.get((e.get("type"), (e.get("name") or "").strip()))
+            if verdict is None:
+                if e["id"] not in seen:
+                    seen.add(e["id"])
+                    kept.append(e)
+                continue
+            if verdict.action == "drop":
+                dropped.add(e["id"])
+                continue
+            # retype: re-resolve under the new type (may land on an existing node)
+            resolved = resolver.resolve(verdict.new_type, e["name"])
+            remap[e["id"]] = resolved.id
+            if resolved.id not in seen:
+                seen.add(resolved.id)
+                kept.append(
+                    {**e, "id": resolved.id, "type": verdict.new_type,
+                     "name": resolved.canonical_name or e["name"]}
+                )
+        return kept, remap, dropped
 
     @staticmethod
     def _remap_signal_entity_ids(
@@ -989,7 +1118,12 @@ class IngestOrchestrator(BaseOrchestrator):
         # numbers, newline-contaminated fragments — before they become graph
         # nodes + stub files. Shares is_valid_entity_name with the extractor so
         # entities arriving via signals (not just salient extraction) are gated.
-        kept = [e for e in candidates if is_valid_entity_name(e.get("name", ""))]
+        kept = [
+            e
+            for e in candidates
+            if is_valid_entity_name(e.get("name", ""))
+            and not is_placeholder_entity_name(e.get("name", ""))
+        ]
         dropped = len(candidates) - len(kept)
         if dropped:
             logger.info(

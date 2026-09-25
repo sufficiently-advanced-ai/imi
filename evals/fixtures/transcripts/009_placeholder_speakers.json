@@ -1,0 +1,105 @@
+{
+  "id": "009_placeholder_speakers",
+  "version": 1,
+  "description": "Placeholder and role-name traps plus a company in a team-like context. An unnamed speaker header ('Unnamed facilitator'), a job title used as a name ('the recruiter' / 'Recruiter'), a generic group ('Partners'), and 'Anthropic's partner team' — Anthropic is an external organization (account), never a team. Also an accented participant name (Tomás Herrera) for id folding.",
+  "meeting": {
+    "title_context": "Consulting cohort weekly check-in",
+    "date": "2026-08-05",
+    "participants": [
+      "Priya Raman",
+      "Tomás Herrera"
+    ],
+    "transcript": "**Unnamed facilitator**: Welcome back, cohort. Quick round of updates before we get into the partner program questions.\n**Priya Raman**: Sure. The big news is Northwind Logistics signed. We're scoping Relay with them now — Relay is the dispatch automation build, first milestone is the carrier-rate import in three weeks.\n**Tomás Herrera**: Congrats. On my side, the recruiter came back again about that fractional role. Recruiter said they want someone who can run an AI program, but honestly I'd rather keep consulting.\n**Unnamed facilitator**: Did anyone apply to the partner tier yet?\n**Priya Raman**: We did. Anthropic's partner team reviewed the application last week and asked for two customer references. Partners at that tier get co-selling support, apparently.\n**Tomás Herrera**: I heard the Partners channel is where they post the tier changes. I'm going to submit once Relay has a case study.\n**Priya Raman**: Makes sense. I'll send you the Northwind reference template tomorrow.\n**Unnamed facilitator**: Great. Same time next week, everyone."
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-priya-raman",
+        "canonical_name": "Priya Raman",
+        "type": "person",
+        "aliases": [
+          "Priya"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "person-tomas-herrera",
+        "canonical_name": "Tomás Herrera",
+        "type": "person",
+        "aliases": [
+          "Tomas Herrera",
+          "Tomás"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "account-northwind-logistics",
+        "canonical_name": "Northwind Logistics",
+        "type": "account",
+        "aliases": [
+          "Northwind"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "project-relay",
+        "canonical_name": "Relay",
+        "type": "project",
+        "aliases": [
+          "Relay dispatch automation"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "account-anthropic",
+        "canonical_name": "Anthropic",
+        "type": "account",
+        "aliases": [],
+        "required": false
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Unnamed facilitator",
+        "type": null,
+        "reason": "placeholder for an unnamed speaker"
+      },
+      {
+        "name": "Recruiter",
+        "type": "person",
+        "reason": "job title used in place of a name"
+      },
+      {
+        "name": "the recruiter",
+        "type": "person",
+        "reason": "job title used in place of a name"
+      },
+      {
+        "name": "Partners",
+        "type": "person",
+        "reason": "generic group, not a person"
+      },
+      {
+        "name": "Partners",
+        "type": "team",
+        "reason": "generic group / program tier, not a team"
+      },
+      {
+        "name": "Anthropic",
+        "type": "team",
+        "reason": "external organization is never a team"
+      },
+      {
+        "name": "Anthropic partner team",
+        "type": "team",
+        "reason": "external organization is never a team"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": null,
+    "forbidden_signals": [],
+    "summary": null,
+    "profiles": null
+  }
+}

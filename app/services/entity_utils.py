@@ -63,6 +63,36 @@ def is_valid_entity_name(name: str) -> bool:
     return True
 
 
+# Unambiguous placeholders for someone/something unnamed. Deliberately narrow:
+# role nouns ("Recruiter") and generic groups ("Partners") are judgment calls
+# left to the entity_admission decision model (app/services/entity_admission.py),
+# since the same words can be real names.
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:"
+    r"(?:unnamed|unknown|unidentified|anonymous|unspecified)\b.*"
+    r"|(?:speaker|participant|attendee|caller|guest|user|person|voice)\s*[#-]?\s*(?:\d+|[a-z])"
+    r"|(?:someone|somebody|everyone|everybody|anyone|nobody|others?|they|we|you)"
+    r"|(?:other|another)\s+(?:speaker|participant|person|attendee)s?"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def is_placeholder_entity_name(name: str) -> bool:
+    """True for names that stand in for an unnamed party ("Unnamed
+    facilitator", "Speaker 2", "Participant B", "someone") or a lowercase
+    descriptive phrase ("the facilitator") rather than a proper name."""
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    if not stripped:
+        return False
+    if _PLACEHOLDER_RE.match(stripped):
+        return True
+    # Proper names are capitalised; "the recruiter" is a description.
+    return bool(re.match(r"^(?:the|a|an|our|their|his|her|my)\s", stripped))
+
+
 # Common entity type prefixes used throughout the system
 VALID_ENTITY_TYPES = {
     "person",

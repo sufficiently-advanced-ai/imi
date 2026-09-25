@@ -167,6 +167,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--label", help="label recorded in the run report filename")
     parser.add_argument(
+        "--decisions",
+        action="store_true",
+        help="entities task: also apply the entity_admission decision model (Jev)",
+    )
+    parser.add_argument(
         "--baseline", action="store_true", help="rewrite evals/baselines/baseline.json"
     )
     parser.add_argument(
@@ -182,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
         "--compare", nargs=2, metavar=("RUN_A", "RUN_B"), help="diff two run reports"
     )
     args = parser.parse_args(argv)
+    if args.decisions:
+        os.environ["EVAL_ENTITY_DECISIONS"] = "1"
 
     if args.tolerance is not None and args.tolerance < 0:
         print("ERROR: --tolerance must be non-negative", file=sys.stderr)
