@@ -167,6 +167,55 @@ class DomainAwareEntityProcessor:
         new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
         return f"---\n{new_frontmatter}---{body}"
 
+    def _drop_unknown_entity_ids(
+        self, profile_content: str, entity_id: str, domain_config: DomainConfiguration
+    ) -> str:
+        """Remove entity ids the model invented in frontmatter lists
+        (``projects: [project-brightspring-health-engagement]``). The graph
+        builder turns every referenced id into a stub node, so an id with no
+        entity file behind it becomes a junk stub named after its slug."""
+        if not profile_content.startswith("---"):
+            return profile_content
+        parts = profile_content.split("---", 2)
+        if len(parts) < 3:
+            return profile_content
+        try:
+            frontmatter = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            return profile_content
+        if not isinstance(frontmatter, dict):
+            return profile_content
+        types = sorted(domain_config.entities, key=len, reverse=True)
+
+        def known(value) -> bool:
+            if not isinstance(value, str):
+                return True
+            etype = next((t for t in types if value.startswith(f"{t}-")), None)
+            if etype is None or value == entity_id:
+                return True  # not an entity id (free text, dates, ...)
+            try:
+                return os.path.exists(self._get_entity_storage_path(etype, value, domain_config))
+            except ValueError:
+                return False
+
+        dropped = []
+        for key, value in list(frontmatter.items()):
+            if key in ("id", "aliases", "merged_ids"):
+                continue
+            if isinstance(value, list):
+                kept = [v for v in value if known(v)]
+                if len(kept) != len(value):
+                    dropped.extend(v for v in value if v not in kept)
+                    frontmatter[key] = kept
+            elif isinstance(value, str) and not known(value):
+                dropped.append(value)
+                frontmatter[key] = None
+        if not dropped:
+            return profile_content
+        logger.info("[PROFILE] %s: dropped unknown entity ids %s", entity_id, dropped)
+        new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        return f"---\n{new_frontmatter}---{parts[2]}"
+
     @staticmethod
     def _extract_section(body: str, header: str) -> str:
         idx = body.find(header)
@@ -596,6 +645,7 @@ Return the complete updated profile."""
         profile_content = self._preserve_bookkeeping(
             profile_content, context.get("attributes") or {}, context.get("content") or ""
         )
+        profile_content = self._drop_unknown_entity_ids(profile_content, entity_id, domain_config)
 
         # Save updated profile
         storage_path = self._get_entity_storage_path(

@@ -487,6 +487,11 @@ class EntityResolver:
         self._kg = knowledge_graph
         self._decisions = _default_decision_client() if decisions is _UNSET else decisions
         self._decided: dict[tuple[str, str], ResolvedEntity] = {}
+        # Mentions already put to the decision model. One resolver serves a
+        # whole ingest, so a mention is judged ONCE, with the fullest context
+        # available the first time it is seen — a later, thinner re-ask
+        # (e.g. without the evidence quote) must not override it.
+        self._asked: set[tuple[str, str]] = set()
         # Entities minted earlier in the same batch, not yet graph nodes.
         self._pending: dict[str, dict[str, dict]] = {}
 
@@ -549,11 +554,18 @@ class EntityResolver:
         entity_documents = getattr(self._kg, "entity_documents", None) or {}
         document_entities = getattr(self._kg, "document_entities", None) or {}
         nodes = getattr(self._kg, "nodes", None) or {}
+        total_docs = len(document_entities)
         counts: dict[str, int] = {}
         for doc in entity_documents.get(entity_id, ()):
             for other in document_entities.get(doc, ()):
-                if other != entity_id and other in nodes:
-                    counts[other] = counts.get(other, 0) + 1
+                if other == entity_id or other not in nodes:
+                    continue
+                # An entity present in most documents (the KB owner, who is in
+                # every one of their own meetings) links everyone to everyone
+                # and made unrelated namesakes look connected.
+                if total_docs >= 4 and len(entity_documents.get(other, ())) > total_docs / 2:
+                    continue
+                counts[other] = counts.get(other, 0) + 1
         ranked = sorted(counts, key=lambda o: (-counts[o], o))[:limit]
         return [getattr(nodes[o], "name", o) for o in ranked]
 
@@ -575,7 +587,7 @@ class EntityResolver:
         for m in mentions:
             etype, name = (m.get("type") or "").strip(), (m.get("name") or "").strip()
             key = (etype, name)
-            if not etype or not name or key in seen or key in self._decided:
+            if not etype or not name or key in seen or key in self._decided or key in self._asked:
                 continue
             seen.add(key)
             if etype not in by_type:
@@ -590,6 +602,7 @@ class EntityResolver:
             mention = {**m, "type": etype, "name": name}
             if meeting:
                 mention["meeting"] = meeting
+            self._asked.add(key)
             jobs.append(self._tiebreak(client, mode, mention, heuristic, zone))
         if not jobs:
             return 0

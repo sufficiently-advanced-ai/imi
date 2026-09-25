@@ -813,3 +813,23 @@ class TestDeleteEdgeTool:
 
         assert result.success is False
         assert "not found" in result.error
+
+
+@pytest.mark.asyncio
+async def test_upgrade_entity_name_updates_node_cache_and_file(graph, mock_neo4j, tmp_path):
+    (tmp_path / "people").mkdir()
+    (tmp_path / "people" / "ankit.md").write_text("---\nid: person-ankit\nname: Ankit\n---\n# Ankit\n")
+    graph._git_ops.repo_path = str(tmp_path)
+    graph._git_ops.commit_and_push = AsyncMock()
+    graph.nodes["person-ankit"] = GraphNode(id="person-ankit", name="Ankit", type="person", metadata={})
+    mock_neo4j.execute_read = AsyncMock(return_value=[
+        {"n": {"id": "person-ankit", "name": "Ankit", "entity_type": "person", "updated_at": "x"}}])
+    mock_neo4j.execute_write = AsyncMock(return_value=[])
+
+    assert await graph.upgrade_entity_name("person-ankit", "Ankit Patel")
+
+    params = mock_neo4j.execute_write.call_args.args[1]
+    assert params["name"] == "Ankit Patel" and params["aliases"] == ["Ankit"]
+    assert graph.nodes["person-ankit"].name == "Ankit Patel"
+    text = (tmp_path / "people" / "ankit.md").read_text()
+    assert "name: Ankit Patel" in text and "- Ankit\n" in text

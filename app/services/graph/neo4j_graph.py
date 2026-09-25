@@ -3084,6 +3084,39 @@ class Neo4jKnowledgeGraph:
             "signal_files_rewritten": signal_files_rewritten,
         }
 
+    async def upgrade_entity_name(self, entity_id: str, new_name: str) -> bool:
+        """Adopt a more complete display name for an existing entity
+        ("Ankit" -> "Ankit Patel"), keeping the old name as an alias. The id
+        is unchanged. Node, cache and file frontmatter are all updated."""
+        node = self.nodes.get(entity_id)
+        entity = await self.get_entity_by_id(entity_id)
+        if not entity or not new_name or not new_name.strip():
+            return False
+        old_name = entity.get("name", "")
+        if old_name.strip().lower() == new_name.strip().lower():
+            return False
+        aliases = entity.get("metadata", {}).get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        aliases = [a for a in aliases if a.strip().lower() != new_name.strip().lower()]
+        if old_name and old_name not in aliases:
+            aliases.append(old_name)
+        await self.neo4j.execute_write(
+            "MATCH (n:Entity {id: $id}) SET n.name = $name, n.canonical_name = $canonical, "
+            "n.aliases = $aliases, n.updated_at = $now",
+            {"id": entity_id, "name": new_name, "canonical": new_name.lower().strip(),
+             "aliases": aliases, "now": datetime.utcnow().isoformat()},
+        )
+        if node is not None:
+            node.name = new_name
+            node.metadata["aliases"] = aliases
+        await self._update_entity_frontmatter(
+            entity_id,
+            {"name": new_name, "canonical_name": new_name.lower().strip(), "aliases": aliases},
+        )
+        logger.info("Upgraded entity name %s: %r -> %r", entity_id, old_name, new_name)
+        return True
+
     async def _update_entity_frontmatter(self, entity_id: str, updates: dict[str, Any]) -> bool:
         """Write-through: patch keys into an entity file's frontmatter."""
         try:

@@ -161,3 +161,21 @@ def test_profile_prompts_forbid_inferring_gender():
     for t in ("person", "project", "team"):
         text = Path(f"app/prompts/{t}_update.xml").read_text()
         assert "Never infer anyone's gender" in text and "code fences" in text
+
+
+def test_invented_entity_ids_are_dropped_from_profile_frontmatter(tmp_path):
+    proc = DomainAwareEntityProcessor.__new__(DomainAwareEntityProcessor)
+    proc.git_ops = SimpleNamespace(repo_path=str(tmp_path))
+    domain = SimpleNamespace(entities={
+        "person": SimpleNamespace(plural="people"), "project": SimpleNamespace(plural="projects")})
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "projects" / "rally.md").write_text("---\nid: project-rally\n---\n")
+    generated = ("---\nname: Jenny\nprojects:\n- project-rally\n- project-brightspring-health-engagement\n"
+                 "last_seen: '2026-08-04'\n---\n# Jenny\n")
+
+    out = proc._drop_unknown_entity_ids(generated, "person-jenny", domain)
+
+    import yaml
+    fm = yaml.safe_load(out.split("---", 2)[1])
+    assert fm["projects"] == ["project-rally"]
+    assert fm["last_seen"] == "2026-08-04" and fm["name"] == "Jenny"

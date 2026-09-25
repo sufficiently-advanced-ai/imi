@@ -228,3 +228,89 @@ def test_salient_prompt_renders_type_descriptions():
     assert "- account: An external organization" in prompt
     assert "- team\n" in prompt or prompt.rstrip().endswith("- team")
     assert "never a team" in prompt
+
+
+# --- iteration 2: one tiebreak per mention, co-mention noise, name upgrade ---
+
+
+class _TiebreakFake:
+    """Answers 'none' when the evidence quote is present, else merges."""
+
+    def __init__(self):
+        self.calls = []
+
+    def mode(self, operation):
+        return "on"
+
+    async def decide(self, state, questions, *, operation):
+        self.calls.append(state)
+        label = "none" if state["mention"].get("evidence") else "c1"
+        answer = ChoiceAnswer(choice=label, probabilities={label: 0.9}, confidence=0.9)
+        return DecisionResult({"match": answer}, "jev", "fake", 0, 0, 0.0, 0, {})
+
+
+@pytest.mark.asyncio
+async def test_a_mention_is_judged_once_per_resolver():
+    """The Brian case: the evidence-bearing first ask said none; a later
+    thinner re-ask must not get to override it with a merge."""
+    from app.services.entity_resolver import EntityResolver
+
+    kg = SimpleNamespace(nodes={"person-brian": SimpleNamespace(
+        id="person-brian", name="Brian", type="person", metadata={})})
+    fake = _TiebreakFake()
+    r = EntityResolver(kg, decisions=fake)
+    await r.prefetch([{"type": "person", "name": "Brian Vigilani", "evidence": "Brian Vigilani from Foley"}])
+    await r.prefetch([{"type": "person", "name": "Brian Vigilani"}])
+    assert len(fake.calls) == 1
+    assert r.resolve("person", "Brian Vigilani").id == "person-brian-vigilani"
+
+
+def test_ubiquitous_entities_are_not_co_mention_evidence():
+    from app.services.entity_resolver import EntityResolver
+
+    names = {"person-brian": "Brian", "person-scott": "Scott Jennings", "person-ann": "Ann"}
+    nodes = {i: SimpleNamespace(id=i, name=n, type="person", metadata={}) for i, n in names.items()}
+    docs = {f"doc:{i}": {"person-scott"} for i in range(5)}
+    docs["doc:0"] |= {"person-brian", "person-ann"}
+    ent_docs = {}
+    for d, ents in docs.items():
+        for e in ents:
+            ent_docs.setdefault(e, set()).add(d)
+    kg = SimpleNamespace(nodes=nodes, entity_documents=ent_docs, document_entities=docs)
+    brian = next(c for c in EntityResolver(kg, decisions=None)._candidates("person") if c["id"] == "person-brian")
+    # Scott is in all 5 meetings -> not evidence; Ann shares a meeting -> is.
+    assert brian["context"]["co_mentioned_with"] == ["Ann"]
+
+
+def test_fuller_name_detection():
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator as IO
+
+    assert IO._is_fuller_name("Ankit Patel", "Ankit", "person")
+    assert not IO._is_fuller_name("Ankit", "Ankit Patel", "person")
+    assert not IO._is_fuller_name("Brian Vigilani", "Bryan", "person")
+    assert not IO._is_fuller_name("Dan Kauppi", "Dan Kauppi", "person")
+
+
+@pytest.mark.asyncio
+async def test_resolving_a_fuller_name_upgrades_the_entity(monkeypatch):
+    import app.services.entity_resolver as er
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator
+
+    monkeypatch.setattr(er, "_default_decision_client", lambda: None)
+    graph = _Graph(existing=[("person-ankit", "Ankit", "person")])
+    graph.nodes["person-ankit"].metadata = {"aliases": ["Ankit Patel"]}  # alias -> resolves
+    upgrades = []
+
+    async def upgrade(eid, name):
+        upgrades.append((eid, name))
+        return True
+
+    graph.upgrade_entity_name = upgrade
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = graph
+    resolved, id_map = await orch._resolve_collected_entities(
+        [{"id": "person-ankit-patel", "name": "Ankit Patel", "type": "person"}]
+    )
+    assert upgrades == [("person-ankit", "Ankit Patel")]
+    assert resolved == [{"id": "person-ankit", "name": "Ankit Patel", "type": "person"}]
+    assert id_map == {"person-ankit-patel": "person-ankit"}

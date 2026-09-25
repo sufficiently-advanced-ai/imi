@@ -582,7 +582,6 @@ class IngestOrchestrator(BaseOrchestrator):
             return 0
 
         try:
-            from app.services.entity_resolver import EntityResolver
             from app.services.entity_utils import SYSTEM_ENTITY_TYPES, get_active_entity_types
             from app.services.salient_entity_extractor import (
                 extract_salient_entities,
@@ -622,9 +621,11 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
                 return 0
 
-            resolver = EntityResolver(knowledge_graph=self._graph)
+            resolver = self._resolver_for(observation)
             # Decision-model tiebreak for near-miss names, batched before the
-            # synchronous promotion pass so it reads cached outcomes.
+            # synchronous promotion pass so it reads cached outcomes. This is
+            # the fullest context a mention ever gets (evidence quote, role,
+            # the meeting), and the shared resolver never re-asks it later.
             await resolver.prefetch(
                 [
                     {
@@ -635,7 +636,8 @@ class IngestOrchestrator(BaseOrchestrator):
                         "aliases_heard": e.get("aliases_heard"),
                     }
                     for e in labeled
-                ]
+                ],
+                meeting=self._meeting_context(observation),
             )
             promoted = filter_salient_entities(labeled, resolver)
             mentioned = to_entities_mentioned(promoted)
@@ -743,12 +745,9 @@ class IngestOrchestrator(BaseOrchestrator):
             entities, id_map = await self._resolve_collected_entities(
                 entities,
                 participants=observation.participants if observation else None,
-                meeting={
-                    "title": getattr(observation, "title", None),
-                    "participants": sorted(getattr(observation, "participants", None) or []),
-                }
-                if observation is not None
-                else None,
+                meeting=self._meeting_context(observation),
+                resolver=self._resolver_for(observation, release=True),
+                evidence=self._salient_evidence(observation),
             )
 
             # Decision-model admission for entities that would be NEW nodes:
@@ -861,6 +860,8 @@ class IngestOrchestrator(BaseOrchestrator):
         entities: list[dict],
         participants: list[str] | None = None,
         meeting: dict | None = None,
+        resolver=None,
+        evidence: dict | None = None,
     ) -> tuple[list[dict], dict[str, str]]:
         """Resolve each (type, name) against existing graph entities and
         against the entities minted earlier in this same batch.
@@ -882,8 +883,15 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception:  # pragma: no cover - packaging error
             return entities, {}
 
-        resolver = EntityResolver(knowledge_graph=self._graph)
-        await resolver.prefetch(entities, meeting=meeting)
+        if resolver is None:
+            resolver = EntityResolver(knowledge_graph=self._graph)
+        # Mentions first seen here (signal refs/owners) still get the salient
+        # evidence quote when one exists for the same (type, name).
+        evidence = evidence or {}
+        await resolver.prefetch(
+            [{**evidence.get((e.get("type"), e.get("name")), {}), **e} for e in entities],
+            meeting=meeting,
+        )
         id_map: dict[str, str] = {}
         resolved_entities: list[dict] = []
         seen_ids: set[str] = set()
@@ -915,6 +923,22 @@ class IngestOrchestrator(BaseOrchestrator):
                 resolved_entities.append(entity)
                 continue
             new_id = resolved.id or eid
+            # A more complete surface form resolved onto an existing entity
+            # with a shorter name ("Ankit Patel" -> person-ankit "Ankit"):
+            # adopt the fuller name so the merged entity reads correctly.
+            if (
+                resolved.matched_via != "new"
+                and self._is_fuller_name(lookup, resolved.canonical_name, etype)
+                and hasattr(self._graph, "upgrade_entity_name")
+            ):
+                try:
+                    if await self._graph.upgrade_entity_name(new_id, lookup):
+                        resolved = type(resolved)(
+                            id=new_id, canonical_name=lookup,
+                            matched_via=resolved.matched_via, score=resolved.score,
+                        )
+                except Exception as e:
+                    logger.warning("[INGEST] Name upgrade failed for %s: %s", new_id, e)
             if eid and new_id != eid:
                 id_map[eid] = new_id
                 logger.info(
@@ -934,6 +958,53 @@ class IngestOrchestrator(BaseOrchestrator):
                 updated["name"] = resolved.canonical_name
             resolved_entities.append(updated)
         return resolved_entities, id_map
+
+    @staticmethod
+    def _is_fuller_name(candidate: str, current: str, entity_type: str) -> bool:
+        """True when ``candidate`` contains every word of ``current`` plus
+        more ("Ankit Patel" vs "Ankit") — a strict refinement, never a
+        different name."""
+        from app.services.entity_resolver import normalize_entity_name
+
+        cand = normalize_entity_name(candidate or "", entity_type).split()
+        cur = normalize_entity_name(current or "", entity_type).split()
+        return bool(cur) and len(cand) > len(cur) and all(w in cand for w in cur)
+
+    def _resolver_for(self, observation, release: bool = False):
+        """The EntityResolver shared by one ingest's EXTRACT_ENTITIES and
+        ENRICH_GRAPH phases, so each mention is put to the decision model
+        once. ``release`` hands it over for the last time and forgets it."""
+        from app.services.entity_resolver import EntityResolver
+
+        store = self.__dict__.setdefault("_run_resolvers", {})
+        key = getattr(observation, "external_id", None) or id(observation)
+        resolver = store.pop(key, None) if release else store.get(key)
+        if resolver is None:
+            resolver = EntityResolver(knowledge_graph=self._graph)
+            if not release:
+                store[key] = resolver
+        return resolver
+
+    @staticmethod
+    def _meeting_context(observation) -> dict | None:
+        if observation is None:
+            return None
+        return {
+            "title": getattr(observation, "title", None),
+            "participants": sorted(getattr(observation, "participants", None) or []),
+        }
+
+    @staticmethod
+    def _salient_evidence(observation) -> dict:
+        """(type, canonical name) -> {evidence, role, aliases_heard} from
+        the salient extraction, for mentions resolved later in the run."""
+        out = {}
+        for e in (getattr(observation, "metadata", None) or {}).get("salient_entities", []) or []:
+            if isinstance(e, dict) and e.get("canonical_name"):
+                out[(e.get("type"), e["canonical_name"])] = {
+                    k: e[k] for k in ("evidence", "role", "aliases_heard") if e.get(k)
+                }
+        return out
 
     @staticmethod
     def _entity_type_descriptions() -> dict[str, str]:
