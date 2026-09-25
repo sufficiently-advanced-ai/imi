@@ -57,16 +57,6 @@ class EntitySuggestionRequest(BaseModel):
     text: str = Field(..., description="Text to analyze for entity suggestions")
 
 
-class MergeEntitiesRequest(BaseModel):
-    """Request model for merging entities"""
-
-    entity_id_1: str = Field(..., description="First entity ID")
-    entity_id_2: str = Field(..., description="Second entity ID")
-    canonical_name: str | None = Field(
-        default=None, description="Preferred canonical name"
-    )
-
-
 class ValidateEntityRequest(BaseModel):
     """Request model for entity validation"""
 
@@ -205,25 +195,10 @@ async def suggest_entities_registry(
     }
 
 
-@router.put("/api/entities/registry/merge")
-async def merge_entities_registry(
-    request: MergeEntitiesRequest, registry: EntityRepository = Depends(get_registry)
-):
-    """Merge two entities into one (legacy endpoint)"""
-    try:
-        merged_id = registry.merge_entities(
-            request.entity_id_1,
-            request.entity_id_2,
-            canonical_name=request.canonical_name,
-        )
-
-        return {
-            "merged_entity_id": merged_id,
-            "canonical_name": request.canonical_name
-            or registry.get_canonical_entity(merged_id).canonical_name,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# Entity merges go through the graph: POST /api/entities/{id}/merge
+# (entity_management.merge_entities -> Neo4jKnowledgeGraph.merge_nodes). The
+# registry-backed merge endpoints were removed: EntityRepository has no
+# merge_entities, so they could only fail.
 
 
 @router.post("/api/entities/registry/validate")

@@ -419,14 +419,10 @@ async def test_merge_nodes_primary_wins(graph, mock_neo4j):
         # Duplicate exists
         [{"n": {"id": "person-alice-smith", "name": "Alice Smith", "entity_type": "person",
                 "role": "Manager", "department": "Engineering", "updated_at": "2026-01-01"}}],
-        # Relationship count
-        [{"rel_count": 1}],
         # Outgoing rels
         [],
         # Incoming rels
         [],
-        # Aliases
-        [{"aliases": None}],
     ])
     mock_neo4j.execute_write = AsyncMock(return_value=[])
     graph.nodes["person-alice"] = GraphNode(
@@ -445,7 +441,8 @@ async def test_merge_nodes_primary_wins(graph, mock_neo4j):
     )
 
     assert result["id"] == "person-alice"
-    assert "person-alice-smith" in result["aliases"]
+    assert "Alice Smith" in result["aliases"]
+    assert "person-alice-smith" in result["merged_ids"]
     # Primary's role should win
     assert result["properties"]["role"] == "Director"
     # Duplicate's unique fields should be preserved
@@ -461,10 +458,8 @@ async def test_merge_nodes_duplicate_wins(graph, mock_neo4j):
                 "role": "Director", "updated_at": "2026-01-01"}}],
         [{"n": {"id": "person-alice-smith", "name": "Alice Smith", "entity_type": "person",
                 "role": "VP", "updated_at": "2026-01-01"}}],
-        [{"rel_count": 0}],
         [],
         [],
-        [{"aliases": None}],
     ])
     mock_neo4j.execute_write = AsyncMock(return_value=[])
     graph.nodes["person-alice"] = GraphNode(
@@ -493,10 +488,8 @@ async def test_merge_nodes_merge_all(graph, mock_neo4j):
                 "role": "Director", "updated_at": "2026-01-01"}}],
         [{"n": {"id": "person-alice-smith", "name": "Alice Smith", "entity_type": "person",
                 "role": "Manager", "department": "Sales", "updated_at": "2026-01-01"}}],
-        [{"rel_count": 0}],
         [],
         [],
-        [{"aliases": None}],
     ])
     mock_neo4j.execute_write = AsyncMock(return_value=[])
     graph.nodes["person-alice"] = GraphNode(
@@ -523,15 +516,15 @@ async def test_merge_nodes_merge_all(graph, mock_neo4j):
 
 @pytest.mark.asyncio
 async def test_merge_nodes_tracks_alias(graph, mock_neo4j):
-    """Alias array should contain the duplicate ID."""
+    """Aliases record the duplicate's NAME (+ its aliases); its id goes to
+    merged_ids. Id-aliases never match a surface form in the resolver."""
     mock_neo4j.execute_read = AsyncMock(side_effect=[
-        [{"n": {"id": "person-alice", "name": "Alice", "entity_type": "person", "updated_at": "2026-01-01"}}],
-        [{"n": {"id": "person-al", "name": "Al", "entity_type": "person", "updated_at": "2026-01-01"}}],
-        [{"rel_count": 0}],
+        [{"n": {"id": "person-alice", "name": "Alice", "entity_type": "person",
+                "aliases": ["Ally"], "updated_at": "2026-01-01"}}],
+        [{"n": {"id": "person-al", "name": "Al", "entity_type": "person",
+                "aliases": ["Alfie"], "updated_at": "2026-01-01"}}],
         [],
         [],
-        # Existing aliases
-        [{"aliases": ["person-old-alias"]}],
     ])
     mock_neo4j.execute_write = AsyncMock(return_value=[])
     graph.nodes["person-alice"] = GraphNode(id="person-alice", name="Alice", type="person")
@@ -542,10 +535,116 @@ async def test_merge_nodes_tracks_alias(graph, mock_neo4j):
         duplicate_id="person-al",
     )
 
-    assert "person-al" in result["aliases"]
-    assert "person-old-alias" in result["aliases"]
+    assert result["aliases"] == ["Ally", "Al", "Alfie"]
+    assert result["merged_ids"] == ["person-al"]
 
 
+
+
+def _merge_reads(primary: dict, duplicate: dict, outgoing=(), incoming=()):
+    return AsyncMock(side_effect=[
+        [{"n": {"entity_type": "person", "updated_at": "2026-01-01", **primary}}],
+        [{"n": {"entity_type": "person", "updated_at": "2026-01-01", **duplicate}}],
+        list(outgoing),
+        list(incoming),
+    ])
+
+
+@pytest.mark.asyncio
+async def test_merge_nodes_moves_signal_and_document_edges(graph, mock_neo4j):
+    """Edges to non-Entity nodes (Signal MENTIONS/ASSIGNED_TO, Document
+    MENTIONED_IN) move to the primary instead of dying with DETACH DELETE,
+    and relationships_transferred counts what actually moved."""
+    mock_neo4j.execute_read = _merge_reads(
+        {"id": "person-ankit-patel", "name": "Ankit Patel"},
+        {"id": "person-ankit", "name": "Ankit"},
+        outgoing=[{"other": "4:doc:1", "rel_type": "MENTIONED_IN", "props": {}}],
+        incoming=[
+            {"other": "4:sig:1", "rel_type": "MENTIONS", "props": {"entity_role": "subject"}},
+            {"other": "4:sig:2", "rel_type": "ASSIGNED_TO", "props": {}},
+        ],
+    )
+    mock_neo4j.execute_write = AsyncMock(return_value=[])
+
+    result = await graph.merge_nodes("person-ankit-patel", "person-ankit")
+
+    assert result["relationships_transferred"] == 3
+    writes = [(c.args[0], c.args[1]) for c in mock_neo4j.execute_write.call_args_list]
+    moved = [(q, p) for q, p in writes if "elementId(o)" in q]
+    assert [p["other"] for _, p in moved] == ["4:doc:1", "4:sig:1", "4:sig:2"]
+    assert "MERGE (p)-[r:MENTIONED_IN]->(o)" in moved[0][0]
+    assert "MERGE (o)-[r:MENTIONS]->(p)" in moved[1][0]
+    assert moved[1][1]["props"]["entity_role"] == "subject"
+    # Signals scoped by property are re-pointed too
+    assert any("s.client_id = $primary_id" in q for q, _ in writes)
+
+
+@pytest.mark.asyncio
+async def test_merge_nodes_never_inherits_source_file(graph, mock_neo4j):
+    mock_neo4j.execute_read = _merge_reads(
+        {"id": "person-ankit-patel", "name": "Ankit Patel"},
+        {"id": "person-ankit", "name": "Ankit", "source_file": "people/ankit.md", "stub": False},
+    )
+    mock_neo4j.execute_write = AsyncMock(return_value=[])
+
+    result = await graph.merge_nodes("person-ankit-patel", "person-ankit", strategy="duplicate_wins")
+
+    assert "source_file" not in result["properties"]
+    update = next(
+        c.args[1]["props"] for c in mock_neo4j.execute_write.call_args_list
+        if c.args[0].startswith("MATCH (n:Entity {id: $id}) SET n += $props")
+    )
+    assert "source_file" not in update and "stub" not in update
+
+
+@pytest.mark.asyncio
+async def test_merge_nodes_brings_files_in_line(graph, mock_neo4j, tmp_path):
+    """Write-through: duplicate file archived, primary frontmatter gets the
+    name alias + merged id, signal JSON re-pointed (id AND display name) so a
+    rebuild from files reproduces the merge."""
+    from app.models.signal import EntityRef, MeetingSignals, Signal
+
+    (tmp_path / "people").mkdir()
+    (tmp_path / "people" / "ankit.md").write_text("---\nid: person-ankit\nname: Ankit\n---\n# Ankit\n")
+    (tmp_path / "people" / "ankit-patel.md").write_text(
+        "---\nid: person-ankit-patel\nname: Ankit Patel\n---\n# Ankit Patel\n"
+    )
+    (tmp_path / "signals").mkdir()
+    ms = MeetingSignals(meeting_id="m1", bot_id="b1", signals=[
+        Signal(id="s1", type="insight", content="Ankit prunes task files",
+               source_meeting_id="b1", source_timestamp="2026-06-02T10:00:00+00:00",
+               entities=[EntityRef(id="person-ankit", type="person", name="Ankit")],
+               owner=EntityRef(id="person-ankit", type="person", name="Ankit")),
+    ])
+    (tmp_path / "signals" / "meeting-b1.json").write_text(ms.model_dump_json())
+    graph._git_ops.repo_path = str(tmp_path)
+    graph._git_ops.commit_and_push = AsyncMock()
+    mock_neo4j.execute_read = _merge_reads(
+        {"id": "person-ankit-patel", "name": "Ankit Patel"},
+        {"id": "person-ankit", "name": "Ankit"},
+    )
+    mock_neo4j.execute_write = AsyncMock(return_value=[])
+
+    result = await graph.merge_nodes("person-ankit-patel", "person-ankit")
+
+    assert result["duplicate_file_archived"] is True
+    assert result["signal_files_rewritten"] == ["signals/meeting-b1.json"]
+    assert "is_archived: true" in (tmp_path / "people" / "ankit.md").read_text()
+    primary_fm = (tmp_path / "people" / "ankit-patel.md").read_text()
+    assert "- Ankit\n" in primary_fm and "- person-ankit\n" in primary_fm
+    sig = MeetingSignals.model_validate_json(
+        (tmp_path / "signals" / "meeting-b1.json").read_text()
+    ).signals[0]
+    assert [(e.id, e.name) for e in sig.entities] == [("person-ankit-patel", "Ankit Patel")]
+    assert (sig.owner.id, sig.owner.name) == ("person-ankit-patel", "Ankit Patel")
+
+
+def test_resolver_treats_merged_ids_as_identity():
+    from app.services.entity_resolver import resolve_against
+
+    candidates = [{"id": "person-ankit-patel", "name": "Ankit Patel",
+                   "aliases": ["Ankit"], "merged_ids": ["person-ankit"]}]
+    assert resolve_against("person", "Ankit", candidates).id == "person-ankit-patel"
 
 
 @pytest.mark.asyncio

@@ -671,8 +671,15 @@ class MergeNodesTool(AgentTool):
                     "type": "array",
                     "items": {"type": "string"},
                 },
+                "merged_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "duplicate_file_archived": {"type": "boolean"},
-                "duplicate_source_file": {"type": "string"},
+                "signal_files_rewritten": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
             },
         }
 
@@ -687,12 +694,8 @@ class MergeNodesTool(AgentTool):
 
             graph = _get_graph_service()
 
-            # Archive duplicate's source file BEFORE merge removes it
-            archive_result = await _archive_source_file(
-                graph, duplicate_id, self.git_ops,
-                reason=f"merged_into_{primary_id}",
-            )
-
+            # merge_nodes archives the duplicate's file, updates the primary's
+            # frontmatter and rewrites signal files itself (write-through).
             merged = await graph.merge_nodes(
                 primary_id=primary_id,
                 duplicate_id=duplicate_id,
@@ -711,8 +714,9 @@ class MergeNodesTool(AgentTool):
                     },
                     "relationships_transferred": merged["relationships_transferred"],
                     "aliases": merged["aliases"],
-                    "duplicate_file_archived": archive_result.get("file_archived", False),
-                    "duplicate_source_file": archive_result.get("source_file"),
+                    "merged_ids": merged.get("merged_ids", []),
+                    "duplicate_file_archived": merged.get("duplicate_file_archived", False),
+                    "signal_files_rewritten": merged.get("signal_files_rewritten", []),
                 },
                 execution_time_ms=execution_time_ms,
             )

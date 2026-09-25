@@ -119,6 +119,15 @@ def build_node_properties(
         if cleaned:
             properties["aliases"] = cleaned
 
+    # Ids of entities merged into this one (graph merge write-through); the
+    # resolver treats them as extra identities so a merged-away slug resolves
+    # here instead of being minted again.
+    merged_ids = metadata.get("merged_ids")
+    if isinstance(merged_ids, list):
+        cleaned_ids = [m.strip() for m in merged_ids if isinstance(m, str) and m.strip()]
+        if cleaned_ids:
+            properties["merged_ids"] = cleaned_ids
+
     return properties
 
 

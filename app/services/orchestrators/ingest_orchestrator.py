@@ -733,8 +733,14 @@ class IngestOrchestrator(BaseOrchestrator):
             entities, id_map = await self._resolve_collected_entities(
                 entities, participants=observation.participants if observation else None
             )
-            if id_map and meeting_signals:
-                self._remap_signal_entity_ids(meeting_signals, id_map)
+            if meeting_signals:
+                # Ids AND names: a ref resolved "Paul" -> person-paul-evers
+                # should read "Paul Evers" in the signal file and delta.
+                self._remap_signal_entity_ids(
+                    meeting_signals,
+                    id_map,
+                    {e["id"]: e["name"] for e in entities if e.get("id") and e.get("name")},
+                )
 
             logger.info(
                 f"[INGEST] Collected {len(entities)} domain entities for relationship inference"
@@ -894,16 +900,13 @@ class IngestOrchestrator(BaseOrchestrator):
         return resolved_entities, id_map
 
     @staticmethod
-    def _remap_signal_entity_ids(meeting_signals, id_map: dict[str, str]) -> None:
-        """Rewrite signal EntityRef ids that were remapped by resolution."""
-        for sig in meeting_signals.signals:
-            for ref in sig.entities:
-                if ref.id in id_map:
-                    ref.id = id_map[ref.id]
-            if sig.owner and sig.owner.id in id_map:
-                sig.owner.id = id_map[sig.owner.id]
-            if sig.client_id and sig.client_id in id_map:
-                sig.client_id = id_map[sig.client_id]
+    def _remap_signal_entity_ids(
+        meeting_signals, id_map: dict[str, str], names: dict[str, str] | None = None
+    ) -> None:
+        """Rewrite signal EntityRefs after resolution: ids and display names."""
+        from app.services.signal_store import remap_entity_refs
+
+        remap_entity_refs(meeting_signals, id_map, names)
 
     @staticmethod
     def _collect_entities(meeting_signals, observation) -> list[dict]:

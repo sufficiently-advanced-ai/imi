@@ -2886,71 +2886,58 @@ class Neo4jKnowledgeGraph:
         if not duplicate:
             raise ValueError(f"Duplicate node '{duplicate_id}' not found")
 
-        # Count relationships on duplicate
-        rel_count_query = (
-            "MATCH (n:Entity {id: $id})-[r]-() "
-            "RETURN count(r) AS rel_count"
-        )
-        rel_results = await self.neo4j.execute_read(
-            rel_count_query, {"id": duplicate_id}
-        )
-        relationships_transferred = rel_results[0]["rel_count"] if rel_results else 0
+        # Transfer every relationship on the duplicate, whatever the label of
+        # the node at the other end: Signal edges (MENTIONS / ASSIGNED_TO /
+        # FOR_CLIENT) and Document edges (MENTIONED_IN) as well as
+        # Entity->Entity ones — DETACH DELETE below drops anything left. The
+        # far node is addressed by elementId since Signals/Documents are not
+        # :Entity. Edges between primary and duplicate are dropped (they would
+        # become self-loops).
+        relationships_transferred = 0
+        for direction in ("out", "in"):
+            pattern = (
+                "(dup:Entity {id: $dup_id})-[r]->(other)"
+                if direction == "out"
+                else "(other)-[r]->(dup:Entity {id: $dup_id})"
+            )
+            rels = await self.neo4j.execute_read(
+                f"MATCH {pattern} "
+                "WHERE coalesce(other.id, '') <> $primary_id "
+                "RETURN elementId(other) AS other, type(r) AS rel_type, properties(r) AS props",
+                {"dup_id": duplicate_id, "primary_id": primary_id},
+            )
+            for rel in rels:
+                rel_props = rel.get("props", {}) or {}
+                rel_props.pop("updated_at", None)
+                safe_rel_props = serialize_metadata_for_neo4j(rel_props)
+                safe_rel_props["updated_at"] = datetime.utcnow().isoformat()
+                edge = (
+                    f"(p)-[r:{rel['rel_type']}]->(o)"
+                    if direction == "out"
+                    else f"(o)-[r:{rel['rel_type']}]->(p)"
+                )
+                await self.neo4j.execute_write(
+                    "MATCH (p:Entity {id: $primary_id}) "
+                    "MATCH (o) WHERE elementId(o) = $other "
+                    f"MERGE {edge} SET r += $props",
+                    {"primary_id": primary_id, "other": rel["other"], "props": safe_rel_props},
+                )
+                relationships_transferred += 1
 
-        # Transfer all outgoing relationships from duplicate to primary.
-        # We read each relationship and recreate it on the primary node
-        # (avoids APOC dependency).
-        outgoing_query = (
-            "MATCH (dup:Entity {id: $dup_id})-[r]->(target:Entity) "
-            "WHERE target.id <> $primary_id "
-            "RETURN target.id AS target_id, type(r) AS rel_type, properties(r) AS props"
+        # Signals scoped to the duplicate by property (not only by edge).
+        await self.neo4j.execute_write(
+            "MATCH (s:Signal {client_id: $dup_id}) SET s.client_id = $primary_id",
+            {"dup_id": duplicate_id, "primary_id": primary_id},
         )
-        outgoing = await self.neo4j.execute_read(
-            outgoing_query, {"dup_id": duplicate_id, "primary_id": primary_id}
-        )
-        for rel in outgoing:
-            rel_props = rel.get("props", {}) or {}
-            rel_props.pop("updated_at", None)
-            safe_rel_props = serialize_metadata_for_neo4j(rel_props)
-            safe_rel_props["updated_at"] = datetime.utcnow().isoformat()
-            merge_query = (
-                f"MATCH (a:Entity {{id: $source}}) "
-                f"MATCH (b:Entity {{id: $target}}) "
-                f"MERGE (a)-[r:{rel['rel_type']}]->(b) "
-                f"SET r += $props"
-            )
-            await self.neo4j.execute_write(
-                merge_query,
-                {"source": primary_id, "target": rel["target_id"], "props": safe_rel_props},
-            )
 
-        # Transfer all incoming relationships from duplicate to primary
-        incoming_query = (
-            "MATCH (source:Entity)-[r]->(dup:Entity {id: $dup_id}) "
-            "WHERE source.id <> $primary_id "
-            "RETURN source.id AS source_id, type(r) AS rel_type, properties(r) AS props"
-        )
-        incoming = await self.neo4j.execute_read(
-            incoming_query, {"dup_id": duplicate_id, "primary_id": primary_id}
-        )
-        for rel in incoming:
-            rel_props = rel.get("props", {}) or {}
-            rel_props.pop("updated_at", None)
-            safe_rel_props = serialize_metadata_for_neo4j(rel_props)
-            safe_rel_props["updated_at"] = datetime.utcnow().isoformat()
-            merge_query = (
-                f"MATCH (a:Entity {{id: $source}}) "
-                f"MATCH (b:Entity {{id: $target}}) "
-                f"MERGE (a)-[r:{rel['rel_type']}]->(b) "
-                f"SET r += $props"
-            )
-            await self.neo4j.execute_write(
-                merge_query,
-                {"source": rel["source_id"], "target": primary_id, "props": safe_rel_props},
-            )
-
-        # Merge properties based on strategy
-        dup_props = duplicate.get("metadata", {})
-        primary_props = primary.get("metadata", {})
+        # Merge properties based on strategy. Identity/bookkeeping keys are
+        # never taken from the duplicate: inheriting its source_file would
+        # point later file edits of the primary at the archived duplicate.
+        identity_keys = {"source_file", "stub", "aliases", "merged_ids"}
+        dup_props = {
+            k: v for k, v in (duplicate.get("metadata") or {}).items() if k not in identity_keys
+        }
+        primary_props = dict(primary.get("metadata") or {})
         if strategy == "duplicate_wins":
             merged_props = {**primary_props, **dup_props}
         elif strategy == "merge_all":
@@ -2974,25 +2961,44 @@ class Neo4jKnowledgeGraph:
             # primary_wins: primary props take precedence
             merged_props = {**dup_props, **primary_props}
 
-        # Track alias
-        aliases_query = (
-            "MATCH (n:Entity {id: $id}) "
-            "RETURN n.aliases AS aliases"
-        )
-        alias_results = await self.neo4j.execute_read(
-            aliases_query, {"id": primary_id}
-        )
-        existing_aliases = []
-        if alias_results and alias_results[0].get("aliases"):
-            existing_aliases = alias_results[0]["aliases"]
-            if isinstance(existing_aliases, str):
-                existing_aliases = [existing_aliases]
+        # Aliases are surface forms the resolver matches names against, so
+        # record the duplicate's NAME (and its own aliases), not its id. The
+        # id goes to merged_ids, which the resolver treats as an extra
+        # identity for slug matching.
+        def _as_list(value) -> list:
+            if isinstance(value, str):
+                return [value]
+            return list(value) if isinstance(value, list) else []
 
-        new_aliases = list(set([*existing_aliases, duplicate_id]))
+        primary_name = primary.get("name", "")
+        new_aliases: list[str] = []
+        for alias in [
+            *_as_list(primary_props.get("aliases")),
+            duplicate.get("name", ""),
+            *_as_list((duplicate.get("metadata") or {}).get("aliases")),
+        ]:
+            if (
+                isinstance(alias, str)
+                and alias.strip()
+                and alias.strip().lower() != primary_name.strip().lower()
+                and alias not in new_aliases
+            ):
+                new_aliases.append(alias)
+        new_merged_ids: list[str] = []
+        for mid in [
+            *_as_list(primary_props.get("merged_ids")),
+            duplicate_id,
+            *_as_list((duplicate.get("metadata") or {}).get("merged_ids")),
+        ]:
+            if isinstance(mid, str) and mid and mid != primary_id and mid not in new_merged_ids:
+                new_merged_ids.append(mid)
+        merged_props["aliases"] = new_aliases
+        merged_props["merged_ids"] = new_merged_ids
 
         # Update primary with merged props and aliases
         update_props = serialize_metadata_for_neo4j(merged_props)
         update_props["aliases"] = new_aliases
+        update_props["merged_ids"] = new_merged_ids
         update_props["updated_at"] = datetime.utcnow().isoformat()
 
         update_query = (
@@ -3051,18 +3057,87 @@ class Neo4jKnowledgeGraph:
                 if node.id != primary_id:
                     node.connections.add(primary_id)
 
+        # Files are the source of truth: bring them in line with the graph so
+        # a rebuild reproduces the merge instead of resurrecting the duplicate.
+        duplicate_file_archived = await self._archive_entity_file(duplicate_id)
+        await self._update_entity_frontmatter(
+            primary_id, {"aliases": new_aliases, "merged_ids": new_merged_ids}
+        )
+        signal_files_rewritten = await self._rewrite_signal_refs(
+            {duplicate_id: primary_id}, {primary_id: primary_name} if primary_name else {}
+        )
+
         logger.info(
             f"Merged node {duplicate_id} into {primary_id} "
-            f"(strategy={strategy}, rels_transferred={relationships_transferred})"
+            f"(strategy={strategy}, rels_transferred={relationships_transferred}, "
+            f"signal_files={len(signal_files_rewritten)})"
         )
         return {
             "id": primary_id,
-            "name": primary.get("name", ""),
+            "name": primary_name,
             "type": primary.get("type", "unknown"),
             "properties": merged_props,
             "relationships_transferred": relationships_transferred,
             "aliases": new_aliases,
+            "merged_ids": new_merged_ids,
+            "duplicate_file_archived": duplicate_file_archived,
+            "signal_files_rewritten": signal_files_rewritten,
         }
+
+    async def _update_entity_frontmatter(self, entity_id: str, updates: dict[str, Any]) -> bool:
+        """Write-through: patch keys into an entity file's frontmatter."""
+        try:
+            async with self._get_file_lock(entity_id):
+                full_path = self._find_entity_file(entity_id)
+                if not full_path:
+                    return False
+                with open(full_path, encoding="utf-8") as f:
+                    raw = f.read()
+                metadata, body = self._split_frontmatter_and_body(raw)
+                if metadata is None:
+                    return False
+                metadata.update(updates)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(self._join_frontmatter_and_body(metadata, body))
+                rel_path = os.path.relpath(full_path, self.git_ops.repo_path)
+                try:
+                    await self.git_ops.commit_and_push(
+                        [rel_path], f"Graph: update entity {entity_id}"
+                    )
+                except Exception as e:
+                    logger.warning("Write-through git commit failed: %s", e)
+                return True
+        except Exception as e:
+            logger.warning("Write-through failed for frontmatter %s: %s", entity_id, e)
+            return False
+
+    async def _rewrite_signal_refs(
+        self, id_map: dict[str, str], names: dict[str, str]
+    ) -> list[str]:
+        """Write-through: remap entity references in signals/*.json. The
+        rebuild replays these files, so stale ids would re-link signals to a
+        merged-away entity (or drop the edge)."""
+        from pathlib import Path
+
+        from app.services.signal_store import SignalStore, remap_entity_refs
+
+        changed: list[str] = []
+        try:
+            store = SignalStore(Path(self.git_ops.repo_path) / "signals")
+            for meeting_signals in store.load_all():
+                if remap_entity_refs(meeting_signals, id_map, names):
+                    store.save(meeting_signals)
+                    changed.append(store.relative_path(meeting_signals.bot_id))
+            if changed:
+                try:
+                    await self.git_ops.commit_and_push(
+                        changed, f"Graph: remap signal entity refs {sorted(id_map)}"
+                    )
+                except Exception as e:
+                    logger.warning("Write-through git commit failed: %s", e)
+        except Exception as e:
+            logger.warning("Signal ref rewrite failed for %s: %s", id_map, e)
+        return changed
 
     # ──────────────────────────────────────────────────────────────
     # Stub Processing Pipeline
@@ -3497,7 +3572,7 @@ class Neo4jKnowledgeGraph:
         except Exception:
             return False
 
-    async def _archive_entity_file(self, entity_id: str) -> None:
+    async def _archive_entity_file(self, entity_id: str) -> bool:
         """Write-through: soft-delete an entity by setting is_archived: true.
 
         This mirrors the purge script's behavior — the file stays on disk but
@@ -3508,17 +3583,17 @@ class Neo4jKnowledgeGraph:
                 full_path = self._find_entity_file(entity_id)
                 if not full_path:
                     logger.debug("Write-through skip (no file): archive %s", entity_id)
-                    return
+                    return False
 
                 with open(full_path, encoding="utf-8") as f:
                     raw = f.read()
 
                 metadata, body = self._split_frontmatter_and_body(raw)
                 if metadata is None:
-                    return
+                    return False
 
                 if metadata.get("is_archived"):
-                    return  # Already archived
+                    return True  # Already archived
 
                 metadata["is_archived"] = True
                 metadata["archived_at"] = datetime.utcnow().isoformat()
@@ -3537,10 +3612,12 @@ class Neo4jKnowledgeGraph:
                     logger.warning("Write-through git commit failed: %s", e)
 
                 logger.info("Write-through: archived entity file %s", entity_id)
+                return True
         except Exception as e:
             logger.warning(
                 "Write-through failed for archive %s: %s", entity_id, e
             )
+            return False
 
     # ──────────────────────────────────────────────────────────────
     # Cache Management

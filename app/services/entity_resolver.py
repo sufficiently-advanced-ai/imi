@@ -208,9 +208,9 @@ def resolve_against(
     name = (name or "").strip()
     slug = make_slug(entity_type, name)
 
-    # Tier 1: slug identity
+    # Tier 1: slug identity (incl. ids of entities merged into the candidate)
     for c in candidates:
-        if c.get("id") == slug:
+        if c.get("id") == slug or slug in (c.get("merged_ids") or ()):
             return ResolvedEntity(
                 id=c["id"], canonical_name=c.get("name", name), matched_via="exact"
             )
@@ -515,6 +515,9 @@ class EntityResolver:
             aliases = metadata.get("aliases") or []
             if isinstance(aliases, str):
                 aliases = [aliases]
+            merged_ids = metadata.get("merged_ids") or []
+            if isinstance(merged_ids, str):
+                merged_ids = [merged_ids]
             context = {
                 k: str(metadata[k])[:200]
                 for k in _CANDIDATE_CONTEXT_KEYS
@@ -525,6 +528,7 @@ class EntityResolver:
                     "id": node.id,
                     "name": getattr(node, "name", ""),
                     "aliases": aliases,
+                    "merged_ids": merged_ids,
                     "context": context,
                 }
             )
