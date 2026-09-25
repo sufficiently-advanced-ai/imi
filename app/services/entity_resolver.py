@@ -450,6 +450,25 @@ def _default_decision_client():
 _UNSET: Any = object()
 
 
+def participant_for_first_name(name: str, participants: list[str]) -> str | None:
+    """The one participant a bare first name ("Dan") refers to, if unambiguous.
+
+    Signal and salient extraction often shorten people to first names. Across
+    the whole graph "Dan" is ambiguous, but within a single meeting whose
+    attendee list contains exactly one Dan it is not. Returns None for
+    multi-word names, no match, or more than one matching participant.
+    """
+    tokens = normalize_entity_name(name, "person").split()
+    if len(tokens) != 1:
+        return None
+    matches = []
+    for p in participants or []:
+        p_tokens = normalize_entity_name(p, "person").split()
+        if len(p_tokens) > 1 and p_tokens[0] == tokens[0] and p not in matches:
+            matches.append(p)
+    return matches[0] if len(matches) == 1 else None
+
+
 class EntityResolver:
     """Graph-backed resolver. Builds same-type candidate lists from the
     knowledge graph's in-memory node cache (id, name, type, metadata.aliases).
@@ -462,8 +481,29 @@ class EntityResolver:
         self._kg = knowledge_graph
         self._decisions = _default_decision_client() if decisions is _UNSET else decisions
         self._decided: dict[tuple[str, str], ResolvedEntity] = {}
+        # Entities minted earlier in the same batch, not yet graph nodes.
+        self._pending: dict[str, dict[str, dict]] = {}
+
+    def register(self, entity_type: str, entity_id: str, name: str) -> None:
+        """Make a not-yet-persisted entity a resolution candidate.
+
+        Batch callers resolve many surface forms before any node is written;
+        without this, two forms of a brand-new entity in the same batch
+        ("Dan Kauppi" as a participant, "Dan" in a signal) never see each
+        other and both get minted."""
+        self._pending.setdefault(entity_type, {})[entity_id] = {
+            "id": entity_id, "name": name, "aliases": [], "context": {},
+        }
 
     def _candidates(self, entity_type: str) -> list[dict]:
+        candidates = self._graph_candidates(entity_type)
+        known = {c["id"] for c in candidates}
+        candidates.extend(
+            c for c in self._pending.get(entity_type, {}).values() if c["id"] not in known
+        )
+        return candidates
+
+    def _graph_candidates(self, entity_type: str) -> list[dict]:
         if self._kg is None or not getattr(self._kg, "nodes", None):
             return []
         candidates = []

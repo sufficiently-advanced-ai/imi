@@ -730,7 +730,9 @@ class IngestOrchestrator(BaseOrchestrator):
             # existing node instead of minting a duplicate slug. The id map
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
-            entities, id_map = await self._resolve_collected_entities(entities)
+            entities, id_map = await self._resolve_collected_entities(
+                entities, participants=observation.participants if observation else None
+            )
             if id_map and meeting_signals:
                 self._remap_signal_entity_ids(meeting_signals, id_map)
 
@@ -803,16 +805,25 @@ class IngestOrchestrator(BaseOrchestrator):
         return result
 
     async def _resolve_collected_entities(
-        self, entities: list[dict]
+        self, entities: list[dict], participants: list[str] | None = None
     ) -> tuple[list[dict], dict[str, str]]:
-        """Resolve each (type, name) against existing graph entities.
+        """Resolve each (type, name) against existing graph entities and
+        against the entities minted earlier in this same batch.
+
+        Longer names resolve first and every new entity is registered with
+        the resolver, so a later short form ("Dan") can land on a full form
+        ("Dan Kauppi") that is new in this ingest. A bare first name that
+        matches exactly one meeting participant resolves to that participant.
 
         Returns the entities with canonical ids/names plus an old_id->new_id
         map for every entity whose id changed. Resolution never crosses
         types; unresolvable entries keep their original id.
         """
         try:
-            from app.services.entity_resolver import EntityResolver
+            from app.services.entity_resolver import (
+                EntityResolver,
+                participant_for_first_name,
+            )
         except Exception:  # pragma: no cover - packaging error
             return entities, {}
 
@@ -821,7 +832,12 @@ class IngestOrchestrator(BaseOrchestrator):
         id_map: dict[str, str] = {}
         resolved_entities: list[dict] = []
         seen_ids: set[str] = set()
-        for entity in entities:
+        # Most-specific surface forms first: they become the batch-local
+        # candidates that shorter forms resolve onto.
+        ordered = sorted(
+            entities, key=lambda e: len((e.get("name") or "").split()), reverse=True
+        )
+        for entity in ordered:
             etype, ename, eid = (
                 entity.get("type", ""),
                 entity.get("name", ""),
@@ -830,8 +846,13 @@ class IngestOrchestrator(BaseOrchestrator):
             if not etype or not ename:
                 resolved_entities.append(entity)
                 continue
+            lookup = ename
+            if etype == "person":
+                lookup = participant_for_first_name(ename, participants or []) or ename
             try:
-                resolved = resolver.resolve(etype, ename)
+                resolved = resolver.resolve(etype, lookup)
+                if resolved.matched_via == "new":
+                    resolver.register(etype, resolved.id, lookup)
             except Exception as e:
                 logger.warning(
                     "[INGEST] Entity resolution failed for %s/%r: %s", etype, ename, e
@@ -854,7 +875,7 @@ class IngestOrchestrator(BaseOrchestrator):
             seen_ids.add(new_id)
             updated = dict(entity)
             updated["id"] = new_id
-            if resolved.matched_via != "new" and resolved.canonical_name:
+            if (resolved.matched_via != "new" or lookup != ename) and resolved.canonical_name:
                 updated["name"] = resolved.canonical_name
             resolved_entities.append(updated)
         return resolved_entities, id_map
