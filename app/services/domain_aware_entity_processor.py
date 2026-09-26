@@ -185,16 +185,31 @@ class DomainAwareEntityProcessor:
             return profile_content
         if not isinstance(frontmatter, dict):
             return profile_content
-        types = sorted(domain_config.entities, key=len, reverse=True)
+        from app.services.entity_utils import slugify
 
-        def known(value) -> bool:
+        types = sorted(domain_config.entities, key=len, reverse=True)
+        # Keys whose values are references to entities of one type (the
+        # plural "projects", or "has_projects"): an unprefixed value there
+        # ("claude-partner-network") is still an id and still becomes a stub.
+        key_types: dict[str, str] = {}
+        for t, ent in domain_config.entities.items():
+            plural = getattr(ent, "plural", None) or f"{t}s"
+            key_types[plural] = t
+            key_types[f"has_{plural}"] = t
+        key_types.setdefault("people", "person")
+
+        def known(value, key: str = "") -> bool:
             if not isinstance(value, str):
                 return True
             etype = next((t for t in types if value.startswith(f"{t}-")), None)
-            if etype is None or value == entity_id:
+            candidate = value
+            if etype is None and key in key_types:
+                etype = key_types[key]
+                candidate = f"{etype}-{slugify(value)}"
+            if etype is None or candidate == entity_id:
                 return True  # not an entity id (free text, dates, ...)
             try:
-                return os.path.exists(self._get_entity_storage_path(etype, value, domain_config))
+                return os.path.exists(self._get_entity_storage_path(etype, candidate, domain_config))
             except ValueError:
                 return False
 
@@ -203,11 +218,11 @@ class DomainAwareEntityProcessor:
             if key in ("id", "aliases", "merged_ids"):
                 continue
             if isinstance(value, list):
-                kept = [v for v in value if known(v)]
+                kept = [v for v in value if known(v, key)]
                 if len(kept) != len(value):
                     dropped.extend(v for v in value if v not in kept)
                     frontmatter[key] = kept
-            elif isinstance(value, str) and not known(value):
+            elif isinstance(value, str) and not known(value, key):
                 dropped.append(value)
                 frontmatter[key] = None
         if not dropped:

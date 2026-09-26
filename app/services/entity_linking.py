@@ -141,7 +141,10 @@ def build_link_questions(mention: dict, candidate: dict | None, forms: list[str]
                 _DIFFERENT: f"A different {etype} who merely has a similar name",
             },
         )
-    if len(forms) > 1:
+    # Only people: an organisation's name extended by more capitalised words
+    # is usually a different thing ("Anthropic" vs "Anthropic Academy"), while
+    # a person's is their fuller name ("Brian" vs "Brian Vigilani").
+    if len(forms) > 1 and etype == "person":
         name_options = {f"n{i}": f for i, f in enumerate(forms, start=1)}
         questions["name"] = Choice(
             instructions=(

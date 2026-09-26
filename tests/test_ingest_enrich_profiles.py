@@ -179,3 +179,22 @@ def test_invented_entity_ids_are_dropped_from_profile_frontmatter(tmp_path):
     fm = yaml.safe_load(out.split("---", 2)[1])
     assert fm["projects"] == ["project-rally"]
     assert fm["last_seen"] == "2026-08-04" and fm["name"] == "Jenny"
+
+
+def test_unprefixed_ids_under_relationship_keys_are_checked(tmp_path):
+    proc = DomainAwareEntityProcessor.__new__(DomainAwareEntityProcessor)
+    proc.git_ops = SimpleNamespace(repo_path=str(tmp_path))
+    domain = SimpleNamespace(entities={
+        "person": SimpleNamespace(plural="people"), "project": SimpleNamespace(plural="projects"),
+        "team": SimpleNamespace(plural="teams")})
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "projects" / "rally.md").write_text("---\nid: project-rally\n---\n")
+    generated = ("---\nname: Michelle Tan\nprojects:\n- rally\n- claude-partner-network\n"
+                 "teams:\n- ccaf-cohort\ntitle: Founder\n---\n# Michelle Tan\n")
+
+    out = proc._drop_unknown_entity_ids(generated, "person-michelle-tan", domain)
+
+    import yaml
+    fm = yaml.safe_load(out.split("---", 2)[1])
+    assert fm["projects"] == ["rally"] and fm["teams"] == []
+    assert fm["title"] == "Founder"  # free-text fields are never treated as refs

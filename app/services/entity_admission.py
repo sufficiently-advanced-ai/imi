@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 ADMISSION_OPERATION = "entity_admission"
 DROP_MIN_PROBABILITY = 0.80  # P(not a named entity) needed to drop
-RETYPE_MIN_PROBABILITY = 0.85  # P(other type) needed to retype ...
+RETYPE_MIN_PROBABILITY = 0.70  # P(other type) needed to retype ...
 RETYPE_MAX_EXTRACTED_TYPE = 0.20  # ... and P(it IS the extracted type) at most this
 _NONE_TYPE = "none"
 

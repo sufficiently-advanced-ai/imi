@@ -156,3 +156,13 @@ async def test_enrich_graph_applies_link_verdicts(monkeypatch):
     assert [(r.id, r.name) for r in ms.signals[0].entities] == [("person-brian-vigilani", "Brian Vigilani")]
     assert "person-brian-vigilani" in obs.entity_ids and "person-aditya" not in obs.entity_ids
     assert obs.entities_mentioned["person"] == ["Brian"]  # Aditya removed; Brian's id now split
+
+
+def test_name_question_is_only_asked_for_people():
+    from app.services.entity_linking import build_link_questions
+
+    forms = ["Anthropic", "Anthropic Academy"]
+    q_org, _ = build_link_questions({"type": "account", "name": "Anthropic"}, None, forms)
+    q_person, opts = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
+    assert "name" not in q_org
+    assert "name" in q_person and set(opts.values()) == {"Brian", "Brian Vigilani"}

@@ -68,7 +68,9 @@ def test_apply_admission_bars_are_asymmetric():
     # 0.75 sure it's junk is not enough to drop a possibly-real entity
     assert apply_admission("person", 0.25, "t2", 0.9, opts).action == "keep"
     assert apply_admission("team", 0.95, "t1", 0.90, opts, p_is_extracted_type=0.05).new_type == "account"
-    assert apply_admission("team", 0.95, "t1", 0.80, opts, p_is_extracted_type=0.05).action == "keep"
+    assert apply_admission("team", 0.95, "t1", 0.60, opts, p_is_extracted_type=0.05).action == "keep"
+    # person-typed 'Anthropic': account at 0.80 with a clear "not a person" -> retype
+    assert apply_admission("team", 0.95, "t1", 0.80, opts, p_is_extracted_type=0.11).new_type == "account"
     # Confident multi-way pick, but Jev also says it IS the extracted type:
     # the Atlas case (project named like a place) stays a project.
     assert apply_admission("project", 0.95, "t1", 0.90, opts, p_is_extracted_type=0.60).action == "keep"
