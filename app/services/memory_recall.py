@@ -17,11 +17,13 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.lane import Lane
 from app.services.recall_trace_store import record_recall
 from app.services.signal_retrieval import (
     _age_seconds,
@@ -49,6 +51,10 @@ _GOVERNANCE_FIELDS = (
     "can_use_as_instruction",
     "superseded_by",
     "valid_to",
+    # ADR-003: the lane (and library decay) come from the record too — a
+    # stale vector must not move a record between lanes.
+    "lane",
+    "stale_after",
 )
 
 
@@ -57,6 +63,9 @@ class RecallRequest(BaseModel):
     query: str
     authority: Literal["evidence", "instruction"] = "evidence"
     record_kinds: list[str] | None = None
+    # ADR-003: default recall is the record lane. Library results, when
+    # requested, are ranked separately and returned under "background".
+    lanes: list[Lane] = Field(default_factory=lambda: ["record"])
     limit: int = Field(10, ge=1, le=100)
     recency_weight: float = Field(0.0, ge=0.0, le=1.0)
     half_life_days: float = 90
@@ -75,6 +84,13 @@ class RecallRequest(BaseModel):
         if not value or not value.strip():
             raise ValueError("query must be non-empty")
         return value
+
+    @field_validator("lanes")
+    @classmethod
+    def _non_empty_lanes(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("lanes must name at least one lane")
+        return list(dict.fromkeys(value))  # dedup, keep order
 
     @field_validator("record_kinds")
     @classmethod
@@ -128,11 +144,50 @@ def _default_stack():
     return resolve_vector_store(sk.vector_store), sk.embedder
 
 
+class _Filter:
+    """Minimal MetadataFilter stand-in (same ``conditions`` shape) for stacks
+    without semantica; the sqlite store reads ``conditions`` duck-typed."""
+
+    def __init__(self) -> None:
+        self.conditions: list[dict[str, Any]] = []
+
+    def eq(self, field: str, value: Any) -> _Filter:
+        self.conditions.append({"field": field, "operator": "eq", "value": value})
+        return self
+
+    def in_list(self, field: str, values: list[Any]) -> _Filter:
+        self.conditions.append({"field": field, "operator": "in", "value": list(values)})
+        return self
+
+
+def _metadata_filter(kinds: list[str], lane: str):
+    try:
+        from semantica.vector_store import MetadataFilter
+
+        mf = MetadataFilter()
+    except Exception:  # optional dep absent — same shape, local shim
+        mf = _Filter()
+    mf = mf.eq("content_type", kinds[0]) if len(kinds) == 1 else mf.in_list("content_type", kinds)
+    return mf.eq("lane", lane)
+
+
+def _is_stale(stale_after: str | None) -> bool:
+    if not stale_after:
+        return False
+    from app.services.memory_capture import parse_instant
+
+    try:
+        return parse_instant(stale_after) <= datetime.now(UTC)
+    except (TypeError, ValueError):
+        return False  # unparseable horizon never hides a record
+
+
 def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> dict:
     """OB1 recall-response memory shape from re-hydrated data."""
     return {
         "record_id": meta["id"],
         "record_kind": meta["content_type"],
+        "lane": meta.get("lane") or "record",
         "summary": getattr(record, "summary", None) or meta.get("summary"),
         "content": getattr(record, "content", None) or meta.get("content"),
         "similarity": similarity,
@@ -191,6 +246,7 @@ async def recall(
             "request_id": None,
             "schema_version": RESPONSE_SCHEMA_VERSION,
             "memories": [],
+            "background": [],
             "warnings": ["vector stack unavailable"],
         }
     resolvers = resolvers or default_resolvers()
@@ -199,73 +255,69 @@ async def recall(
     if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
         embedding = embedding[0]
 
-    search_kwargs: dict[str, Any] = {}
-    try:  # delegate kind/tenant filters to the store when available
-        from semantica.vector_store import MetadataFilter
-
-        mf = (
-            MetadataFilter().eq("content_type", kinds[0])
-            if len(kinds) == 1
-            else MetadataFilter().in_list("content_type", kinds)
+    def search_lane(lane: str) -> list[dict]:
+        """Rank one lane. Each lane gets its own store-side filtered top-k so
+        a large library can never crowd record results out (or vice versa)."""
+        results = vector_store.search_vectors(
+            embedding, k=request.limit * 3, filter=_metadata_filter(kinds, lane)
         )
-        # tenant is NOT a store-side filter (community records index with
-        # tenant_id=None) — enforced Python-side after re-hydration.
-        search_kwargs["filter"] = mf
-    except Exception as e:  # pragma: no cover - optional dep absent
-        logger.debug("MetadataFilter unavailable, filtering in Python: %s", e)
 
-    results = vector_store.search_vectors(
-        embedding, k=request.limit * 3, **search_kwargs
-    )
+        # Dedup by record id keeping the best-scoring vector (FAISS append caveat).
+        best: dict[str, dict] = {}
+        for result in results or []:
+            meta = result.get("metadata", {}) or {}
+            if meta.get("content_type") not in kinds or not meta.get("id"):
+                continue
+            record_id = meta["id"]
+            score = float(result.get("score", 0.0))
+            if record_id not in best or score > best[record_id]["similarity"]:
+                best[record_id] = {"meta": meta, "similarity": score}
 
-    # Dedup by record id keeping the best-scoring vector (FAISS append caveat).
-    best: dict[str, dict] = {}
-    for result in results or []:
-        meta = result.get("metadata", {}) or {}
-        if meta.get("content_type") not in kinds or not meta.get("id"):
-            continue
-        record_id = meta["id"]
-        score = float(result.get("score", 0.0))
-        if record_id not in best or score > best[record_id]["similarity"]:
-            best[record_id] = {"meta": meta, "similarity": score}
+        scored: list[dict] = []
+        for record_id, entry in best.items():
+            meta, similarity = entry["meta"], entry["similarity"]
+            resolver = resolvers.get(meta["content_type"])
+            record = resolver(record_id) if resolver else None
+            if record is None:
+                continue  # deleted or unresolvable — never serve ghosts
+            if not tenant_matches(getattr(record, "tenant_id", None), tenant_id):
+                continue  # never surface another tenant's memories
 
-    scored: list[dict] = []
-    for record_id, entry in best.items():
-        meta, similarity = entry["meta"], entry["similarity"]
-        resolver = resolvers.get(meta["content_type"])
-        record = resolver(record_id) if resolver else None
-        if record is None:
-            continue  # deleted or unresolvable — never serve ghosts
-        if not tenant_matches(getattr(record, "tenant_id", None), tenant_id):
-            continue  # never surface another tenant's memories
+            # RE-HYDRATE governance from the authoritative record, then filter.
+            governance = {f: getattr(record, f, None) for f in _GOVERNANCE_FIELDS}
+            governance["lane"] = governance["lane"] or "record"
+            hydrated = {**meta, **governance}
+            hydrated["confidence"] = getattr(record, "confidence", None)
+            if hydrated["lane"] != lane:
+                continue  # vector metadata is stale; the record is authoritative
+            if lane == "library" and _is_stale(hydrated.get("stale_after")):
+                continue  # ADR-003 §5: decayed library is out of recall, not deleted
+            if not _passes_governance(
+                hydrated, request.authority, request.include_rejected
+            ):
+                continue
 
-        # RE-HYDRATE governance from the authoritative record, then filter.
-        governance = {f: getattr(record, f, None) for f in _GOVERNANCE_FIELDS}
-        hydrated = {**meta, **governance}
-        hydrated["confidence"] = getattr(record, "confidence", None)
-        if not _passes_governance(
-            hydrated, request.authority, request.include_rejected
-        ):
-            continue
+            score = similarity
+            if request.recency_weight > 0:
+                recency = _recency_weight_fn(
+                    _age_seconds(meta.get("created_at")), request.half_life_days
+                )
+                score = blend_score(similarity, recency, request.recency_weight)
+            score += authority_bonus(hydrated)
 
-        score = similarity
-        if request.recency_weight > 0:
-            recency = _recency_weight_fn(
-                _age_seconds(meta.get("created_at")), request.half_life_days
+            scored.append(
+                {
+                    "shape": _memory_shape(hydrated, record, similarity, score),
+                    "similarity": similarity,
+                    "score": score,
+                }
             )
-            score = blend_score(similarity, recency, request.recency_weight)
-        score += authority_bonus(hydrated)
 
-        scored.append(
-            {
-                "shape": _memory_shape(hydrated, record, similarity, score),
-                "similarity": similarity,
-                "score": score,
-            }
-        )
+        scored.sort(key=lambda s: s["score"], reverse=True)
+        return scored[: request.limit]
 
-    scored.sort(key=lambda s: s["score"], reverse=True)
-    top = scored[: request.limit]
+    top = search_lane("record") if "record" in request.lanes else []
+    background = search_lane("library") if "library" in request.lanes else []
     memories = [s["shape"] for s in top]
 
     request_id = str(uuid.uuid4())
@@ -296,6 +348,7 @@ async def recall(
                     project_id=request.project_id,
                     scope={
                         "record_kinds": kinds,
+                        "lanes": request.lanes,
                         "include_rejected": request.include_rejected,
                     },
                     response_policy={"authority": request.authority},
@@ -308,7 +361,7 @@ async def recall(
                             "ranking_score": m["score"],
                             "use_policy_snapshot": m["shape"]["use_policy"],
                         }
-                        for rank, m in enumerate(top)
+                        for rank, m in enumerate(top + background)
                     ],
                 )
                 await session.commit()
@@ -320,5 +373,6 @@ async def recall(
         "request_id": request_id,
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "memories": memories,
+        "background": [s["shape"] for s in background],
         "warnings": warnings,
     }

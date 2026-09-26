@@ -150,6 +150,8 @@ def index_signal(vector_store, embedder, signal: Signal) -> str | None:
             "can_use_as_evidence": signal.can_use_as_evidence,
             "can_use_as_instruction": signal.can_use_as_instruction,
             "tenant_id": signal.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(signal, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
@@ -184,6 +186,8 @@ def index_capture(vector_store, embedder, capture) -> str | None:
             "can_use_as_evidence": capture.can_use_as_evidence,
             "can_use_as_instruction": capture.can_use_as_instruction,
             "tenant_id": capture.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(capture, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
@@ -220,6 +224,8 @@ def index_agent_memory(vector_store, embedder, memory) -> str | None:
             "can_use_as_evidence": memory.can_use_as_evidence,
             "can_use_as_instruction": memory.can_use_as_instruction,
             "tenant_id": memory.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(memory, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None

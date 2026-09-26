@@ -498,6 +498,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 recency_weight=args.get("recency_weight", 0.0),
                 task_id=args.get("task_id"),
                 runtime_name=args.get("runtime_name"),
+                lanes=args.get("lanes"),
             )
             return _text(result)
 

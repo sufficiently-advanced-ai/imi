@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.models.lane import DEFAULT_LANE, validate_lane
 from app.services.signal_governance import (
     PROVENANCE_STATUSES,
     REVIEW_STATUSES,
@@ -68,6 +69,17 @@ class CapturedMemory(BaseModel):
     review_status: str = Field("pending")
     can_use_as_evidence: bool = Field(True)
     can_use_as_instruction: bool = Field(False)
+    # --- Lane (ADR-003): record vs library; server-assigned at admission ------
+    lane: str = Field(
+        DEFAULT_LANE,
+        description="record (we were party to it) or library (third-party content "
+        "we watch). Server-assigned at admission; never accepted from clients",
+    )
+    stale_after: str | None = Field(
+        None,
+        description="Library decay horizon (ISO); a stale library record is "
+        "excluded from recall until a record cites it (ADR-003 §5)",
+    )
     tenant_id: str | None = Field(None)
     created_at: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat(),
@@ -79,6 +91,11 @@ class CapturedMemory(BaseModel):
         if value not in PROVENANCE_STATUSES:
             raise ValueError(f"Unknown provenance_status: {value!r}")
         return value
+
+    @field_validator("lane")
+    @classmethod
+    def _validate_lane(cls, value: str) -> str:
+        return validate_lane(value)
 
     @field_validator("review_status")
     @classmethod

@@ -430,7 +430,10 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "authoritative store at recall time. Every call returns a request_id — "
             "report which memories you actually used via record_memory_usage. "
             "Use search_signals_semantic for signals-only search; this tool is the "
-            "cross-kind recall surface."
+            "cross-kind recall surface. By default only the record lane (what we "
+            "were party to: meetings, business mail, own notes) is searched; pass "
+            'lanes=["record", "library"] to also get third-party watched content '
+            "(articles, newsletters, videos), ranked separately under background."
         ),
         "inputSchema": {
             "type": "object",
@@ -455,6 +458,15 @@ TOOL_DEFS: dict[str, ToolDef] = {
                         "enum": ["signal", "capture", "agent_memory"],
                     },
                     "description": "Restrict to specific record kinds (default: all)",
+                },
+                "lanes": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["record", "library"]},
+                    "default": ["record"],
+                    "description": (
+                        "record = we were party to it; library = third-party content "
+                        "we watch. Library hits are returned under background."
+                    ),
                 },
                 "limit": {"type": "integer", "default": 10},
                 "recency_weight": {

@@ -20,9 +20,10 @@ Design constraints:
   * Embeddings are derived, regenerable data (the same posture as the FAISS
     index), so the table is self-managed in a sidecar file rather than the
     alembic-managed ops database.
-  * ``filter`` honours content_type eq/in conditions (the only store-side
-    filter recall relies on); anything else falls through untouched because
-    governance is re-hydrated Python-side from the authoritative record.
+  * ``filter`` honours eq/in conditions on content_type, entity_type and
+    lane (the store-side filters recall relies on); anything else falls
+    through untouched because governance is re-hydrated Python-side from the
+    authoritative record.
   * tenant_id=None (community single-tenant) is normalised to "" internally:
     SQLite UNIQUE treats NULLs as distinct, which would break upsert-by-id.
 """
@@ -217,6 +218,17 @@ class SqliteVectorStore:
                 f"({','.join('?' * len(entity_types))})"
             )
             params.extend(entity_types)
+        # lane (ADR-003) must filter BEFORE the top-k cut: library vectors
+        # outnumber record ones ~3:1, so a post-hoc filter would starve record
+        # recall. Vectors indexed before lanes existed carry no lane and count
+        # as "record", matching the model default.
+        lanes = _filter_values(filter, "lane")
+        if lanes:
+            sql += (
+                " AND COALESCE(json_extract(metadata, '$.lane'), 'record') IN "
+                f"({','.join('?' * len(lanes))})"
+            )
+            params.extend(lanes)
 
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
