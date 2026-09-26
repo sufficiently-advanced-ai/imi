@@ -162,8 +162,8 @@ def test_name_question_is_only_asked_for_people():
     from app.services.entity_linking import build_link_questions
 
     forms = ["Anthropic", "Anthropic Academy"]
-    q_org, _ = build_link_questions({"type": "account", "name": "Anthropic"}, None, forms)
-    q_person, opts = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
+    q_org, _, _ = build_link_questions({"type": "account", "name": "Anthropic"}, None, forms)
+    q_person, opts, _ = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
     assert "name" not in q_org
     assert "name" in q_person and set(opts.values()) == {"Brian", "Brian Vigilani"}
 
@@ -171,9 +171,88 @@ def test_name_question_is_only_asked_for_people():
 def test_identity_question_is_only_asked_for_people():
     from app.services.entity_linking import build_link_questions
 
-    q_org, _ = build_link_questions({"type": "account", "name": "Anthropic"},
-                                    {"name": "Anthropic", "context": {}}, [])
-    q_person, _ = build_link_questions({"type": "person", "name": "Brian"},
-                                       {"name": "Brian", "context": {}}, [])
+    q_org, _, _ = build_link_questions({"type": "account", "name": "Anthropic"},
+                                       {"name": "Anthropic", "context": {}}, [])
+    q_person, _, _ = build_link_questions({"type": "person", "name": "Brian"},
+                                          {"name": "Brian", "context": {}}, [])
     assert set(q_org) == {"mentioned"}
     assert set(q_person) == {"mentioned", "same"}
+
+
+def test_participants_are_offered_as_identity_answers():
+    from app.services.entity_linking import build_link_questions
+
+    q, _, parts = build_link_questions(
+        {"type": "person", "name": "Aditya"}, {"name": "Aditya", "context": {}}, [],
+        ["Scott Jennings", "Paul Evers", "Anudeep", "Aditya"],
+    )
+    assert set(parts.values()) == {"Scott Jennings", "Paul Evers", "Anudeep"}
+    assert set(q["same"].criteria) == {"existing", *parts, "different"}
+
+
+def test_apply_link_reassigns_to_participant():
+    v = apply_link("Aditya", 0.91, 0.20, None, 0.0, {}, participant="Anudeep", participant_probability=0.82)
+    assert (v.action, v.name) == ("reassign", "Anudeep")
+    # weak participant pick falls back to the existing-vs-different logic
+    assert apply_link("Aditya", 0.91, 0.65, None, 0.0, {}, "Anudeep", 0.30).action == "keep"
+
+
+@pytest.mark.asyncio
+async def test_enrich_graph_moves_initials_mention_onto_participant(monkeypatch):
+    """Foley Check In: 'ask AD some questions' was extracted as the cohort's
+    Aditya; Jev says it is participant Anudeep, so the link moves to him."""
+    import app.services.entity_admission as adm
+    import app.services.entity_linking as lnk
+    import app.services.entity_resolver as er
+    from app.services.inference.decisions import ChoiceAnswer, DecisionResult, NoulAnswer
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator
+
+    class _PartFake:
+        def mode(self, operation):
+            return "on"
+
+        async def decide(self, state, questions, *, operation):
+            answers = {"mentioned": NoulAnswer(0.91)}
+            if "same" in questions:
+                key = next(k for k, v in questions["same"].criteria.items() if v.startswith("Anudeep"))
+                answers["same"] = ChoiceAnswer(choice=key, probabilities={key: 0.84, "existing": 0.1}, confidence=0.84)
+            return DecisionResult(answers, "jev", "fake", 0, 0, 0.0, 0, {})
+
+    monkeypatch.setattr(lnk, "_default_client", lambda: _PartFake())
+    monkeypatch.setattr(adm, "_default_client", lambda: None)
+    monkeypatch.setattr(er, "_default_decision_client", lambda: None)
+
+    class _Graph:
+        def __init__(self):
+            self.nodes = {i: SimpleNamespace(id=i, name=n, type="person", metadata={})
+                          for i, n in [("person-aditya", "Aditya"), ("person-anudeep", "Anudeep")]}
+            self.entity_documents, self.document_entities, self.added = {}, {}, []
+
+        async def add_node(self, entity_type, name, entity_id=None, properties=None):
+            self.added.append(entity_id)
+
+        async def create_semantic_relationship(self, **kw):
+            return True
+
+    class _Writer:
+        async def write_meeting_signals(self, ms):
+            return len(ms.signals)
+
+    graph = _Graph()
+    orch = IngestOrchestrator(classifier=None, claude_client=None, graph=graph,
+                              signal_writer=_Writer(), git_ops=None, tools={})
+    orch._filter_to_domain_entities = lambda ents: ents
+    text = "Paul Evers: we mostly want to ask AD some questions about the quote rules."
+    obs = SimpleNamespace(participants=["Paul Evers", "Anudeep"], title="Foley Quoting Check In",
+                          raw_content=text, content=text, entity_ids=[],
+                          entities_mentioned={"person": ["Aditya"]}, metadata={}, external_id="ingest-y")
+    ms = MeetingSignals(meeting_id="m", bot_id="ingest-y", signals=[
+        Signal(id="s1", type="action_item", content="Ask AD about the quote rules",
+               source_meeting_id="ingest-y", source_timestamp="2026-09-24T16:00:00+00:00",
+               entities=[EntityRef(id="person-aditya", type="person", name="Aditya")]),
+    ])
+
+    await orch._phase_enrich_graph(ms, text, obs)
+
+    assert "person-aditya" not in obs.entity_ids and "person-anudeep" in obs.entity_ids
+    assert [(r.id, r.name) for r in ms.signals[0].entities] == [("person-anudeep", "Anudeep")]

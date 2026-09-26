@@ -317,10 +317,56 @@ def _distinctive_tokens(normalized: str) -> set[str]:
     return {w for w in normalized.split() if len(w) >= 4 and w not in _GENERIC_WORDS}
 
 
+_SOUNDEX_CODES = {
+    **dict.fromkeys("bfpv", "1"), **dict.fromkeys("cgjkqsxz", "2"), **dict.fromkeys("dt", "3"),
+    "l": "4", **dict.fromkeys("mn", "5"), "r": "6",
+}
+
+
+def _soundex(word: str) -> str:
+    word = "".join(c for c in word.lower() if c.isalpha())
+    if not word:
+        return ""
+    out, last = word[0].upper(), _SOUNDEX_CODES.get(word[0], "")
+    for c in word[1:]:
+        code = _SOUNDEX_CODES.get(c, "")
+        if code and code != last:
+            out += code
+        if c not in "hw":
+            last = code
+    return (out + "000")[:4]
+
+
+def _sounds_alike(a_norm: str, b_norm: str) -> bool:
+    """Same Soundex key token by token ("fully" ~ "foley"): speech-to-text
+    turns names into sound-alikes, which string similarity misses."""
+    a, b = a_norm.split(), b_norm.split()
+    return bool(a) and len(a) == len(b) and a_norm != b_norm and all(
+        _soundex(x) == _soundex(y) for x, y in zip(a, b, strict=True)
+    )
+
+
+def _partial_initials(a_norm: str, b_norm: str) -> bool:
+    """Letter-spelled short forms whose letters are an ordered subset of the
+    other name's initials ("f g" from "F and G" ~ "faulkner media group")."""
+    tokens = a_norm.split()
+    letters = "".join(tokens)
+    if not 2 <= len(letters) <= 4:
+        return False
+    if len(tokens) > 1 and not all(len(t) <= 2 for t in tokens):
+        return False
+    initials = _initials(b_norm)
+    if len(initials) < len(letters):
+        return False
+    it = iter(initials)
+    return all(ch in it for ch in letters)
+
+
 def fuzzy_zone(entity_type: str, name: str, candidates: list[dict]) -> list[tuple[float, dict]]:
     """Candidates too close for string similarity alone to rule out, best
-    first: ratio >= FUZZY_ZONE_FLOOR, an acronym, a clipped form, or a shared
-    distinctive word. The digit-token veto still applies — 'Q3 Migration'
+    first: ratio >= FUZZY_ZONE_FLOOR, an acronym, a clipped form, a shared
+    distinctive word, a sound-alike (speech-to-text: "Fully" ~ "Foley") or
+    partial initials ("F and G" ~ "Faulkner Media Group"). The digit-token veto still applies — 'Q3 Migration'
     never reaches the model as a candidate for 'Q4 Migration'."""
     normalized = normalize_entity_name(name, entity_type)
     if not normalized:
@@ -339,6 +385,8 @@ def fuzzy_zone(entity_type: str, name: str, candidates: list[dict]) -> list[tupl
                 or _acronym_of(normalized, s_norm)
                 or _clipped_form(normalized, s_norm)
                 or _distinctive_tokens(normalized) & _distinctive_tokens(s_norm)
+                or _sounds_alike(normalized, s_norm)
+                or _partial_initials(normalized, s_norm)
             ):
                 related = True
         if related:

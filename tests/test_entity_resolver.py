@@ -353,3 +353,21 @@ async def test_orchestrator_batch_without_participant_context_keeps_ambiguous_fi
     # Two Dans on the call: never guess.
     assert "person-dan" in {e["id"] for e in resolved}
     assert id_map == {}
+
+
+class TestSpeechToTextZone:
+    """Sound-alikes and letter-spelled short forms reach the tiebreak (the
+    decision model still decides, at the same merge bar)."""
+
+    def test_sound_alike_enters_the_zone(self):
+        cands = [{"id": "account-foley", "name": "Foley"}, {"id": "account-fable", "name": "Fable"}]
+        assert [c["id"] for _, c in fuzzy_zone("account", "Fully", cands)] == ["account-foley"]
+
+    def test_partial_initials_enter_the_zone(self):
+        cands = [{"id": "account-faulkner-media-group", "name": "Faulkner Media Group"}]
+        assert [c["id"] for _, c in fuzzy_zone("account", "F&G", cands)] == ["account-faulkner-media-group"]
+
+    def test_unrelated_names_stay_out(self):
+        cands = [{"id": "person-tony", "name": "Tony"}, {"id": "account-snowflake", "name": "Snowflake"}]
+        assert fuzzy_zone("person", "Ryan", cands) == []
+        assert fuzzy_zone("account", "Salesforce", cands) == []

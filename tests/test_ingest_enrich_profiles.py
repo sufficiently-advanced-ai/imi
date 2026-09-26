@@ -198,3 +198,17 @@ def test_unprefixed_ids_under_relationship_keys_are_checked(tmp_path):
     fm = yaml.safe_load(out.split("---", 2)[1])
     assert fm["projects"] == ["rally"] and fm["teams"] == []
     assert fm["title"] == "Founder"  # free-text fields are never treated as refs
+
+
+def test_stale_refs_are_resolved_instead_of_dropped(tmp_path):
+    proc = DomainAwareEntityProcessor.__new__(DomainAwareEntityProcessor)
+    proc.git_ops = SimpleNamespace(repo_path=str(tmp_path))
+    proc.resolve_ref = lambda t, eid: {"person-ankit-patel": "person-ankit"}.get(eid)
+    domain = SimpleNamespace(entities={
+        "person": SimpleNamespace(plural="people"), "project": SimpleNamespace(plural="projects")})
+    generated = ("---\nname: Open Brain\npeople:\n- person-ankit-patel\n- person-nobody\n---\n# Open Brain\n")
+
+    out = proc._drop_unknown_entity_ids(generated, "project-open-brain", domain)
+
+    import yaml
+    assert yaml.safe_load(out.split("---", 2)[1])["people"] == ["person-ankit"]

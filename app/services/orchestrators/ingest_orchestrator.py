@@ -1093,6 +1093,16 @@ class IngestOrchestrator(BaseOrchestrator):
             if verdict.action == "unlink":
                 unlinked.add(e["id"])
                 continue
+            if verdict.action == "reassign":
+                # The mention is one of the meeting's participants (nickname or
+                # initials): move the link onto that participant's entity.
+                resolved = helper.resolve(e.get("type"), verdict.name)
+                remap[e["id"]] = resolved.id
+                entry = {**e, "id": resolved.id, "name": resolved.canonical_name or verdict.name}
+                if entry["id"] not in seen:
+                    seen.add(entry["id"])
+                    kept.append(entry)
+                continue
             if verdict.action == "rename" and e["id"] in known and hasattr(self._graph, "upgrade_entity_name"):
                 try:
                     await self._graph.upgrade_entity_name(e["id"], verdict.name)
@@ -1116,6 +1126,20 @@ class IngestOrchestrator(BaseOrchestrator):
             for etype, names in mentioned.items():
                 mentioned[etype] = [n for n in names or [] if (etype, n) not in gone]
         return kept, remap, unlinked
+
+    def _profile_ref_resolver(self):
+        """(type, id) -> canonical existing id, for entity references in
+        generated profiles that use a stale or name-derived id."""
+        from app.services.entity_resolver import EntityResolver
+
+        helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+
+        def resolve(entity_type: str, entity_id: str) -> str | None:
+            name = entity_id.split("-", 1)[1].replace("-", " ") if "-" in entity_id else entity_id
+            resolved = helper.resolve(entity_type, name)
+            return resolved.id if resolved.matched_via != "new" else None
+
+        return resolve
 
     async def _admit_new_entities(
         self, entities: list[dict], observation
@@ -1775,6 +1799,7 @@ class IngestOrchestrator(BaseOrchestrator):
         try:
             domain = get_domain_config_service().get_active_domain()
             processor = DomainAwareEntityProcessor(self._claude)
+            processor.resolve_ref = self._profile_ref_resolver()
             templated = {
                 t for t in (domain.entities or {}) if processor._get_domain_prompt_template(t, domain)
             }

@@ -198,36 +198,66 @@ class DomainAwareEntityProcessor:
             key_types[f"has_{plural}"] = t
         key_types.setdefault("people", "person")
 
-        def known(value, key: str = "") -> bool:
+        resolve_ref = getattr(self, "resolve_ref", None)
+
+        def check(value, key: str = ""):
+            """(keep, replacement): replacement is the canonical id when a
+            stale or name-form reference resolves to an existing entity."""
             if not isinstance(value, str):
-                return True
+                return True, value
             etype = next((t for t in types if value.startswith(f"{t}-")), None)
             candidate = value
             if etype is None and key in key_types:
                 etype = key_types[key]
                 candidate = f"{etype}-{slugify(value)}"
             if etype is None or candidate == entity_id:
-                return True  # not an entity id (free text, dates, ...)
+                return True, value  # not an entity id (free text, dates, ...)
             try:
-                return os.path.exists(self._get_entity_storage_path(etype, candidate, domain_config))
+                if os.path.exists(self._get_entity_storage_path(etype, candidate, domain_config)):
+                    return True, value
             except ValueError:
-                return False
+                return False, value
+            # A real entity under a stale id (renamed/merged: person-ankit-patel
+            # is now person-ankit) — ask the resolver before dropping it.
+            if resolve_ref is not None:
+                try:
+                    resolved = resolve_ref(etype, candidate)
+                except Exception:
+                    resolved = None
+                if resolved and resolved != entity_id:
+                    return True, resolved
+            return False, value
 
-        dropped = []
+        dropped, remapped = [], {}
         for key, value in list(frontmatter.items()):
             if key in ("id", "aliases", "merged_ids"):
                 continue
             if isinstance(value, list):
-                kept = [v for v in value if known(v, key)]
-                if len(kept) != len(value):
-                    dropped.extend(v for v in value if v not in kept)
+                kept = []
+                for v in value:
+                    ok, new = check(v, key)
+                    if not ok:
+                        dropped.append(v)
+                    elif new not in kept:
+                        if new != v:
+                            remapped[v] = new
+                        kept.append(new)
+                if kept != value:
                     frontmatter[key] = kept
-            elif isinstance(value, str) and not known(value, key):
-                dropped.append(value)
-                frontmatter[key] = None
-        if not dropped:
+            elif isinstance(value, str):
+                ok, new = check(value, key)
+                if not ok:
+                    dropped.append(value)
+                    frontmatter[key] = None
+                elif new != value:
+                    remapped[value] = new
+                    frontmatter[key] = new
+        if not dropped and not remapped:
             return profile_content
-        logger.info("[PROFILE] %s: dropped unknown entity ids %s", entity_id, dropped)
+        if remapped:
+            logger.info("[PROFILE] %s: resolved stale entity refs %s", entity_id, remapped)
+        if dropped:
+            logger.info("[PROFILE] %s: dropped unknown entity ids %s", entity_id, dropped)
         new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
         return f"---\n{new_frontmatter}---{parts[2]}"
 
