@@ -25,6 +25,7 @@ from app.git_ops import git_ops
 from app.models.signal import SignalAuditRecord
 from app.services import signal_indexing
 from app.services.capture_enrichment import enrich_capture
+from app.services.content_cleaner import clean_content
 from app.services.lane_admission import AdmissionLog, admit
 from app.services.memory_capture import REPO_ROOT, CaptureStore
 from app.services.memory_governance import (
@@ -84,6 +85,14 @@ async def capture_and_persist(
     """Capture a thought end-to-end. Returns a result dict, never raises."""
     try:
         store = store or CaptureStore()
+        # Safety-net cleanup of third-party content (no-op for record
+        # sources) before dedup, admission and persistence, so the stored,
+        # judged and embedded text are the same clean text.
+        cleaned = clean_content(content, source)
+        if cleaned.changed and cleaned.text != content:
+            logger.info("[CAPTURE] Cleaned %s/%s: -%d chars %s",
+                        source, source_id, cleaned.removed_chars, cleaned.rules)
+            content = cleaned.text
         existing = store.find_existing(content, source, source_id)
         if existing is None:
             decision = await admit(

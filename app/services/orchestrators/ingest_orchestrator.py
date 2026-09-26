@@ -485,9 +485,17 @@ class IngestOrchestrator(BaseOrchestrator):
     async def _phase_admit(self, request):
         """Phase 0 (ADR-003): decide lane or drop. Drops are written to the
         admission log (memory/admission/), never to the corpus."""
+        from app.services.content_cleaner import clean_content
         from app.services.lane_admission import admit
 
         source = request.source.value if request.source else None
+        # Safety-net cleanup of third-party content before anything reads it
+        # (no-op for transcripts and other record sources).
+        cleaned = clean_content(request.content, source)
+        if cleaned.changed and cleaned.text != request.content:
+            logger.info("[INGEST] Cleaned %s content: -%d chars %s",
+                        source, cleaned.removed_chars, cleaned.rules)
+            request.content = cleaned.text
         decision = await admit(
             request.content,
             source,

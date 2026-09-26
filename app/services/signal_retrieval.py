@@ -160,6 +160,18 @@ def index_signal(vector_store, embedder, signal: Signal) -> str | None:
         return None
 
 
+CAPTURE_EMBED_CHARS = 2000
+
+
+def capture_embedding_text(capture) -> str:
+    """What a capture's vector represents: its summary, then the opening of
+    its text. Embedders read only the first few hundred tokens, so embedding a
+    long page or transcript as-is encodes whatever happens to come first."""
+    summary = (getattr(capture, "summary", None) or "").strip()
+    head = capture.content.strip()[:CAPTURE_EMBED_CHARS]
+    return f"{summary}\n\n{head}" if summary else head
+
+
 def index_capture(vector_store, embedder, capture) -> str | None:
     """Embed a CapturedMemory and store it with governance metadata.
 
@@ -170,7 +182,7 @@ def index_capture(vector_store, embedder, capture) -> str | None:
     if not capture.content or not capture.content.strip():
         return None
     try:
-        embedding = embedder.generate_embeddings(capture.content, data_type="text")
+        embedding = embedder.generate_embeddings(capture_embedding_text(capture), data_type="text")
         if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
             embedding = embedding[0]
 
