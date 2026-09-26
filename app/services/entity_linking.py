@@ -154,7 +154,7 @@ def build_link_questions(
         criteria[_DIFFERENT] = f"Someone else: a different {etype} who merely has a similar name"
         questions["same"] = Choice(
             instructions=(
-                f"Who does the mention refer to? A shared first name or similar name is not "
+                "Who does the mention refer to? A shared first name or similar name is not "
                 "enough: compare who they are, what they do and who they appear with. People in "
                 "the room are often called by nicknames, initials or first names. If the "
                 "evidence cannot tell, choose someone else."
