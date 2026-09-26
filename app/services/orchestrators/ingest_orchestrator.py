@@ -761,6 +761,16 @@ class IngestOrchestrator(BaseOrchestrator):
                 id_map = {k: admission_map.get(v, v) for k, v in id_map.items()}
                 id_map.update(admission_map)
 
+            # Decision-model link verification for every (meeting, entity)
+            # link, new or existing: is it really mentioned, is it really the
+            # existing entity, is there a fuller name? Unlinks, splits and
+            # renames are applied before any node or edge is written.
+            entities, link_map, unlinked = await self._verify_links(entities, observation, content)
+            if link_map:
+                id_map = {k: link_map.get(v, v) for k, v in id_map.items()}
+                id_map.update(link_map)
+            dropped_ids = set(dropped_ids) | unlinked
+
             if meeting_signals:
                 # Ids AND names: a ref resolved "Paul" -> person-paul-evers
                 # should read "Paul Evers" in the signal file and delta.
@@ -1020,6 +1030,92 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning("[INGEST] Entity type descriptions unavailable: %s", e)
             return {}
+
+    async def _verify_links(
+        self, entities: list[dict], observation, content: str
+    ) -> tuple[list[dict], dict[str, str], set[str]]:
+        """Put each (meeting, entity) link to the decision model (operation
+        entity_link) and apply its verdicts. Returns (entities, old_id ->
+        new_id for splits/renames, unlinked ids). No-op in off/shadow mode or
+        without a decision model."""
+        from app.services.entity_linking import judge_links
+        from app.services.entity_resolver import EntityResolver
+
+        transcript = (
+            getattr(observation, "raw_content", None) or getattr(observation, "content", None) or content or ""
+        )
+        known = getattr(self._graph, "nodes", None) or {}
+        participants = {
+            p.strip().lower() for p in (getattr(observation, "participants", None) or [])
+        }
+        salient = self._salient_evidence(observation)
+        helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        candidates_by_type: dict[str, dict[str, dict]] = {}
+
+        links = []
+        for e in entities:
+            name = (e.get("name") or "").strip()
+            if not e.get("id") or not name or name.lower() in participants:
+                continue
+            extra = salient.get((e.get("type"), name), {})
+            link = {
+                "id": e["id"], "type": e.get("type"), "name": name,
+                "names": list(extra.get("aliases_heard") or []),
+                "evidence": extra.get("evidence"), "role": extra.get("role"),
+            }
+            if e["id"] in known:
+                by_id = candidates_by_type.setdefault(
+                    e.get("type"), {c["id"]: c for c in helper._candidates(e.get("type"))}
+                )
+                candidate = by_id.get(e["id"])
+                if candidate:
+                    link["candidate"] = candidate
+                    link["names"] += list(candidate.get("aliases") or [])
+            links.append(link)
+        if not links:
+            return entities, {}, set()
+
+        verdicts = await judge_links(links, transcript, meeting=self._meeting_context(observation))
+        if not verdicts:
+            return entities, {}, set()
+
+        kept: list[dict] = []
+        remap: dict[str, str] = {}
+        unlinked: set[str] = set()
+        seen: set[str] = set()
+        for e in entities:
+            verdict = verdicts.get(e.get("id"))
+            if verdict is None:
+                if e["id"] not in seen:
+                    seen.add(e["id"])
+                    kept.append(e)
+                continue
+            if verdict.action == "unlink":
+                unlinked.add(e["id"])
+                continue
+            if verdict.action == "rename" and e["id"] in known and hasattr(self._graph, "upgrade_entity_name"):
+                try:
+                    await self._graph.upgrade_entity_name(e["id"], verdict.name)
+                except Exception as ex:
+                    logger.warning("[INGEST] Name upgrade failed for %s: %s", e["id"], ex)
+                entry = {**e, "name": verdict.name}
+            else:
+                # split (a different entity than the existing match) or a
+                # rename of a not-yet-written entity: resolve the fuller name.
+                resolved = helper.resolve(e.get("type"), verdict.name)
+                remap[e["id"]] = resolved.id
+                entry = {**e, "id": resolved.id, "name": resolved.canonical_name or verdict.name}
+            if entry["id"] not in seen:
+                seen.add(entry["id"])
+                kept.append(entry)
+
+        # Keep the persisted surface-name list in line with what was linked.
+        mentioned = getattr(observation, "entities_mentioned", None)
+        if isinstance(mentioned, dict) and unlinked:
+            gone = {(e.get("type"), e.get("name")) for e in entities if e.get("id") in unlinked}
+            for etype, names in mentioned.items():
+                mentioned[etype] = [n for n in names or [] if (etype, n) not in gone]
+        return kept, remap, unlinked
 
     async def _admit_new_entities(
         self, entities: list[dict], observation

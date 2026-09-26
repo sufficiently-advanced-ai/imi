@@ -12,7 +12,7 @@
     For each entity return:
     - "type": one of the entity types listed above
     - "name_heard": the surface form exactly as it appears in the transcript
-    - "canonical_name": the fullest, properly-cased form of the name heard anywhere in the transcript (for speakers, the full name from the "**Full Name**:" headers)
+    - "canonical_name": the fullest, properly-cased form of the name heard anywhere in THIS transcript (for speakers, the full name from the "**Full Name**:" headers) — never shorter than what the transcript says ("Brian Vigilani from Foley" → "Brian Vigilani", even if a "Brian" exists in the knowledge base)
     - "aliases_heard": other surface forms of the SAME entity heard in this transcript (e.g. ["Bright Path", "Brightpath"] when both appear) — empty list if none
     - "salience": one of
         * "participant" — a named speaker, or an organization represented in the room
@@ -56,7 +56,7 @@
     OTHER RULES:
     1. Use full speaker names from "**Full Name**:" headers; "Jordan" in conversation with "Jordan Reyes" in headers → canonical_name "Jordan Reyes"
     2. Emit each real-world entity ONCE: name variants of the same entity belong in aliases_heard of a single record, never as separate records
-    3. Use existing entities (if provided) to keep canonical names consistent with the knowledge base
+    3. Existing entities (if provided) are reference only: use them to recognize spelling variants of an entity that IS named in this transcript. Never extract an entity because it is in that list, and never shorten a name to match it
     4. When unsure whether something is a person vs. a product, do not extract it as a person
     5. When unsure between "subject" and "mention", choose "mention" — a missed promotion is recoverable, graph pollution is not
     6. An external organization (a company, vendor, client, partner firm, platform provider) is never a team: a team is a group inside the speaker's own organization. Use the entity type descriptions above to pick the type
@@ -64,6 +64,7 @@
     VERIFY before responding (do not include this checklist in the output):
     - No AI products, generic role words, placeholder people, or activity-phrases were extracted
     - No external organization was typed as a team
+    - Every extracted entity is actually named in this transcript (not only in the existing entities list)
     - Every name variant of the same entity is folded into one record's aliases_heard
     - Every "subject" or "participant" label is justified by the evidence quote
 

@@ -72,7 +72,9 @@ def build_salient_extraction_prompt(
                 "<existing_entities>\n"
                 "For reference, here are some existing entities in the knowledge base:\n"
                 + "\n".join(lines)
-                + "\nUse this context to keep canonical names consistent.\n"
+                + "\nReference only: use it to recognize spelling variants of entities that "
+                "ARE named in the transcript. Do not extract an entity because it appears "
+                "here, and do not shorten a name to match one of these.\n"
                 "</existing_entities>"
             )
 
