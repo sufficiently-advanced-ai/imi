@@ -186,16 +186,18 @@ async def test_library_skips_profile_enrichment():
 async def test_link_only_verification_never_renames_or_splits():
     """entity_link verdicts on library text: rename keeps our name, split is
     an unlink — third-party text never changes or adds graph entities."""
-    graph = _Graph({"person-dan-kauppi": "Dan Kauppi", "person-ada": "Ada"})
+    graph = _Graph({"person-dan-kauppi": "Dan Kauppi", "person-ada": "Ada", "person-bo": "Bo"})
     graph.upgrade_entity_name = AsyncMock()
     orch = _orch(graph=graph)
     verdicts = {
         "person-dan-kauppi": SimpleNamespace(action="split", name="Dan Brown"),
         "person-ada": SimpleNamespace(action="rename", name="Ada Lovelace"),
+        "person-bo": SimpleNamespace(action="reassign", name="Bo Participant"),
     }
     entities = [
         {"id": "person-dan-kauppi", "type": "person", "name": "Dan"},
         {"id": "person-ada", "type": "person", "name": "Ada"},
+        {"id": "person-bo", "type": "person", "name": "Bo"},
     ]
     with patch("app.services.entity_linking.judge_links", AsyncMock(return_value=verdicts)), \
          patch("app.services.entity_resolver.EntityResolver") as resolver:
@@ -204,7 +206,7 @@ async def test_link_only_verification_never_renames_or_splits():
             entities, _library_state(), "text", link_only=True
         )
     assert [e["id"] for e in kept] == ["person-ada"] and kept[0]["name"] == "Ada"
-    assert remap == {} and unlinked == {"person-dan-kauppi"}
+    assert remap == {} and unlinked == {"person-dan-kauppi", "person-bo"}
     graph.upgrade_entity_name.assert_not_called()
 
 
