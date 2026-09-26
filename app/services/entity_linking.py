@@ -12,13 +12,13 @@ candidate options; Jev makes each judgment:
                        note that none was found. Catches entities the
                        extractor pulled from the existing-entities context
                        rather than the transcript.
-  same      (Choice) — for links to an EXISTING entity: that entity, or a
+  same      (Choice) — for links to an EXISTING person: that person, or a
                        different one with a similar name? Evidence: the
                        candidate's profile context and co-mentions. Catches
                        exact-name collisions ("Brian" the cohort peer vs
                        "Brian Vigilani" the customer) that never reach the
                        fuzzy-zone tiebreak.
-  name      (Choice) — when the transcript uses several forms of the name:
+  name      (Choice) — for people, when the transcript uses several forms of the name:
                        which is the fullest form referring to this entity?
                        Recovers names the extractor shortened.
 
@@ -128,7 +128,11 @@ def build_link_questions(mention: dict, candidate: dict | None, forms: list[str]
         ),
     }
     name_options: dict[str, str] = {}
-    if candidate is not None:
+    # People share names all the time; organisations rarely do, and for a
+    # well-known company an unfamiliar context was read as "a different
+    # Anthropic". So the identity question — and any unlink it could cause —
+    # is for people only; other types are unlinked only by "not mentioned".
+    if candidate is not None and etype == "person":
         questions["same"] = Choice(
             instructions=(
                 f"The mention was matched to an existing {etype} in the knowledge base. Is it "

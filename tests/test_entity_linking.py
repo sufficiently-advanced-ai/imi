@@ -166,3 +166,14 @@ def test_name_question_is_only_asked_for_people():
     q_person, opts = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
     assert "name" not in q_org
     assert "name" in q_person and set(opts.values()) == {"Brian", "Brian Vigilani"}
+
+
+def test_identity_question_is_only_asked_for_people():
+    from app.services.entity_linking import build_link_questions
+
+    q_org, _ = build_link_questions({"type": "account", "name": "Anthropic"},
+                                    {"name": "Anthropic", "context": {}}, [])
+    q_person, _ = build_link_questions({"type": "person", "name": "Brian"},
+                                       {"name": "Brian", "context": {}}, [])
+    assert set(q_org) == {"mentioned"}
+    assert set(q_person) == {"mentioned", "same"}
