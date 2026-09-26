@@ -37,6 +37,7 @@ list at `:72-84`). Each phase is tracked in the job store and emitted over SSE.
 
 | # | Phase | What happens | Code |
 |---|---|---|---|
+| 0 | `ADMIT` | Lane admission ([ADR-003](../adr/ADR-003-record-and-library-lanes.md)): `record` (we were party to it), `library` (third-party content), or drop. Source default from `config/lanes.yaml`, automated-mail rule, then the decision model (op `lane_admission`, off/shadow/on). A drop ends the job with status `dropped` and a row in `memory/admission/`; nothing is built | `app/services/lane_admission.py` |
 | 1 | `CLASSIFY` | Source hint maps directly to a content type; otherwise a small LLM call decides. Falls back to `document` | `app/services/ingest_classifier.py:65` |
 | 2 | `BUILD_MEETING` | Builds an `Observation` (`app/models/observation.py`); recovers timestamps from `Date:` headers; seeds `entities_mentioned` from participants + domain-aware NER | `ingest_orchestrator.py:467` |
 | 3 | `EXTRACT_ENTITIES` | Salience-aware entity extraction (`app/services/salient_entity_extractor.py`), resolved through `EntityResolver` (`app/services/entity_resolver.py`). Participants and subjects are promoted; passing mentions only link if they resolve to existing entities | `ingest_orchestrator.py:559` |
@@ -51,6 +52,21 @@ list at `:72-84`). Each phase is tracked in the job store and emitted over SSE.
 
 Phases 5–10 are individually wrapped: a failure logs and continues rather than failing the job.
 Only phases 1–4 and 7 are load-bearing for a usable result.
+
+### Library lane (ADR-003 §3)
+
+A `library` observation runs the same phases with these gates:
+
+- **BUILD_MEETING**: no participants; named people become `authors` (text, never person nodes).
+- **PROMOTE_SIGNALS**: every signal becomes a `claim`: `metadata.attributed_to`, `as_of`,
+  `extracted_type`; owner/status/due cleared; `stale_after` set (library decay).
+- **ENRICH_GRAPH**: link only. Entities that don't resolve to an *existing* node are dropped;
+  no admission create path, no `add_node`, no fuller-name upgrades, `entity_link` verification
+  is link-only (renames keep our name, splits unlink), no relationship inference.
+- **ENRICH_PROFILES**: skipped (signals are still saved).
+- **PERSIST**: the meeting file carries `lane: library` and `authors:`; a rebuild
+  (`neo4j_graph._extract_entity_references`) links such a file only to its recorded
+  `entity_ids` and never mints stubs from its name fields. Record files are unchanged.
 
 ### Where Claude is invoked
 
@@ -109,6 +125,7 @@ If you're adding a new source, prefer the front door (`/api/ingest`) over clonin
 | Add a push source (new recorder, Slack, email…) | Write a thin adapter route that builds an `IngestRequest` and calls `ingest_content` — copy the pattern in `app/routes/ingest_zapier.py`. Add a `ContentSource` value (`app/models/ingestion/models.py:15`) and mapping entries (`ingest_zapier.py:20`, `ingest_classifier.py:17`) |
 | Add a pull connector | Subclass `BaseConnector` (`app/connectors/base.py:7`): `list_recordings`, `fetch_recording`, `to_ingest_request`. See `GrainConnector` (`app/connectors/grain.py:153`) |
 | Change what gets extracted | Edit the prompt XML in `app/prompts/` — no code change |
+| Change which lane a source lands in, or drop a sender | `config/lanes.yaml` (see `config/lanes.yaml.example`); turn model judgment on with `decisions.modes.lane_admission: on` in `config/inference.yaml` |
 | Route inference to other models/providers | Create `config/inference.yaml` (see `config/inference.yaml.example`); per-operation routing to Anthropic / vLLM / Bedrock / OpenAI-compatible endpoints |
 | Change which entity/relationship types are persisted | Edit the active domain schema — the graph-enrichment phase validates against it. See [Domain Schemas](../customization/domain-schemas.md) |
 | Add a pipeline stage | Add a phase name to `PHASES` (`ingest_orchestrator.py:72`), write a `_phase_*` coroutine, insert a `_run_phase(...)` call in `_run_observation_phases` (`:240`). Status tracking and SSE come for free |

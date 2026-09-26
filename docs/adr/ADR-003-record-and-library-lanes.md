@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted (2026-09-26). Not yet implemented; see *Migration*.
+Accepted (2026-09-26). Implemented on `feat/memory-classifier` (2026-09-26): lane field and
+lane-aware recall (§1, §6); admission for captures and the ingest `ADMIT` phase (§2);
+library gates in the ingest pipeline and rebuild (§3); library decay via `stale_after`
+(§5); backfill of migration steps 1, 2 and the file side of 4 (`scripts/stamp_lanes.py`).
+Not yet built: `cites` / `about` pinning edges (§4, §5), splitting blended note+article
+captures (migration step 5), and cleanup of entity nodes that library documents already
+minted (graph-integrity work).
 
 ## Context
 

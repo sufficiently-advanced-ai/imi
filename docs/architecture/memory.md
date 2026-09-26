@@ -22,18 +22,38 @@ All three carry the identical governance surface and the ADR-002 invariant
 writeback schema (`imi.memory.writeback.v1`, `app/services/memory_writeback.py`) restricts
 provenance to observed/inferred/generated, so an agent cannot self-promote.
 
+## Lanes: record vs library
+
+Orthogonal to authority, every record carries a **lane**
+([ADR-003](../adr/ADR-003-record-and-library-lanes.md), `app/models/lane.py`):
+
+| Lane | Meaning |
+|---|---|
+| `record` | We were party to it: meetings, business mail, own notes, communities we take part in |
+| `library` | Third-party content we watch: articles, newsletters, videos, feeds |
+
+The lane is **server-assigned** at admission (`app/services/lane_admission.py`), never
+accepted from clients. Captures are admitted in `capture_and_persist`; ingested content in
+the `ADMIT` phase. Records without a stored lane (written before lanes existed) read as
+`record`. Library records carry `stale_after`; once past it they drop out of recall (the
+file stays: decay is not deletion). `scripts/stamp_lanes.py` backfills lanes from
+`scripts/classify_memories.py` verdicts.
+
 ## Recall
 
-`recall(RecallRequest)` (`app/services/memory_recall.py:162`) is the single unified recall
+`recall(RecallRequest)` (`app/services/memory_recall.py`) is the single unified recall
 surface (schema `imi.memory.recall.v1`), exposed as the `memory_recall` MCP tool and
-`POST /api/agent-memory/recall`:
+`POST /api/agent-memory/recall`. `lanes` defaults to `["record"]`; each requested lane is a
+separate store-side-filtered search (library outnumbers record ~3:1, so a post-hoc filter
+would starve record hits), and library hits come back under `background`, never merged
+into `memories`:
 
 1. Embed the query once; `search_vectors` across the shared store.
 2. Deduplicate by record id.
 3. **Re-hydrate governance fields from the authoritative git-corpus record** — a stale
    instruction-grade vector must never leak through (`_GOVERNANCE_FIELDS`,
    `memory_recall.py:42`).
-4. Filter by requested `authority` (`evidence` or `instruction`).
+4. Filter by requested `authority` (`evidence` or `instruction`) and by lane.
 5. Rank by similarity + recency + authority bonus.
 6. Write a recall trace with per-item snapshots.
 
