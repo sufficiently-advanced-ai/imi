@@ -964,6 +964,10 @@ class IngestOrchestrator(BaseOrchestrator):
             seen_ids.add(new_id)
             updated = dict(entity)
             updated["id"] = new_id
+            # The form actually heard ("F&G", "Dave") survives canonicalisation
+            # so link verification checks the transcript for what was said, not
+            # for the resolved entity's name ("Faulkner Media Group").
+            updated.setdefault("surface", ename)
             if (resolved.matched_via != "new" or lookup != ename) and resolved.canonical_name:
                 updated["name"] = resolved.canonical_name
             resolved_entities.append(updated)
@@ -1057,19 +1061,25 @@ class IngestOrchestrator(BaseOrchestrator):
             name = (e.get("name") or "").strip()
             if not e.get("id") or not name or name.lower() in participants:
                 continue
-            extra = salient.get((e.get("type"), name), {})
+            surface = (e.get("surface") or "").strip()
+            extra = salient.get((e.get("type"), surface), {}) or salient.get((e.get("type"), name), {})
+            names = list(extra.get("aliases_heard") or [])
+            if surface and surface.casefold() != name.casefold():
+                names.insert(0, surface)
             link = {
                 "id": e["id"], "type": e.get("type"), "name": name,
-                "names": list(extra.get("aliases_heard") or []),
+                "names": names,
                 "evidence": extra.get("evidence"), "role": extra.get("role"),
             }
+            if surface and surface.casefold() != name.casefold():
+                link["heard_as"] = surface
             if e["id"] in known:
                 by_id = candidates_by_type.setdefault(
                     e.get("type"), {c["id"]: c for c in helper._candidates(e.get("type"))}
                 )
                 candidate = by_id.get(e["id"])
                 if candidate:
-                    link["candidate"] = candidate
+                    link["candidate"] = helper.with_profile(candidate)
                     link["names"] += list(candidate.get("aliases") or [])
             links.append(link)
         if not links:

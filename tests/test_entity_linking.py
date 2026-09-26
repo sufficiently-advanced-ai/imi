@@ -256,3 +256,25 @@ async def test_enrich_graph_moves_initials_mention_onto_participant(monkeypatch)
 
     assert "person-aditya" not in obs.entity_ids and "person-anudeep" in obs.entity_ids
     assert [(r.id, r.name) for r in ms.signals[0].entities] == [("person-anudeep", "Anudeep")]
+
+
+@pytest.mark.asyncio
+async def test_heard_form_reaches_link_verification():
+    """F&G merged into Faulkner Media Group must be checked against the
+    transcript for 'F and G', not for the canonical name (which never occurs)."""
+    seen = {}
+
+    class _Fake:
+        def mode(self, operation):
+            return "on"
+
+        async def decide(self, state, questions, *, operation):
+            seen.update(state)
+            return DecisionResult({"mentioned": NoulAnswer(0.9)}, "jev", "fake", 0, 0, 0.0, 0, {})
+
+    text = "Scott: Share a little bit about F and G, what we're doing."
+    link = {"id": "account-faulkner-media-group", "type": "account",
+            "name": "Faulkner Media Group", "names": ["F and G"], "heard_as": "F and G"}
+    await judge_links([link], text, client=_Fake())
+    assert seen["mention"]["heard_as"] == "F and G"
+    assert any("F and G" in w for w in seen["transcript_excerpts"])

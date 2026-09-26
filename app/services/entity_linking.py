@@ -124,9 +124,10 @@ def build_link_questions(
         "mentioned": Noul(
             instructions=(
                 f"Does this meeting actually talk about the {etype} named in the mention? "
-                "Judge from the evidence quote and the transcript excerpts. Speech-to-text "
-                "misspellings of the name count as mentions. If no excerpt contains the name "
-                "and the evidence does not support it, answer no."
+                "Judge from the evidence quote and the transcript excerpts. The mention may "
+                "have been heard under another form (heard_as: initials, a first name, a "
+                "speech-to-text misspelling); those count as mentions. If no excerpt contains "
+                "the name or its heard form and the evidence does not support it, answer no."
             ),
         ),
     }
@@ -179,17 +180,17 @@ def build_link_questions(
 def _describe_candidate(candidate: dict) -> str:
     parts = [candidate.get("name", "")]
     ctx = candidate.get("context") or {}
-    for key in ("title", "role", "company", "description"):
+    for key in ("title", "role", "company", "description", "profile_summary"):
         if ctx.get(key):
             parts.append(f"{key}: {ctx[key]}")
     if ctx.get("co_mentioned_with"):
         parts.append("usually mentioned with " + ", ".join(ctx["co_mentioned_with"]))
-    return "; ".join(p for p in parts if p)[:500]
+    return "; ".join(p for p in parts if p)[:700]
 
 
 def build_link_state(mention: dict, windows: list[str], meeting: dict | None) -> dict:
     m = {"name": mention["name"], "type": mention["type"]}
-    for key in ("evidence", "role", "aliases_heard"):
+    for key in ("heard_as", "evidence", "role", "aliases_heard"):
         if mention.get(key):
             m[key] = mention[key]
     state: dict[str, Any] = {

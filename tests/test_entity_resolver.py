@@ -371,3 +371,27 @@ class TestSpeechToTextZone:
         cands = [{"id": "person-tony", "name": "Tony"}, {"id": "account-snowflake", "name": "Snowflake"}]
         assert fuzzy_zone("person", "Ryan", cands) == []
         assert fuzzy_zone("account", "Salesforce", cands) == []
+
+
+def test_person_merges_need_a_higher_bar(tmp_path):
+    from app.services.entity_resolver import (
+        TIEBREAK_MIN_PROBABILITY,
+        TIEBREAK_MIN_PROBABILITY_PERSON,
+        EntityResolver,
+    )
+
+    assert TIEBREAK_MIN_PROBABILITY_PERSON > TIEBREAK_MIN_PROBABILITY
+    (tmp_path / "people").mkdir()
+    (tmp_path / "people" / "nate.md").write_text(
+        "---\nid: person-nate\nname: Nate\n---\n# Nate\n\nAI content creator whose community "
+        "Scott follows; publishes the 'five levels of AI building' series.\n\n## Recent Signals\n- x\n"
+    )
+    kg = SimpleNamespace(
+        nodes={"person-nate": SimpleNamespace(id="person-nate", name="Nate", type="person",
+                                              metadata={"source_file": "people/nate.md"})},
+        git_ops=SimpleNamespace(repo_path=str(tmp_path)),
+    )
+    r = EntityResolver(kg, decisions=None)
+    assert r.profile_summary("person-nate").startswith("AI content creator whose community")
+    enriched = r.with_profile({"id": "person-nate", "name": "Nate", "context": {}})
+    assert "AI content creator" in enriched["context"]["profile_summary"]

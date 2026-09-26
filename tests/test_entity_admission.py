@@ -320,5 +320,6 @@ async def test_resolving_a_fuller_name_upgrades_the_entity(monkeypatch):
         [{"id": "person-ankit-patel", "name": "Ankit Patel", "type": "person"}]
     )
     assert upgrades == [("person-ankit", "Ankit Patel")]
-    assert resolved == [{"id": "person-ankit", "name": "Ankit Patel", "type": "person"}]
+    assert resolved == [{"id": "person-ankit", "name": "Ankit Patel", "type": "person",
+                         "surface": "Ankit Patel"}]
     assert id_map == {"person-ankit-patel": "person-ankit"}

@@ -268,6 +268,11 @@ TIEBREAK_OPERATION = "entity_resolution_tiebreak"
 # TIEBREAK_SPLIT_MIN_PROBABILITY. The digit-token veto still runs first,
 # removing candidates before the model ever sees them.
 TIEBREAK_MIN_PROBABILITY = 0.85
+# People share first names constantly, and on the Littlebird calls the model
+# merged namesakes at 0.85-0.96 (Nathan -> Nate, Nate Alvar -> Nate, an FMG CEO
+# "Dave" -> Dave Link) while the one true person merge scored 0.99. A person
+# merge needs more; entity_link still verifies every link downstream.
+TIEBREAK_MIN_PROBABILITY_PERSON = 0.95
 TIEBREAK_SPLIT_MIN_PROBABILITY = 0.60
 # Candidates enter the fuzzy zone at this SequenceMatcher ratio (well below
 # every per-type merge threshold), or via an acronym / shared distinctive word.
@@ -617,6 +622,48 @@ class EntityResolver:
         ranked = sorted(counts, key=lambda o: (-counts[o], o))[:limit]
         return [getattr(nodes[o], "name", o) for o in ranked]
 
+    def profile_summary(self, entity_id: str) -> str | None:
+        """First prose of the entity's profile file (who they are), for the
+        decision model: a title alone ("null") could not tell the AI content
+        creator Nate from an SVP named Nate."""
+        cache = self.__dict__.setdefault("_profile_cache", {})
+        if entity_id in cache:
+            return cache[entity_id]
+        summary = None
+        try:
+            import os
+
+            node = (getattr(self._kg, "nodes", None) or {}).get(entity_id)
+            source_file = ((getattr(node, "metadata", None) or {}).get("source_file")) if node else None
+            repo = getattr(getattr(self._kg, "git_ops", None), "repo_path", None)
+            if source_file and repo:
+                with open(os.path.join(repo, source_file), encoding="utf-8") as f:
+                    text = f.read()
+                if text.startswith("---"):
+                    parts = text.split("---", 2)
+                    text = parts[2] if len(parts) >= 3 else ""
+                prose = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith("Entity ID:"):
+                        if prose:
+                            break
+                        continue
+                    prose.append(line.lstrip("-* "))
+                    if sum(len(p) for p in prose) > 300:
+                        break
+                summary = " ".join(prose)[:300] or None
+        except Exception:  # context is optional, never a failure
+            summary = None
+        cache[entity_id] = summary
+        return summary
+
+    def with_profile(self, candidate: dict) -> dict:
+        summary = self.profile_summary(candidate.get("id", ""))
+        if not summary:
+            return candidate
+        return {**candidate, "context": {**(candidate.get("context") or {}), "profile_summary": summary}}
+
     async def prefetch(self, mentions: list[dict], meeting: dict | None = None) -> int:
         """Run the decision tiebreak for every mention that needs one.
 
@@ -647,6 +694,7 @@ class EntityResolver:
             zone = fuzzy_zone(etype, name, candidates)
             if not zone:
                 continue
+            zone = [(score, self.with_profile(c)) for score, c in zone]
             mention = {**m, "type": etype, "name": name}
             if meeting:
                 mention["meeting"] = meeting
@@ -670,7 +718,12 @@ class EntityResolver:
             return False
         answer = result.choice("match")
         probability = answer.probabilities.get(answer.choice, 0.0)
-        decided = apply_tiebreak(heuristic, options, answer.choice, probability, etype, name)
+        decided = apply_tiebreak(
+            heuristic, options, answer.choice, probability, etype, name,
+            min_probability=(
+                TIEBREAK_MIN_PROBABILITY_PERSON if etype == "person" else TIEBREAK_MIN_PROBABILITY
+            ),
+        )
         differs = decided.id != heuristic.id
         logger.info(
             "[RESOLVER] tiebreak %s %s/%r: heuristic=%s(%s) decision=%s p=%.2f -> %s%s",
