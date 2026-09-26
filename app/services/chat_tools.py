@@ -1759,6 +1759,15 @@ async def add_call_transcript(
             "job_id": outcome.get("job_id"),
         }
 
+    if state == "dropped":
+        admission = (outcome.get("result") or {}).get("admission") or {}
+        return {
+            "status": "dropped",
+            "job_id": outcome.get("job_id"),
+            "reason": admission.get("reason"),
+            "message": "Lane admission (ADR-003) rejected this content as junk; nothing was stored.",
+        }
+
     if state == "pending":
         return {
             "status": "processing",

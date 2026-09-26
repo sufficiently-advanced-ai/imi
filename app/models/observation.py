@@ -65,6 +65,13 @@ class Observation(BaseModel):
     # re-slugging them on rebuild would not reproduce ingest-time resolution
     # ("Dan" -> person-dan-kauppi).
     entity_ids: list[str] = Field(default_factory=list)
+    # ADR-003: record (we were party to it) or library (third-party content).
+    # Assigned by the ingest ADMIT phase and persisted in the frontmatter so a
+    # rebuild from files applies the same gates as live ingest. A library
+    # observation has no participants; its authors are kept separately and
+    # never become person nodes.
+    lane: str = "record"
+    authors: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
     status: str = "completed"
     is_finalized: bool = True
@@ -86,6 +93,14 @@ class Observation(BaseModel):
             frontmatter.append(f"title: {_yaml_escape(self.title)}")
         if self.occurred_at:
             frontmatter.append(f"start_time: {self.occurred_at.isoformat()}")
+        # Only written for library: record files stay byte-identical to the
+        # pre-lanes format (absent lane reads as record).
+        if self.lane != "record":
+            frontmatter.append(f"lane: {self.lane}")
+        if self.authors:
+            frontmatter.append("authors:")
+            for a in self.authors:
+                frontmatter.append(f"  - {_yaml_escape(a)}")
 
         frontmatter.append("entities_mentioned:")
         for entity_type, names in self.entities_mentioned.items():
@@ -154,6 +169,8 @@ class Observation(BaseModel):
             occurred_at=_parse_dt(frontmatter.get("start_time")),
             participants=frontmatter.get("participants") or [],
             entity_ids=frontmatter.get("entity_ids") or [],
+            lane=frontmatter.get("lane") or "record",
+            authors=frontmatter.get("authors") or [],
             key_points=frontmatter.get("key_points") or [],
             status=frontmatter.get("status", "completed"),
             is_finalized=frontmatter.get("is_finalized", False),

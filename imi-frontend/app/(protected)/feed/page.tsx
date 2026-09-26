@@ -15,6 +15,7 @@ import {
   CheckSquare,
   Lightbulb,
   KeyRound,
+  Quote,
   ArrowRight,
   Clock,
   Users,
@@ -65,9 +66,17 @@ const SIGNAL_CONFIG: Record<
     accent: "border-l-purple-500 dark:border-l-purple-400",
     badgeVariant: "secondary",
   },
+  // ADR-003: attributed statements from third-party (library) content.
+  claim: {
+    icon: Quote,
+    label: "Claim",
+    color: "text-slate-500 dark:text-slate-400",
+    accent: "border-l-slate-400 dark:border-l-slate-500",
+    badgeVariant: "default",
+  },
 };
 
-type FilterType = "all" | "decision" | "action_item" | "key_point" | "insight";
+type FilterType = "all" | "decision" | "action_item" | "key_point" | "insight" | "claim";
 
 // --- Components ---
 
@@ -114,6 +123,7 @@ function FilterBar({
     { label: "Action Items", value: "action_item", icon: CheckSquare },
     { label: "Key Points", value: "key_point", icon: KeyRound },
     { label: "Insights", value: "insight", icon: Lightbulb },
+    { label: "Claims", value: "claim", icon: Quote },
   ];
 
   return (

@@ -13,7 +13,7 @@ export interface EntityRef {
 
 export interface Signal {
   id: string;
-  type: "decision" | "action_item" | "key_point" | "insight";
+  type: "decision" | "action_item" | "key_point" | "insight" | "claim";
   content: string;
   source_meeting_id: string;
   source_meeting_title: string | null;
