@@ -78,3 +78,20 @@ def test_apply_stamps_lanes_and_rejects_through_audit_then_is_idempotent(tmp_pat
 
     rerun = _run(tmp_path, vpath, "--reject-junk")
     assert "capture:" not in rerun and "signal:" not in rerun
+
+
+def test_library_meeting_frontmatter_gets_lane_and_authors(tmp_path):
+    caps, mine, article, junk, vpath = _corpus(tmp_path)
+    meetings = tmp_path / "meetings"
+    meetings.mkdir()
+    doc = "---\nmeeting_id: m1\nbot_id: b1\nparticipants:\n  - Blogwatcher\n---\n\n# Body\n"
+    (meetings / "meeting-b1.md").write_text(doc)
+    (meetings / "meeting-b2.md").write_text(doc.replace("m1", "m2"))  # no verdict: untouched
+
+    _run(tmp_path, vpath, "--apply")
+
+    stamped = (meetings / "meeting-b1.md").read_text()
+    assert "lane: library\n---" in stamped and "authors:\n  - Blogwatcher" in stamped
+    assert "participants:" not in stamped and stamped.endswith("# Body\n")
+    assert (meetings / "meeting-b2.md").read_text() == doc.replace("m1", "m2")
+    assert "meeting:" not in _run(tmp_path, vpath)  # idempotent

@@ -9,6 +9,10 @@ Reads ``verdicts.jsonl`` from ``scripts/classify_memories.py`` and, per record:
   signal        lane from its source document's kind (conversation / own_note
                 -> record, third_party -> library)
   agent memory  record
+  meeting file  documents judged third_party / junk get ``lane: library`` in
+                their frontmatter and ``participants`` renamed to ``authors``,
+                so a rebuild from files links them only to their recorded
+                entity_ids and never mints person stubs from their names
 
 With ``--reject-junk`` it also rejects, through the audited review state
 machine (never by deleting files):
@@ -35,6 +39,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -187,6 +192,30 @@ def stamp_agent_memories(corpus: Path, verdicts: dict[str, dict], plan: Plan, re
             path.write_text(new.model_dump_json(indent=2), encoding="utf-8")
 
 
+_FRONTMATTER = re.compile(r"\A---\n(.*?\n)---\n", re.S)
+
+
+def stamp_meetings(corpus: Path, verdicts: dict[str, dict], plan: Plan) -> None:
+    """Line-level frontmatter edit (not a YAML re-dump) so diffs stay minimal."""
+    library_ids = {r["id"] for r in verdicts.values() if r["kind"] == "document"
+                   and (r.get("kind_verdict") or {}).get("choice") in ("third_party", "junk")}
+    for path in sorted((corpus / "meetings").glob("**/*.md")):
+        text = path.read_text(encoding="utf-8")
+        m = _FRONTMATTER.match(text)
+        if not m:
+            continue
+        fm = m.group(1)
+        mid = re.search(r"^meeting_id:\s*\"?([^\"\n]+)", fm, re.M)
+        if not mid or mid.group(1).strip() not in library_ids:
+            continue
+        if re.search(r"^lane:", fm, re.M):
+            continue  # already stamped
+        new_fm = re.sub(r"^participants:", "authors:", fm, flags=re.M) + "lane: library\n"
+        plan.note("meeting: frontmatter lane -> library", path.name)
+        if plan.apply:
+            path.write_text(text[: m.start(1)] + new_fm + text[m.end(1):], encoding="utf-8")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", required=True, type=Path, help="corpus repo dir")
@@ -200,6 +229,7 @@ def main() -> None:
     stamp_captures(args.corpus, verdicts, plan, args.reject_junk)
     stamp_signals(args.corpus, verdicts, plan, args.reject_junk)
     stamp_agent_memories(args.corpus, verdicts, plan, args.reject_junk)
+    stamp_meetings(args.corpus, verdicts, plan)
 
     print(("APPLIED" if args.apply else "DRY RUN — nothing written") + f" · corpus {args.corpus}")
     for what, n in sorted(plan.counts.items()):
