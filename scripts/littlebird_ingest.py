@@ -94,12 +94,17 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
             if phase not in seen:
                 seen.append(phase)
                 print(f"    ✓ {phase:<20} +{time.monotonic() - started:6.1f}s")
-        if s["status"] in ("completed", "failed"):
+        # "dropped": lane admission (ADR-003) rejected the item as junk.
+        if s["status"] in ("completed", "failed", "dropped"):
             break
         if time.monotonic() - started > poll_timeout:
             print(f"    … still {s.get('current_phase')} after {poll_timeout:.0f}s — moving on")
             return {"job_id": job_id, "status": "timeout"}
         time.sleep(2)
+
+    if s["status"] == "dropped":
+        print(f"    ⊘ DROPPED at admission: {(s.get('result') or {}).get('admission')}")
+        return {"job_id": job_id, "status": "dropped"}
 
     if s["status"] == "failed":
         print(f"    ✗ FAILED: {s.get('error')}")
@@ -146,7 +151,7 @@ def main() -> None:
         for n, m in enumerate(todo, 1):
             print(f"\n[{n}/{len(todo)}] {m['start_time'][:10]}  {m['title']}  ({len(m['participants'])} participants)")
             outcome = ingest_one(client, m, args.poll_timeout)
-            if outcome["status"] in ("completed", "duplicate"):
+            if outcome["status"] in ("completed", "duplicate", "dropped"):
                 ledger[m["littlebird_id"]] = outcome
                 ledger_path.write_text(json.dumps(ledger, indent=2, default=str))
 
