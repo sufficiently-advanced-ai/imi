@@ -58,6 +58,10 @@ CAPTURE_CHARS = 2500  # Jev degrades on large, noisy state; the head is enough t
 DOC_CHARS = 2500
 SIGNAL_DOC_CHARS = 600
 LOW_CONFIDENCE = 0.60
+# DigitalOcean caps /v1/systemone at ~1000 requests/min per team (429
+# "systemone_requests_per_minute"; measured 2026-09-26). Pace below it — the
+# cap is shared with holodeck's live ingest.
+DEFAULT_RPM = 900
 
 # Self-contained so the script runs anywhere the key is set, independent of the
 # host's config/inference.yaml routing.
@@ -217,7 +221,9 @@ LANE_CRITERIA = {
     "library": (
         "Library/reference: third-party published content he read, watched or subscribed to — "
         "articles, blog posts, newsletters, videos and their transcripts, news, product "
-        "announcements, papers, documentation. About the outside world, not about his own life."
+        "announcements, papers, documentation. About the outside world, not about his own life. "
+        "A blog post or essay written in the first person by someone else is library: 'I' there is "
+        "the author, not him."
     ),
     "junk": (
         "No durable value: automated or transactional notices (statements, bills, receipts, "
@@ -388,7 +394,29 @@ class Writer:
             print(f"  … {self.n} written, {self.errors} errors, ${self.cost:.4f}", file=sys.stderr)
 
 
+class Pacer:
+    """Spaces request starts evenly to stay under a requests-per-minute cap."""
+
+    def __init__(self, rpm: int):
+        self.interval = 60.0 / rpm
+        self.next = 0.0
+        self.lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        async with self.lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            if self.next > now:
+                await asyncio.sleep(self.next - now)
+            self.next = max(now, self.next) + self.interval
+
+
+PACER: Pacer | None = None
+
+
 async def _judge(client, w: Writer, key: str, base: dict, state, questions, operation, parse):
+    if PACER:
+        await PACER.wait()
     try:
         res = await client.decide(state, questions, operation=operation)
     except (DecisionUnavailable, ValueError) as e:
@@ -400,7 +428,9 @@ async def _judge(client, w: Writer, key: str, base: dict, state, questions, oper
     return rec
 
 
-async def classify(corpus: str, out: Path, limit: int | None, seed: int) -> None:
+async def classify(corpus: str, out: Path, limit: int | None, seed: int, rpm: int) -> None:
+    global PACER
+    PACER = Pacer(rpm)
     out.mkdir(parents=True, exist_ok=True)
     w = Writer(out / "verdicts.jsonl")
     client = DecisionClient(JEV_CONFIG)
@@ -520,8 +550,11 @@ def capture_lane(r: dict) -> tuple[str, bool]:
     return lv["choice"], lv["p"] < LOW_CONFIDENCE
 
 
+DOC_KINDS: dict[str, str] = {}  # document id -> judged kind, filled by report()
+
+
 def signal_lane(r: dict) -> str:
-    lane = DOC_KIND_TO_LANE.get(r.get("doc_kind") or "", "unknown")
+    lane = DOC_KIND_TO_LANE.get(DOC_KINDS.get(r.get("document")) or r.get("doc_kind") or "", "unknown")
     if lane != "junk" and r.get("standalone", 1) < 0.2:
         return "junk"
     return lane
@@ -539,6 +572,7 @@ def report(corpus: str, out: Path) -> None:
     docs = [r for r in ok if r["kind"] == "document"]
     sigs = [r for r in ok if r["kind"] == "signal"]
     agents = [r for r in ok if r["kind"] == "agent"]
+    DOC_KINDS.update({r["id"]: r["kind_verdict"]["choice"] for r in docs if r.get("kind_verdict")})
     C = collections.Counter
     L: list[str] = []
     p = L.append
@@ -689,9 +723,10 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--limit", type=int, help="classify a random sample of N captures (+N/5 documents)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--rpm", type=int, default=DEFAULT_RPM, help="max Jev requests per minute")
     args = ap.parse_args()
     if args.command == "classify":
-        asyncio.run(classify(args.corpus, args.out, args.limit, args.seed))
+        asyncio.run(classify(args.corpus, args.out, args.limit, args.seed, args.rpm))
     else:
         report(args.corpus, args.out)
 
