@@ -134,8 +134,13 @@ async def apply_admission(promoted: list[dict], fixture: dict, entity_types: lis
     existing = {
         (x["type"], x["name"].lower()): x for x in meeting.get("existing_entities") or []
     }
+    # Meeting participants are exempt from link verification, as in
+    # IngestOrchestrator._verify_links.
+    participants = {p.casefold() for p in meeting.get("participants") or []}
     links = []
     for i, e in enumerate(admitted):
+        if e["canonical_name"].casefold() in participants:
+            continue
         link = {"id": f"e{i}", "type": e["type"], "name": e["canonical_name"],
                 "names": e.get("aliases_heard") or [], "evidence": e.get("evidence"),
                 "role": e.get("role")}
