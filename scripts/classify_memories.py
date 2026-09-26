@@ -52,6 +52,7 @@ from app.services.inference.decisions import (  # noqa: E402
     DecisionUnavailable,
     Noul,
 )
+from app.services.lane_admission import build_lane_questions, lane_criteria  # noqa: E402
 
 OWNER = "Scott Jennings"
 CAPTURE_CHARS = 2500  # Jev degrades on large, noisy state; the head is enough to judge a lane
@@ -211,42 +212,11 @@ def cross_source_duplicates(captures: list[dict]) -> dict[str, str]:
 
 # ---- Jev questions ----------------------------------------------------------
 
-LANE_CRITERIA = {
-    "memory": (
-        f"Personal memory: about {OWNER}'s own work, life, projects, clients, relationships, "
-        "decisions, plans, commitments, lessons, or conversations and communities he took part in "
-        "(his meetings, his AI Circle peer group, his own notes, ideas and retrospectives). "
-        "Includes meeting summaries and mail written to him personally by people he works with."
-    ),
-    "library": (
-        "Library/reference: third-party published content he read, watched or subscribed to — "
-        "articles, blog posts, newsletters, videos and their transcripts, news, product "
-        "announcements, papers, documentation. About the outside world, not about his own life. "
-        "A blog post or essay written in the first person by someone else is library: 'I' there is "
-        "the author, not him."
-    ),
-    "junk": (
-        "No durable value: automated or transactional notices (statements, bills, receipts, "
-        "alerts, verification codes, shipping, account or security notifications, marketing "
-        "promos), system test fixtures and probes, error / login / paywall / suspended pages, "
-        "or content that is empty or mostly navigation and boilerplate."
-    ),
-}
-
+# The lane questions are production's (app/services/lane_admission.py), so a
+# backfill judges exactly as live admission does; clean_body is report-only.
+LANE_CRITERIA = lane_criteria(OWNER)
 CAPTURE_QUESTIONS = {
-    "lane": Choice(
-        instructions=(
-            f"This is one record from {OWNER}'s personal knowledge store. Which kind of record is it? "
-            "Judge by what the content is, not by its tags."
-        ),
-        criteria=LANE_CRITERIA,
-    ),
-    "durable": Noul(
-        instructions=(
-            f"Would {OWNER} plausibly want this recalled when working on something related six or "
-            "more months from now? Answer no for ephemeral, generic, promotional or trivial items."
-        ),
-    ),
+    **build_lane_questions(OWNER),
     "clean_body": Noul(
         instructions=(
             "Is the content a clean, readable body of text? Answer no if it is mostly site "
