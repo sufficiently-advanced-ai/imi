@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 ADMISSION_OPERATION = "entity_admission"
 DROP_MIN_PROBABILITY = 0.80  # P(not a named entity) needed to drop
-RETYPE_MIN_PROBABILITY = 0.85  # P(other type) needed to retype
+RETYPE_MIN_PROBABILITY = 0.85  # P(other type) needed to retype ...
+RETYPE_MAX_EXTRACTED_TYPE = 0.20  # ... and P(it IS the extracted type) at most this
 _NONE_TYPE = "none"
 
 
@@ -76,6 +77,17 @@ def build_admission_questions(entity_types: dict[str, str], extracted_type: str)
             ),
             criteria=criteria,
         ),
+        # Direct confirmation of the extractor's type: a retype needs BOTH a
+        # confident different type above AND a clear "no" here, so a close
+        # call in the multi-way choice alone (a project named after a place)
+        # never flips a correctly typed entity.
+        "is_extracted_type": Noul(
+            instructions=(
+                f"Is this mention a {extracted_type}"
+                + (f" ({entity_types[extracted_type]})" if entity_types.get(extracted_type) else "")
+                + "? Judge from the evidence of how it is talked about."
+            ),
+        ),
     }
     return questions, options
 
@@ -99,11 +111,17 @@ def apply_admission(
     options: dict[str, str],
     drop_min: float = DROP_MIN_PROBABILITY,
     retype_min: float = RETYPE_MIN_PROBABILITY,
+    p_is_extracted_type: float = 0.0,
 ) -> AdmissionVerdict:
     if (1.0 - p_named) >= drop_min:
         return AdmissionVerdict("drop", None, p_named, type_choice, type_probability)
     new_type = options.get(type_choice or "")
-    if new_type and new_type != extracted_type and type_probability >= retype_min:
+    if (
+        new_type
+        and new_type != extracted_type
+        and type_probability >= retype_min
+        and p_is_extracted_type <= RETYPE_MAX_EXTRACTED_TYPE
+    ):
         return AdmissionVerdict("retype", new_type, p_named, type_choice, type_probability)
     return AdmissionVerdict("keep", None, p_named, type_choice, type_probability)
 
@@ -148,14 +166,18 @@ async def judge_entities(
             p_named = result.noul("named")
             answer = result.choice("type")
             probability = answer.probabilities.get(answer.choice, 0.0)
+            p_is_type = result.noul("is_extracted_type")
         except (DecisionUnavailable, ValueError, KeyError, TypeError) as e:
             logger.warning("[ADMISSION] Judgment failed for %s/%r, keeping: %s", *key, e)
             return key, KEEP
-        verdict = apply_admission(mention["type"], p_named, answer.choice, probability, options)
+        verdict = apply_admission(
+            mention["type"], p_named, answer.choice, probability, options,
+            p_is_extracted_type=p_is_type,
+        )
         logger.info(
-            "[ADMISSION] %s %s/%r: p_named=%.2f type=%s p=%.2f -> %s%s",
+            "[ADMISSION] %s %s/%r: p_named=%.2f type=%s p=%.2f is_%s=%.2f -> %s%s",
             mode, key[0], key[1], p_named,
-            options.get(answer.choice, answer.choice), probability, verdict.action,
+            options.get(answer.choice, answer.choice), probability, key[0], p_is_type, verdict.action,
             f" ({verdict.new_type})" if verdict.new_type else "",
         )
         return key, verdict

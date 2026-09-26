@@ -36,10 +36,13 @@ class _FakeDecisions:
             raise DecisionUnavailable("down", status=503)
         p_named, etype, p_type = self.script[state["mention"]["name"]]
         label = next(k for k, v in questions["type"].criteria.items() if v.startswith(f"{etype}:"))
+        # The direct type confirmation agrees with the scripted type pick.
+        is_type = 0.05 if etype != state["mention"]["extracted_type"] else 0.95
         return DecisionResult(
             {
                 "named": NoulAnswer(p_named),
                 "type": ChoiceAnswer(choice=label, probabilities={label: p_type}, confidence=p_type),
+                "is_extracted_type": NoulAnswer(is_type),
             },
             "jev", "fake", 0, 0, 0.0, 0, {},
         )
@@ -64,8 +67,11 @@ def test_apply_admission_bars_are_asymmetric():
     assert apply_admission("person", 0.10, "t2", 0.9, opts).action == "drop"
     # 0.75 sure it's junk is not enough to drop a possibly-real entity
     assert apply_admission("person", 0.25, "t2", 0.9, opts).action == "keep"
-    assert apply_admission("team", 0.95, "t1", 0.90, opts).new_type == "account"
-    assert apply_admission("team", 0.95, "t1", 0.80, opts).action == "keep"
+    assert apply_admission("team", 0.95, "t1", 0.90, opts, p_is_extracted_type=0.05).new_type == "account"
+    assert apply_admission("team", 0.95, "t1", 0.80, opts, p_is_extracted_type=0.05).action == "keep"
+    # Confident multi-way pick, but Jev also says it IS the extracted type:
+    # the Atlas case (project named like a place) stays a project.
+    assert apply_admission("project", 0.95, "t1", 0.90, opts, p_is_extracted_type=0.60).action == "keep"
 
 
 @pytest.mark.asyncio
