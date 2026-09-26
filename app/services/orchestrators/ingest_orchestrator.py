@@ -853,18 +853,19 @@ class IngestOrchestrator(BaseOrchestrator):
             # existing node instead of minting a duplicate slug. The id map
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
+            library = getattr(observation, "lane", "record") == "library"
             entities, id_map = await self._resolve_collected_entities(
                 entities,
                 participants=observation.participants if observation else None,
                 meeting=self._meeting_context(observation),
                 resolver=self._resolver_for(observation, release=True),
                 evidence=self._salient_evidence(observation),
+                link_only=library,
             )
 
             # ADR-003 §3: library content links to EXISTING entities only —
             # it never creates a node. Everything the resolver could not match
             # to a known node is dropped here, before admission's create path.
-            library = getattr(observation, "lane", "record") == "library"
             if library:
                 known_nodes = getattr(self._graph, "nodes", None) or {}
                 not_known = {e["id"] for e in entities if e.get("id") and e["id"] not in known_nodes}
@@ -1005,9 +1006,14 @@ class IngestOrchestrator(BaseOrchestrator):
         meeting: dict | None = None,
         resolver=None,
         evidence: dict | None = None,
+        link_only: bool = False,
     ) -> tuple[list[dict], dict[str, str]]:
         """Resolve each (type, name) against existing graph entities and
         against the entities minted earlier in this same batch.
+
+        ``link_only`` (library lane, ADR-003): resolve, but never adopt a
+        fuller name onto an existing node — third-party text must not rename
+        our entities.
 
         Longer names resolve first and every new entity is registered with
         the resolver, so a later short form ("Dan") can land on a full form
@@ -1081,7 +1087,8 @@ class IngestOrchestrator(BaseOrchestrator):
             # with a shorter name ("Ankit Patel" -> person-ankit "Ankit"):
             # adopt the fuller name so the merged entity reads correctly.
             if (
-                resolved.matched_via != "new"
+                not link_only
+                and resolved.matched_via != "new"
                 and self._is_fuller_name(lookup, resolved.canonical_name, etype)
                 and hasattr(self._graph, "upgrade_entity_name")
             ):

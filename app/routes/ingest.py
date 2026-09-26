@@ -265,7 +265,8 @@ async def get_job_status(
     )
 
 
-_INGEST_TERMINAL_TYPES = frozenset({"ingest_complete", "ingest_failed"})
+# ingest_dropped: lane admission (ADR-003) rejected the content — terminal.
+_INGEST_TERMINAL_TYPES = frozenset({"ingest_complete", "ingest_failed", "ingest_dropped"})
 
 
 @router.get("/{job_id}/stream")

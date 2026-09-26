@@ -228,3 +228,32 @@ async def test_rebuild_never_mints_stubs_from_library_name_fields():
         "meetings/m.md", {"lane": "library", "entity_ids": ["person-scott-jennings"], **names}
     )
     assert linked == {"person-scott-jennings"}
+
+
+@pytest.mark.parametrize("link_only,upgraded", [(True, False), (False, True)])
+@pytest.mark.asyncio
+async def test_library_resolution_never_adopts_a_fuller_name(monkeypatch, link_only, upgraded):
+    """A newsletter saying "Ankit Patel" links to our person-ankit "Ankit" but
+    must not rename it (record content still may — the control case)."""
+    import app.services.entity_resolver as er
+
+    monkeypatch.setattr(er, "_default_decision_client", lambda: None)
+    node = SimpleNamespace(id="person-ankit", type="person", name="Ankit",
+                           metadata={"aliases": ["Ankit Patel"]})
+    graph = SimpleNamespace(nodes={"person-ankit": node}, upgrade_entity_name=AsyncMock(return_value=True))
+    orch = _orch(graph=graph)
+
+    entities, id_map = await orch._resolve_collected_entities(
+        [{"id": "person-ankit-patel", "type": "person", "name": "Ankit Patel"}], link_only=link_only,
+    )
+
+    assert [e["id"] for e in entities] == ["person-ankit"]
+    assert id_map == {"person-ankit-patel": "person-ankit"}
+    assert graph.upgrade_entity_name.await_count == (1 if upgraded else 0)
+
+
+def test_dropped_is_terminal_for_the_ingest_stream():
+    """The orchestrator emits ingest_dropped; a stream client must not hang."""
+    from app.routes.ingest import _INGEST_TERMINAL_TYPES
+
+    assert "ingest_dropped" in _INGEST_TERMINAL_TYPES
