@@ -824,6 +824,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     add_failures,
                     len(entities),
                 )
+            await self._link_entity_files(entities)
 
             # Record the resolved ids on the observation so the persisted
             # meeting file links to exactly these nodes when the graph is
@@ -965,7 +966,16 @@ class IngestOrchestrator(BaseOrchestrator):
                     resolved.matched_via,
                 )
             if new_id in seen_ids:
-                continue  # two surface forms resolved to the same entity
+                # Two surface forms resolved to the same entity. Keep the
+                # other form: the transcript may only contain this one
+                # ("F and G" while the extractor also emitted "Faulkner Media
+                # Group"), and link verification looks for what was heard.
+                for prev in resolved_entities:
+                    if prev.get("id") == new_id and ename and ename != prev.get("surface"):
+                        heard = prev.setdefault("also_heard", [])
+                        if ename not in heard:
+                            heard.append(ename)
+                continue
             seen_ids.add(new_id)
             updated = dict(entity)
             updated["id"] = new_id
@@ -1074,9 +1084,15 @@ class IngestOrchestrator(BaseOrchestrator):
             if not e.get("id") or not name or name.lower() in participants:
                 continue
             surface = (e.get("surface") or "").strip()
+            also_heard = [h for h in (e.get("also_heard") or []) if h and h.casefold() != name.casefold()]
+            if (not surface or surface.casefold() == name.casefold()) and also_heard:
+                surface = also_heard[0]  # the canonical form was not what was heard
             extra = salient.get((e.get("type"), surface), {}) or salient.get((e.get("type"), name), {})
             names = list(extra.get("aliases_heard") or [])
-            if surface and surface.casefold() != name.casefold():
+            for h in also_heard:
+                if h not in names:
+                    names.append(h)
+            if surface and surface.casefold() != name.casefold() and surface not in names:
                 names.insert(0, surface)
             link = {
                 "id": e["id"], "type": e.get("type"), "name": name,
@@ -1844,6 +1860,28 @@ class IngestOrchestrator(BaseOrchestrator):
             logger.warning("[INGEST] Graph document link failed for %s: %s", paths, e)
             return
         await self._record_live_files(list(paths))
+
+    async def _link_entity_files(self, entities: list[dict]) -> None:
+        """Ingest the entity files add_node wrote or touched, as a rebuild
+        does (each profile gets its own Document + MENTIONED_IN). Profiles the
+        ENRICH_PROFILES phase does not rewrite (accounts) were otherwise only
+        ever file-ingested by a rebuild."""
+        finder = getattr(self._graph, "_find_entity_file", None)
+        repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
+        if not callable(finder) or not repo:
+            return
+        paths = []
+        for entity in entities:
+            try:
+                full = finder(entity.get("id", ""))
+            except Exception:
+                full = None
+            if full:
+                rel = os.path.relpath(full, repo)
+                if rel not in paths:
+                    paths.append(rel)
+        if paths:
+            await self._link_document_in_graph(*paths)
 
     async def _record_live_files(self, paths: list[str]) -> None:
         """Index entity vectors for files live ingest just wrote and stamp

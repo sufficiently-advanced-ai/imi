@@ -40,7 +40,11 @@ logger = logging.getLogger(__name__)
 
 LINK_OPERATION = "entity_link"
 UNLINK_MIN_PROBABILITY = 0.75  # P(not mentioned) needed to drop a link
-DIFFERENT_MIN_PROBABILITY = 0.70  # P(different entity) needed to detach
+# The existing person must be Jev's clear answer to keep the link. p_same is
+# one share of a Choice split with namesakes, participants and 'someone
+# else'; testing 1 - p_same against a high bar kept links Jev did not back
+# (Aditya for 'AD' at 0.31, Dave Link for another company's Dave at 0.52).
+SAME_MIN_PROBABILITY = 0.55
 NAME_MIN_PROBABILITY = 0.70  # P(form) needed to adopt a fuller name
 REASSIGN_MIN_PROBABILITY = 0.70  # P(participant/namesake) needed to move a link onto them
 COMPAT_MIN_PROBABILITY = 0.50  # P(names compatible) for a participant reassignment
@@ -266,7 +270,7 @@ def apply_link(
     if not (fuller and fuller != name and name_probability >= NAME_MIN_PROBABILITY
             and len(fuller.split()) > len(name.split())):
         fuller = None
-    if p_same is not None and 1.0 - p_same >= DIFFERENT_MIN_PROBABILITY:
+    if p_same is not None and p_same < SAME_MIN_PROBABILITY:
         # Not the existing entity. With a fuller name it becomes its own
         # entity; without one it is left unlinked rather than misattributed.
         if fuller:

@@ -44,6 +44,15 @@ def test_apply_link_bars():
     assert apply_link("Brian", 0.95, 0.95, "n2", 0.50, opts).action == "keep"
 
 
+def test_existing_person_must_be_the_clear_answer_to_keep_a_link():
+    # 'AD' in a Foley call: Jev split between Aditya, Anudeep and someone else
+    assert apply_link("Aditya", 0.91, 0.31, None, 0.0, {}).action == "unlink"
+    # another company's CEO 'Dave' vs Dave Link, Euler's CTO
+    assert apply_link("Dave Link", 0.61, 0.52, None, 0.0, {}).action == "unlink"
+    # modest but clear identity answers keep
+    assert apply_link("Barry Goldberg", 0.50, 0.59, None, 0.0, {}).action == "keep"
+
+
 class _Fake:
     """Scripted Jev: name -> (p_mentioned, p_same_existing, preferred form)."""
 

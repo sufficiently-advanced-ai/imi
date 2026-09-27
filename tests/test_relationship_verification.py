@@ -206,3 +206,43 @@ def test_domain_relationships_accept_a_description():
                            description="Owns our relationship with that organisation")
     assert r.description.startswith("Owns")
     assert DomainRelationship(type="x", target="y", cardinality="one_to_many").description is None
+
+
+@pytest.mark.asyncio
+async def test_a_second_heard_form_of_the_same_entity_is_kept_for_link_verification():
+    # "Faulkner Media Group" (from the existing-entities context) and "F&G"
+    # (what was said) both resolve to account-faulkner-media-group; the heard
+    # form must survive so the transcript excerpt ("F and G") is found.
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = SimpleNamespace(upgrade_entity_name=AsyncMock(return_value=False))
+
+    class _Resolver:
+        def resolve(self, etype, name):
+            return SimpleNamespace(id="account-faulkner-media-group", canonical_name="Faulkner Media Group",
+                                   matched_via="tiebreak" if name == "F&G" else "exact", score=1.0)
+
+        def register(self, *a, **k):
+            pass
+
+        async def prefetch(self, *a, **k):
+            return 0
+
+    out, _ = await orch._resolve_collected_entities(
+        [{"type": "account", "name": "Faulkner Media Group", "id": "account-faulkner-media-group"},
+         {"type": "account", "name": "F&G", "id": "account-f-g"}],
+        resolver=_Resolver(),
+    )
+    assert len(out) == 1 and out[0]["also_heard"] == ["F&G"]
+
+
+@pytest.mark.asyncio
+async def test_entity_files_are_ingested_like_a_rebuild(tmp_path):
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    files = {"account-edf": str(tmp_path / "accounts" / "edf.md")}
+    orch._graph = SimpleNamespace(
+        _find_entity_file=lambda eid: files.get(eid),
+        git_ops=SimpleNamespace(repo_path=str(tmp_path)),
+    )
+    orch._link_document_in_graph = AsyncMock()
+    await orch._link_entity_files([{"id": "account-edf"}, {"id": "account-edf"}, {"id": "person-nofile"}])
+    orch._link_document_in_graph.assert_awaited_once_with(os.path.join("accounts", "edf.md"))
