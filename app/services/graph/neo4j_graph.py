@@ -539,11 +539,7 @@ class Neo4jKnowledgeGraph:
                     # account under ``projects`` would otherwise MERGE a
                     # Project stub with the account's id, which violates the
                     # Entity.id constraint and aborts the whole batch/rebuild.
-                    id_type = next(
-                        (t for t in sorted(self.domain.entities, key=len, reverse=True)
-                         if normalized.startswith(f"{t}-")),
-                        None,
-                    )
+                    id_type = self._id_entity_type(normalized)
                     if id_type is not None and id_type != rel_def.target:
                         logger.warning(
                             "Skipping %s edge %s -> %s: target is a %s, not a %s (%s)",
@@ -896,6 +892,11 @@ class Neo4jKnowledgeGraph:
         query = "MERGE (d:Document {id: $id}) SET d += $props"
         await self.neo4j.execute_write(query, {"id": doc_id, "props": props})
 
+    def _id_entity_type(self, entity_id: str) -> str | None:
+        """The domain type an id's prefix names (``account-foley`` -> account)."""
+        types = sorted(self.domain.entities if self.domain else [], key=len, reverse=True)
+        return next((t for t in types if entity_id.startswith(f"{t}-")), None)
+
     async def _ensure_entity_exists(
         self, entity_id: str, entity_type: str, name: str
     ) -> None:
@@ -909,6 +910,12 @@ class Neo4jKnowledgeGraph:
             logger.debug("Skipping stub for archived entity: %s", entity_id)
             return
 
+        # The id's prefix is authoritative: a stub labelled after the field
+        # that referenced it (``projects: [account-foley]`` -> Project) would
+        # collide with the real node on the Entity.id constraint.
+        id_type = self._id_entity_type(entity_id)
+        if id_type is not None and id_type != entity_type:
+            entity_type = id_type
         label = entity_type_to_label(entity_type)
         if self._batch is not None:
             self._batch.add_stub(
