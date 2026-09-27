@@ -856,7 +856,12 @@ class IngestOrchestrator(BaseOrchestrator):
         if self._graph and len(entities) >= 2:
             relationships = await self._infer_relationships(content, entities)
             logger.info(f"[INGEST] Inferred {len(relationships)} relationships")
-            result["edge_count"] = await self._write_relationship_edges(relationships)
+            result["edge_count"] = await self._write_relationship_edges(
+                relationships,
+                transcript=content,
+                meeting=self._meeting_context(observation),
+                names={e.get("id"): e.get("name") for e in entities if e.get("id")},
+            )
 
             if result["edge_count"] > 0:
                 logger.info(
@@ -1408,12 +1413,43 @@ class IngestOrchestrator(BaseOrchestrator):
                     return (target_id, source_id, rel.type)
         return None
 
-    async def _write_relationship_edges(self, relationships: list[dict]) -> int:
-        """Write entity-to-entity edges via create_semantic_relationship.
+    @staticmethod
+    def _relationship_holder(rel_type: str, source_id: str, target_id: str, domain):
+        """(holder_id, frontmatter_key, target_id): the entity whose domain
+        definition owns the relationship, and the key the graph build reads.
+        ``manages_accounts`` person->account lives on the person; an inverse
+        name (``belongs_to_account`` given as account->project) is stored on
+        the entity that defines it. None when the schema has neither."""
+        if not domain or not domain.entities:
+            return None
+        rt = rel_type.lower()
+        st = IngestOrchestrator._entity_type_from_id(source_id)
+        tt = IngestOrchestrator._entity_type_from_id(target_id)
+        ent = domain.entities.get(st)
+        if ent:
+            for rel in ent.relationships:
+                if rel.type == rt and rel.target == tt:
+                    return source_id, rel.type, target_id
+        ent = domain.entities.get(tt)
+        if ent:
+            for rel in ent.relationships:
+                if rel.inverse_name == rt and rel.target == st:
+                    return target_id, rel.type, source_id
+        return None
 
-        Resolves relationship types from the active domain schema by entity type
-        so they pass validation and appear in the domain graph visualization.
-        """
+    async def _write_relationship_edges(
+        self,
+        relationships: list[dict],
+        transcript: str = "",
+        meeting: dict | None = None,
+        names: dict[str, str] | None = None,
+    ) -> int:
+        """Files first: verify inferred entity-to-entity relationships with
+        the decision model (``relationship_verify``), write the accepted ones
+        into the owning entity's frontmatter, then ingest those files so the
+        edges (and their inverses) are built exactly as a rebuild builds them.
+        Writing Neo4j directly left edges no file recorded: a rebuild from
+        the corpus dropped them."""
         domain = None
         try:
             from ...core.domain_config.domain_config_service import (
@@ -1428,63 +1464,72 @@ class IngestOrchestrator(BaseOrchestrator):
                 e,
                 exc_info=True,
             )
+        if domain is None:
+            return 0
 
-        count = 0
+        names = names or {}
+        helper = None
+        try:
+            from app.services.entity_resolver import EntityResolver
+
+            helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        except Exception:  # profile context is optional
+            pass
+
+        proposals, seen = [], set()
         for rel in relationships:
-            source = rel.get("source", "")
-            target = rel.get("target", "")
-            if not source or not target:
+            source = (rel.get("source") or "").strip()
+            target = (rel.get("target") or "").strip()
+            if not source or not target or source == target:
                 continue
-            # Trust the LLM's typed triple when it is schema-valid — the tool
-            # (InferRelationshipsTool) already validated type signatures
-            # against the domain config. Falling back to
-            # _resolve_domain_relationship (which substitutes the FIRST
-            # type-pair match and silently rewrote reports_to into
-            # collaborates_with) only for legacy untyped output.
+            # Trust the LLM's typed triple when it is schema-valid (the tool
+            # validated type signatures). _resolve_domain_relationship picks
+            # the FIRST type-pair match (it silently rewrote reports_to into
+            # collaborates_with), so it is only for legacy untyped output.
             llm_type = (rel.get("type") or "").strip()
-            if llm_type and domain and self._is_schema_valid_relationship(
-                llm_type, source, target, domain
-            ):
-                from_id, to_id, domain_type = source, target, llm_type.lower()
-            else:
+            placed = self._relationship_holder(llm_type, source, target, domain) if llm_type else None
+            if placed is None and not llm_type:
                 resolved = self._resolve_domain_relationship(source, target, domain)
-                if not resolved:
-                    logger.debug(
-                        "[INGEST] No domain relationship for %s -> %s; skipping",
-                        source,
-                        target,
-                    )
-                    continue
-                from_id, to_id, domain_type = resolved
-            desc = rel.get("description", "")
-            evidence = rel.get("evidence", "")
-            raw_type = rel.get("type", "")
-            try:
-                await self._graph.create_semantic_relationship(
-                    from_entity_id=from_id,
-                    to_entity_id=to_id,
-                    relationship_type=domain_type,
-                    strength=0.8,
-                    evidence=evidence or desc or "Inferred from ingested content",
-                    reasoning=f"Inferred ({raw_type}): {desc}"
-                    if desc
-                    else f"Domain relationship: {domain_type}",
-                    source="ingest",
-                )
-                count += 1
-            except Exception as e:
-                logger.warning(
-                    "[INGEST] Edge write failed %s→%s→%s: %s",
-                    from_id,
-                    domain_type,
-                    to_id,
-                    e,
-                    exc_info=True,
-                )
+                placed = resolved and self._relationship_holder(resolved[2], resolved[0], resolved[1], domain)
+            if placed is None:
+                logger.debug("[INGEST] No domain relationship for %s -%s-> %s; skipping", source, llm_type, target)
+                continue
+            holder, key, other = placed
+            if (holder, key, other) in seen:
+                continue
+            seen.add((holder, key, other))
+            proposal = {
+                "source_id": holder, "type": key, "target_id": other,
+                "source_name": names.get(holder) or holder,
+                "target_name": names.get(other) or other,
+                "source_type": self._entity_type_from_id(holder),
+                "target_type": self._entity_type_from_id(other),
+                "evidence": rel.get("evidence") or "",
+                "description": rel.get("description") or "",
+            }
+            if helper is not None:
+                for side, eid in (("source", holder), ("target", other)):
+                    summary = helper.profile_summary(eid)
+                    if summary:
+                        proposal[f"{side}_profile"] = summary
+            proposals.append(proposal)
 
-        if count > 0:
-            logger.info(f"[INGEST] Wrote {count} entity relationship edges")
-            # Invalidate domain graph cache so new edges appear immediately
+        from app.services.relationship_verification import verify_relationships
+
+        accepted = await verify_relationships(proposals, transcript, meeting=meeting)
+
+        by_holder: dict[str, dict[str, list[str]]] = {}
+        for p in accepted:
+            by_holder.setdefault(p["source_id"], {}).setdefault(p["type"], []).append(p["target_id"])
+        paths, count = [], 0
+        for holder, rels in by_holder.items():
+            path = await self._graph.add_frontmatter_relationships(holder, rels)
+            if path:
+                paths.append(path)
+                count += sum(len(t) for t in rels.values())
+        if paths:
+            await self._link_document_in_graph(*paths)
+            logger.info(f"[INGEST] Wrote {count} entity relationship edges to {len(paths)} files")
             try:
                 from ...services.graph.factory import invalidate_graph_response_cache
 
@@ -1776,18 +1821,39 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
 
-    async def _link_document_in_graph(self, path: str) -> None:
-        """Give a persisted corpus file its graph footprint the same way a
+    async def _link_document_in_graph(self, *paths: str) -> None:
+        """Give persisted corpus files their graph footprint the same way a
         rebuild would: Document node, MENTIONED_IN edges, co-occurrence
         refresh (Neo4jKnowledgeGraph.ingest_files). Without this, live ingest
         and a rebuild from files produced different graphs — ingested
         meetings had no Document node and their entities no MENTIONED_IN."""
-        if not self._graph or not hasattr(self._graph, "ingest_files"):
+        if not self._graph or not hasattr(self._graph, "ingest_files") or not paths:
             return
         try:
-            await self._graph.ingest_files([path])
+            await self._graph.ingest_files(list(paths))
         except Exception as e:
-            logger.warning("[INGEST] Graph document link failed for %s: %s", path, e)
+            logger.warning("[INGEST] Graph document link failed for %s: %s", paths, e)
+            return
+        await self._record_live_files(list(paths))
+
+    async def _record_live_files(self, paths: list[str]) -> None:
+        """Index entity vectors for files live ingest just wrote and stamp
+        them in the corpus manifest (otherwise every boot re-ingested every
+        file written since the last build, and new entities had no vectors
+        until then). Never fails the ingest."""
+        try:
+            from app.services.graph.factory import get_semantica_knowledge
+            from app.services.graph_rebuild import make_reconciler
+
+            try:
+                sk = get_semantica_knowledge()
+            except Exception:
+                sk = None
+            reconciler = make_reconciler(kg=self._graph, sk=sk)
+            if reconciler is not None:
+                await reconciler.record_live_files(paths)
+        except Exception as e:
+            logger.warning("[INGEST] Manifest record failed for %s: %s", paths, e)
 
     # Profiles regenerated per meeting are bounded: each is one model call
     # carrying the meeting transcript.
@@ -1889,6 +1955,7 @@ class IngestOrchestrator(BaseOrchestrator):
             if self._graph and hasattr(self._graph, "ingest_files"):
                 try:
                     await self._graph.ingest_files(changed)
+                    await self._record_live_files(changed)
                 except Exception as e:
                     logger.warning("[INGEST] ENRICH_PROFILES graph refresh failed: %s", e)
 

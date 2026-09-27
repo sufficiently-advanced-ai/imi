@@ -24,6 +24,7 @@ Mechanism:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -192,6 +193,9 @@ async def write_graph_build_id(neo4j: Any, build_id: str, extra: dict[str, Any] 
 
 # ── Reconciler ────────────────────────────────────────────────────────────
 
+# Concurrent ingests record into the same manifest file.
+_LIVE_RECORD_LOCK = asyncio.Lock()
+
 
 class CorpusReconciler:
     """Bring the persistent graph up to date with the corpus on disk.
@@ -342,6 +346,40 @@ class CorpusReconciler:
             Manifest(build_id=graph_build_id, built_at=_now_iso(), files=next_files),
         )
         return summary
+
+    async def record_live_files(self, paths: list[str]) -> dict[str, Any]:
+        """Live ingest wrote ``paths`` and already ingested them into the
+        graph: index their entity vectors and stamp them in the manifest, so
+        new entities are searchable now and the next boot does not re-ingest
+        every file written since the last build. A path whose vector indexing
+        fails keeps its old stamp and is retried by the next reconcile."""
+        paths = [p for p in dict.fromkeys(paths) if p and is_markdown(p)]
+        if not paths:
+            return {"action": "none"}
+        async with _LIVE_RECORD_LOCK:
+            indexed, stamps = 0, {}
+            for path in paths:
+                full = os.path.join(self.repo_path, path)
+                try:
+                    if self.sk is not None and hasattr(self.sk, "ingest_file"):
+                        content = await self._read(path)
+                        if content is None:
+                            raise OSError(f"could not read {path}")
+                        if await self.sk.ingest_file(path, content):
+                            indexed += 1
+                    st = os.stat(full)
+                    stamps[path] = (st.st_mtime_ns, st.st_size)
+                except Exception as e:
+                    logger.warning("[RECONCILE] live record failed for %s: %s", path, e)
+            graph_build_id = await read_graph_build_id(self.neo4j)
+            manifest = load_manifest(self.manifest_path)
+            if manifest is None or graph_build_id is None or manifest.build_id != graph_build_id:
+                # No baseline for this graph yet: the next reconcile adopts or
+                # rebuilds, which covers these files.
+                return {"action": "no_baseline", "semantica_indexed": indexed}
+            manifest.files.update(stamps)
+            save_manifest(self.manifest_path, manifest)
+            return {"action": "recorded", "files": len(stamps), "semantica_indexed": indexed}
 
     async def _adopt(self, reason: str, graph_build_id: str | None = None) -> dict[str, Any]:
         """Bless the current disk state as the baseline for the existing graph.

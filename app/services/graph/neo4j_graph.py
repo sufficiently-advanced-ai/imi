@@ -3166,6 +3166,52 @@ class Neo4jKnowledgeGraph:
             logger.warning("Write-through failed for frontmatter %s: %s", entity_id, e)
             return False
 
+    async def add_frontmatter_relationships(
+        self, entity_id: str, relationships: dict[str, list[str]]
+    ) -> str | None:
+        """Files first: append relationship targets to the entity file's
+        frontmatter (``managed_by: [person-x]`` — the key is the domain
+        relationship type, exactly what the graph build reads) and commit.
+        Returns the repo-relative path when the file changed, else None; the
+        caller ``ingest_files`` it so the edge (and its inverse) is built the
+        same way a rebuild builds it."""
+        try:
+            async with self._get_file_lock(entity_id):
+                full_path = self._find_entity_file(entity_id)
+                if not full_path:
+                    logger.warning("No entity file for %s; relationships not written", entity_id)
+                    return None
+                with open(full_path, encoding="utf-8") as f:
+                    raw = f.read()
+                metadata, body = self._split_frontmatter_and_body(raw)
+                if metadata is None:
+                    return None
+                changed = False
+                for key, targets in relationships.items():
+                    current = metadata.get(key) or []
+                    if isinstance(current, str):
+                        current = [current]
+                    for target in targets:
+                        if target and target != entity_id and target not in current:
+                            current.append(target)
+                            changed = True
+                    metadata[key] = current
+                if not changed:
+                    return None
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(self._join_frontmatter_and_body(metadata, body))
+                rel_path = os.path.relpath(full_path, self.git_ops.repo_path)
+                try:
+                    await self.git_ops.commit_and_push(
+                        [rel_path], f"Graph: add relationships to {entity_id}"
+                    )
+                except Exception as e:
+                    logger.warning("Write-through git commit failed: %s", e)
+                return rel_path
+        except Exception as e:
+            logger.warning("Relationship write-through failed for %s: %s", entity_id, e)
+            return None
+
     async def _rewrite_signal_refs(
         self, id_map: dict[str, str], names: dict[str, str]
     ) -> list[str]:

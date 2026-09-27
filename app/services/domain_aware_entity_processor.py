@@ -134,10 +134,19 @@ class DomainAwareEntityProcessor:
 
     @classmethod
     def _preserve_bookkeeping(
-        cls, profile_content: str, existing_attrs: dict[str, Any], existing_body: str
+        cls,
+        profile_content: str,
+        existing_attrs: dict[str, Any],
+        existing_body: str,
+        relationship_keys: tuple[str, ...] = (),
     ) -> str:
         """Restore graph-owned frontmatter keys and the Recent Signals section
-        from the previous version of the file if the model dropped them."""
+        from the previous version of the file if the model dropped them.
+
+        ``relationship_keys`` (the entity type's domain relationship types,
+        ``managed_by``...) are graph-owned too: only the verified relationship
+        path writes them, so the profile writer can neither drop a verified
+        edge nor add an unverified one."""
         if not profile_content.startswith("---"):
             return profile_content
         parts = profile_content.split("---", 2)
@@ -160,6 +169,11 @@ class DomainAwareEntityProcessor:
                 frontmatter["aliases"] = merged
             else:
                 frontmatter[key] = existing_attrs[key]
+        for key in relationship_keys:
+            if (existing_attrs or {}).get(key):
+                frontmatter[key] = existing_attrs[key]
+            else:
+                frontmatter.pop(key, None)
         body = parts[2]
         old_section = cls._extract_section(existing_body or "", cls.RECENT_SIGNALS_HEADER)
         if old_section and cls.RECENT_SIGNALS_HEADER not in body:
@@ -691,8 +705,10 @@ Return the complete updated profile."""
         profile_content = self._ensure_required_frontmatter(
             profile_content, entity_type, entity_id
         )
+        entity_def = (getattr(domain_config, "entities", None) or {}).get(entity_type)
         profile_content = self._preserve_bookkeeping(
-            profile_content, context.get("attributes") or {}, context.get("content") or ""
+            profile_content, context.get("attributes") or {}, context.get("content") or "",
+            relationship_keys=tuple(r.type for r in (getattr(entity_def, "relationships", None) or [])),
         )
         profile_content = self._drop_unknown_entity_ids(profile_content, entity_id, domain_config)
 
