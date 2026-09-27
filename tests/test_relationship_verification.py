@@ -246,3 +246,42 @@ async def test_entity_files_are_ingested_like_a_rebuild(tmp_path):
     orch._link_document_in_graph = AsyncMock()
     await orch._link_entity_files([{"id": "account-edf"}, {"id": "account-edf"}, {"id": "person-nofile"}])
     orch._link_document_in_graph.assert_awaited_once_with(os.path.join("accounts", "edf.md"))
+
+
+def test_glossary_maps_misheard_names_to_canonical(tmp_path):
+    from app.services.glossary import canonicalize_mentions, load_glossary
+
+    (tmp_path / "glossary.yaml").write_text("imi: [EME, Emmy]\nPharmerica: Farmerica\n")
+    g = load_glossary(str(tmp_path))
+    assert g == {"eme": "imi", "emmy": "imi", "farmerica": "Pharmerica"}
+    out = canonicalize_mentions(
+        [{"type": "project", "name": "EME", "id": "project-eme"}, {"type": "person", "name": "Dan"}], g)
+    assert out[0]["name"] == "imi" and out[0]["surface"] == "EME"
+    assert out[1] == {"type": "person", "name": "Dan"}
+    assert load_glossary(str(tmp_path / "missing")) == {}
+
+
+@pytest.mark.asyncio
+async def test_misheard_mention_resolves_to_the_canonical_entity(tmp_path):
+    (tmp_path / "glossary.yaml").write_text("imi: [EME]\n")
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = SimpleNamespace(git_ops=SimpleNamespace(repo_path=str(tmp_path)),
+                                  upgrade_entity_name=AsyncMock(return_value=False))
+    asked = []
+
+    class _Resolver:
+        def resolve(self, etype, name):
+            asked.append(name)
+            return SimpleNamespace(id=f"{etype}-{name.lower()}", canonical_name=name, matched_via="new", score=1.0)
+
+        def register(self, *a, **k):
+            pass
+
+        async def prefetch(self, *a, **k):
+            return 0
+
+    out, id_map = await orch._resolve_collected_entities(
+        [{"type": "project", "name": "EME", "id": "project-eme"}], resolver=_Resolver())
+    assert asked == ["imi"]
+    assert out[0]["id"] == "project-imi" and out[0]["name"] == "imi" and out[0]["surface"] == "EME"
+    assert id_map == {"project-eme": "project-imi"}  # signal refs follow

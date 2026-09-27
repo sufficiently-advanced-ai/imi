@@ -901,6 +901,17 @@ class IngestOrchestrator(BaseOrchestrator):
 
         if resolver is None:
             resolver = EntityResolver(knowledge_graph=self._graph)
+        # Names speech-to-text reliably mishears ("EME" for imi) resolve as
+        # the KB glossary's canonical name; the heard form stays the surface.
+        try:
+            from app.services.glossary import canonicalize_mentions, load_glossary
+
+            repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
+            entities = canonicalize_mentions(
+                entities, load_glossary(repo if isinstance(repo, str) else None)
+            )
+        except Exception as e:  # a bad glossary must never fail the ingest
+            logger.warning("[INGEST] Glossary not applied: %s", e)
         # Mentions first seen here (signal refs/owners) still get the salient
         # evidence quote when one exists for the same (type, name).
         evidence = evidence or {}
