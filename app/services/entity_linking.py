@@ -76,7 +76,9 @@ def transcript_windows(transcript: str, names: list[str]) -> list[str]:
     folded = _fold(transcript)
     spans: list[tuple[int, int]] = []
     for name in sorted({n for n in names if n and n.strip()}, key=len, reverse=True):
-        pattern = r"\b" + re.escape(_fold(name).strip()) + r"\b"
+        # Speech-to-text spells "&" out ("F&G" is heard as "F and G").
+        body = re.escape(_fold(name).strip()).replace(r"\&", r"\s*(?:&|and|n)\s*")
+        pattern = r"\b" + body + r"\b"
         for m in re.finditer(pattern, folded):
             start, end = max(0, m.start() - _WINDOW), min(len(transcript), m.end() + _WINDOW)
             if all(end <= s or start >= e for s, e in spans):
@@ -126,6 +128,16 @@ def build_link_questions(
     from app.services.inference.decisions import Choice, Noul
 
     etype = mention["type"]
+    heard_as = mention.get("heard_as")
+    # When the resolver mapped a heard form onto an existing entity ("F&G" ->
+    # Faulkner Media Group, from earlier meetings), that identity was already
+    # judged; asking whether the canonical name is talked about unlinked a
+    # correct match because the transcript never says it.
+    heard_note = (
+        f" Here it was heard as '{heard_as}': answer only whether '{heard_as}' is talked "
+        f"about. Whether '{heard_as}' is this {etype} is judged separately, not here."
+        if heard_as else ""
+    )
     questions: dict[str, Any] = {
         "mentioned": Noul(
             instructions=(
@@ -134,6 +146,7 @@ def build_link_questions(
                 "have been heard under another form (heard_as: initials, a first name, a "
                 "speech-to-text misspelling); those count as mentions. If no excerpt contains "
                 "the name or its heard form and the evidence does not support it, answer no."
+                + heard_note
             ),
         ),
     }

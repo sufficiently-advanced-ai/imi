@@ -331,3 +331,20 @@ async def test_namesake_in_kb_can_take_the_link():
     verdicts = await judge_links([link], "present it as a product to Brian at Foley", client=_Fake())
     v = verdicts["person-brian"]
     assert (v.action, v.target_id, v.name) == ("reassign", "person-brian-vigilani", "Brian Vigilani")
+
+
+def test_windows_match_an_ampersand_spelled_out():
+    # "F&G" is heard as "F and G"; without an excerpt the judge unlinked a correct match
+    transcript = "Share a little bit about F and G, what we're doing, what this role means."
+    assert transcript_windows(transcript, ["Faulkner Media Group", "F&G"])
+    assert transcript_windows("we use FNG for that", ["F&G"])  # "n" contraction too
+
+
+def test_mentioned_question_asks_about_the_heard_form():
+    from app.services.entity_linking import build_link_questions
+
+    mention = {"name": "Faulkner Media Group", "type": "account", "heard_as": "F&G"}
+    questions, *_ = build_link_questions(mention, {"name": "Faulkner Media Group"}, [])
+    assert "'F&G'" in questions["mentioned"].instructions
+    plain, *_ = build_link_questions({"name": "Foley", "type": "account"}, None, [])
+    assert "heard as '" not in plain["mentioned"].instructions
