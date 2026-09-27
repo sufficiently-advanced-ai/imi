@@ -543,8 +543,8 @@ class TestFindContradictions:
         assert result["contradictions"] == []
 
     @pytest.mark.asyncio
-    async def test_uses_references_relationship_pattern(self):
-        """Should query REFERENCES_* relationships, not :ABOUT."""
+    async def test_uses_signal_writer_relationship_pattern(self):
+        """Should query SignalGraphWriter's edges, not :ABOUT or REFERENCES_*."""
         from app.services.temporal_queries import TemporalQueryService
 
         mock_sk = MagicMock()
@@ -555,7 +555,8 @@ class TestFindContradictions:
         await svc.find_contradictions("entity-1")
 
         cypher = mock_sk.graph_store.execute_query.call_args[0][0]
-        assert "REFERENCES_" in cypher
+        assert "MENTIONS" in cypher and "ASSIGNED_TO" in cypher
+        assert "REFERENCES_" not in cypher
         assert "ABOUT" not in cypher
 
 

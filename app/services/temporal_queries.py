@@ -231,17 +231,17 @@ class TemporalQueryService:
         """
         # ------------------------------------------------------------------
         # 1. Fetch signal IDs from the graph.
-        #    Signals link to entities via REFERENCES_* (Semantica ingest path)
-        #    OR MENTIONS (SignalGraphWriter path) — live signal data uses
-        #    MENTIONS, so matching only REFERENCES_* returns nothing there.
+        #    Signals link to entities through SignalGraphWriter's edges
+        #    (MENTIONS / ASSIGNED_TO / FOR_CLIENT); the Semantica layer no
+        #    longer writes its own REFERENCES_* signal copies.
         # ------------------------------------------------------------------
         cypher = (
             "MATCH (s:Signal)-[r]->(e:Entity {id: $entity_id}) "
-            "WHERE (type(r) STARTS WITH 'REFERENCES_' OR type(r) = 'MENTIONS') "
+            "WHERE type(r) IN ['MENTIONS', 'ASSIGNED_TO', 'FOR_CLIENT'] "
         )
         params: dict[str, Any] = {"entity_id": entity_id}
 
-        # _ingest_signals() stores created_at and signal_type on signal nodes;
+        # SignalGraphWriter stores created_at and signal_type on signal nodes;
         # use coalesce for backward compatibility with any older data.
         if date_from:
             cypher += "AND coalesce(s.created_at, s.timestamp) >= $date_from "

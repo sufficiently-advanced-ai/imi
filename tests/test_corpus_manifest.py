@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -358,101 +359,54 @@ async def test_removed_files_drop_semantica_vectors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_semantica_ingest_file_distinguishes_skip_from_failure():
+async def test_semantica_ingest_file_indexes_the_graph_node_and_distinguishes_skip_from_failure():
     from unittest.mock import AsyncMock
 
     from app.services.semantica_knowledge import SemanticaKnowledge
 
     sk = SemanticaKnowledge.__new__(SemanticaKnowledge)
     sk.domain = None
-    sk.add_entity = AsyncMock(return_value=True)
-    sk._process_relationships = AsyncMock(return_value=0)
-    entity_md = "---\ntype: person\nname: Alice\n---\nbody\n"
+    node = {"id": "person-ankit", "name": "Ankit Patel", "entity_type": "person",
+            "source_file": "people/ankit.md", "title": "Engineer"}
+    sk._query = AsyncMock(return_value=[{"n": node}])
+    sk._extract_records = lambda rows: rows
+    sk.search = SimpleNamespace(index_entity=AsyncMock(return_value="v1"))
+    sk.add_entity = AsyncMock(side_effect=AssertionError("Semantica must not write graph nodes"))
+    entity_md = "---\ntype: person\nname: Ankit Patel\nid: person-ankit\n---\nbody\n"
 
-    assert await sk.ingest_file("entities/person/alice.md", entity_md) is True
+    assert await sk.ingest_file("people/ankit.md", entity_md) is True
+    # indexed under the graph's id, not make_entity_id(type, name) ("person-ankit-patel")
+    kw = sk.search.index_entity.await_args.kwargs
+    assert kw["entity_id"] == "person-ankit" and kw["file_path"] == "people/ankit.md"
     assert await sk.ingest_file("notes.md", "no frontmatter here") is False  # skip, not failure
 
-    sk.add_entity = AsyncMock(return_value=False)  # add_entity swallowed an error
-    with pytest.raises(RuntimeError, match="add_entity failed"):
-        await sk.ingest_file("entities/person/alice.md", entity_md)
+    sk.search.index_entity = AsyncMock(return_value=None)  # vector write failed
+    with pytest.raises(RuntimeError, match="vector indexing failed"):
+        await sk.ingest_file("people/ankit.md", entity_md)
 
-
-def _relationship_domain():
-    from app.model_schemas.domain_config import (
-        DomainAttribute,
-        DomainConfiguration,
-        DomainEntity,
-        DomainRelationship,
-    )
-
-    return DomainConfiguration(
-        id="t",
-        name="T",
-        entities={
-            "person": DomainEntity(
-                name="person", description="p", plural="people",
-                attributes=[DomainAttribute(name="name", type="string", required=True)],
-                relationships=[
-                    DomainRelationship(
-                        type="has_projects", target="project", cardinality="one-to-many", inverse_name="project_of"
-                    )
-                ],
-            ),
-            "project": DomainEntity(
-                name="project", description="pr", plural="projects",
-                attributes=[DomainAttribute(name="name", type="string", required=True)],
-                relationships=[
-                    DomainRelationship(type="project_of", target="person", cardinality="many-to-one")
-                ],
-            ),
-        },
-    )
+    sk._query = AsyncMock(return_value=[])  # the graph never got the node
+    with pytest.raises(RuntimeError, match="no graph node"):
+        await sk.ingest_file("people/ankit.md", entity_md)
 
 
 @pytest.mark.asyncio
-async def test_process_relationships_propagates_write_failures():
+async def test_semantica_build_graph_only_indexes_vectors():
     from unittest.mock import AsyncMock
 
     from app.services.semantica_knowledge import SemanticaKnowledge
 
     sk = SemanticaKnowledge.__new__(SemanticaKnowledge)
-    sk.domain = _relationship_domain()
-    sk.get_entity = AsyncMock(return_value=None)
-    sk.add_entity = AsyncMock(return_value=True)
-    sk.add_relationship = AsyncMock(return_value=True)
-    meta = {"has_projects": ["Apollo"]}
+    sk.last_build = None
+    sk.nodes, sk.edges = {}, {}
+    sk.search = SimpleNamespace(clear_entity_vectors=AsyncMock(return_value=5))
+    sk.reindex_entities_from_graph = AsyncMock(return_value=3)
+    sk._purge_legacy_signal_vectors = AsyncMock(return_value=2)
+    sk._sync_caches = AsyncMock()
+    sk.clear_all_data = AsyncMock(side_effect=AssertionError("must never wipe Neo4j"))
+    sk.add_entity = AsyncMock(side_effect=AssertionError("must not write graph nodes"))
 
-    assert await sk._process_relationships("person-alice", "person", meta) == 2  # direct + inverse
+    out = await sk.build_graph(force_rebuild=True, clean=True)
 
-    sk.add_relationship = AsyncMock(return_value=False)  # direct edge write swallowed an error
-    with pytest.raises(RuntimeError, match="^relationship write failed"):
-        await sk._process_relationships("person-alice", "person", meta)
-
-    sk.add_relationship = AsyncMock(side_effect=[True, False])  # inverse edge write failed
-    with pytest.raises(RuntimeError, match="inverse relationship write failed"):
-        await sk._process_relationships("person-alice", "person", meta)
-
-    sk.add_relationship = AsyncMock(return_value=True)
-    sk.add_entity = AsyncMock(return_value=False)  # stub write failed
-    with pytest.raises(RuntimeError, match="stub write failed"):
-        await sk._process_relationships("person-alice", "person", meta)
-
-    # ingest_file surfaces every required write's failure, so the reconcile
-    # keeps the file for retry: stub, direct edge, inverse edge.
-    profile = "---\ntype: person\nname: Alice\nhas_projects:\n  - Apollo\n---\n"
-    sk.add_entity = AsyncMock(side_effect=[True, False])  # profile ok, stub fails
-    sk.add_relationship = AsyncMock(return_value=True)
-    with pytest.raises(RuntimeError, match="stub write failed"):
-        await sk.ingest_file("entities/person/alice.md", profile)
-
-    sk.add_entity = AsyncMock(return_value=True)
-    sk.add_relationship = AsyncMock(side_effect=[False])  # direct edge fails
-    with pytest.raises(RuntimeError, match="^relationship write failed"):
-        await sk.ingest_file("entities/person/alice.md", profile)
-
-    sk.add_relationship = AsyncMock(side_effect=[True, False])  # inverse edge fails
-    with pytest.raises(RuntimeError, match="inverse relationship write failed"):
-        await sk.ingest_file("entities/person/alice.md", profile)
-
-    sk.add_relationship = AsyncMock(return_value=True)
-    assert await sk.ingest_file("entities/person/alice.md", profile) is True
+    assert out["status"] == "built" and out["nodes"] == 3
+    sk.search.clear_entity_vectors.assert_awaited_once()
+    sk._purge_legacy_signal_vectors.assert_awaited_once()

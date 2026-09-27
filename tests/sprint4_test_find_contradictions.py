@@ -553,19 +553,19 @@ class TestWindowFiltering:
 
 
 # ===========================================================================
-# REFERENCES_ relationship still used
+# Signal edges: SignalGraphWriter's, not Semantica's retired REFERENCES_*
 # ===========================================================================
 
 
-class TestReferencesRelationship:
-    """Cypher must still query REFERENCES_* edges (not :ABOUT)."""
+class TestSignalRelationships:
+    """Cypher queries the pipeline's signal edges (not :ABOUT / REFERENCES_*)."""
 
     @pytest.mark.asyncio
-    async def test_uses_references_relationship_pattern(self):
+    async def test_uses_signal_writer_relationship_pattern(self):
         svc = _make_svc(graph_records=[])
         await svc.find_contradictions("entity-1")
 
         cypher = svc.sk.graph_store.execute_query.call_args[0][0]
-        assert "REFERENCES_" in cypher
+        assert "REFERENCES_" not in cypher
         assert "ABOUT" not in cypher
-        assert "MENTIONS" in cypher
+        assert "MENTIONS" in cypher and "FOR_CLIENT" in cypher
