@@ -1866,20 +1866,21 @@ class IngestOrchestrator(BaseOrchestrator):
         does (each profile gets its own Document + MENTIONED_IN). Profiles the
         ENRICH_PROFILES phase does not rewrite (accounts) were otherwise only
         ever file-ingested by a rebuild."""
-        finder = getattr(self._graph, "_find_entity_file", None)
-        repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
-        if not callable(finder) or not repo:
-            return
-        paths = []
-        for entity in entities:
-            try:
+        try:
+            finder = getattr(self._graph, "_find_entity_file", None)
+            repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
+            if not callable(finder) or not isinstance(repo, str):
+                return
+            paths = []
+            for entity in entities:
                 full = finder(entity.get("id", ""))
-            except Exception:
-                full = None
-            if full:
-                rel = os.path.relpath(full, repo)
-                if rel not in paths:
-                    paths.append(rel)
+                if isinstance(full, str) and full:
+                    rel = os.path.relpath(full, repo)
+                    if rel not in paths:
+                        paths.append(rel)
+        except Exception as e:  # graph footprint only — never fail the ingest
+            logger.warning("[INGEST] Entity file lookup failed: %s", e)
+            return
         if paths:
             await self._link_document_in_graph(*paths)
 
