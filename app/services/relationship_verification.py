@@ -29,7 +29,7 @@ from app.services.entity_linking import transcript_windows
 logger = logging.getLogger(__name__)
 
 VERIFY_OPERATION = "relationship_verify"
-SUPPORT_MIN_PROBABILITY = 0.80  # P(supported) needed to write the edge
+SUPPORT_MIN_PROBABILITY = 0.75  # P(supported) needed to write the edge (it10: 0.75-0.79 drops were all true)
 
 
 def describe(rel: dict) -> str:
