@@ -42,7 +42,8 @@ LINK_OPERATION = "entity_link"
 UNLINK_MIN_PROBABILITY = 0.75  # P(not mentioned) needed to drop a link
 DIFFERENT_MIN_PROBABILITY = 0.70  # P(different entity) needed to detach
 NAME_MIN_PROBABILITY = 0.70  # P(form) needed to adopt a fuller name
-REASSIGN_MIN_PROBABILITY = 0.70  # P(participant) needed to move a link onto them
+REASSIGN_MIN_PROBABILITY = 0.70  # P(participant/namesake) needed to move a link onto them
+COMPAT_MIN_PROBABILITY = 0.50  # P(names compatible) for a participant reassignment
 _WINDOW = 160
 _MAX_WINDOWS = 3
 _MAX_FORMS = 6
@@ -52,10 +53,11 @@ _DIFFERENT = "different"
 @dataclass(frozen=True)
 class LinkVerdict:
     action: str  # "keep" | "unlink" | "rename" | "split" | "reassign"
-    name: str | None = None  # fuller name (rename/split) or participant (reassign)
+    name: str | None = None  # fuller name (rename/split) or reassign target's name
     p_mentioned: float = 1.0
     p_same: float | None = None
     name_probability: float | None = None
+    target_id: str | None = None  # reassign to an existing entity (namesake)
 
 
 KEEP = LinkVerdict("keep")
@@ -115,7 +117,11 @@ _FILLERS = {"um", "uh", "yeah", "so", "and", "but", "okay", "ok", "right", "well
 
 
 def build_link_questions(
-    mention: dict, candidate: dict | None, forms: list[str], participants: list[str] | None = None
+    mention: dict,
+    candidate: dict | None,
+    forms: list[str],
+    participants: list[str] | None = None,
+    namesakes: list[dict] | None = None,
 ):
     from app.services.inference.decisions import Choice, Noul
 
@@ -140,18 +146,41 @@ def build_link_questions(
     # The meeting's participants are offered as answers too: a nickname or
     # initials in the room ("ask AD some questions") usually mean one of them,
     # and the extractor mapped "AD" onto an unrelated existing "Aditya".
+    namesake_options: dict[str, dict] = {}
     if etype == "person":
         taken = {(candidate or {}).get("name", "").casefold(), mention["name"].casefold()}
         participant_options = {
             f"p{i}": p
             for i, p in enumerate([p for p in (participants or []) if p.casefold() not in taken], start=1)
         }
-    if etype == "person" and (candidate is not None or participant_options):
+        # Other people in the knowledge base who share the first name: the
+        # resolver picks one; the right one may be another ("Brian" in a Foley
+        # call is Brian Vigilani, not the cohort's Brian).
+        namesake_options = {
+            f"k{i}": c
+            for i, c in enumerate(
+                [c for c in (namesakes or []) if c.get("id") != (candidate or {}).get("id")][:4],
+                start=1,
+            )
+        }
+    if etype == "person" and (candidate is not None or participant_options or namesake_options):
         criteria = {}
         if candidate is not None:
             criteria["existing"] = _describe_candidate(candidate)
+        for key, c in namesake_options.items():
+            criteria[key] = _describe_candidate(c) + " (another person in the knowledge base)"
         for key, pname in participant_options.items():
             criteria[key] = f"{pname}, a participant in this meeting (nickname, initials or first name)"
+            # A reassignment to a participant also needs the names to fit:
+            # the identity pick alone moved "Wendy" onto "Scott Jennings",
+            # the only listed participant of a group call.
+            heard = mention.get("heard_as") or mention["name"]
+            questions[f"compat_{key}"] = Noul(
+                instructions=(
+                    f"Judge only the names: could '{heard}' be a nickname, initials, a first "
+                    f"name or another short form of '{pname}'?"
+                ),
+            )
         criteria[_DIFFERENT] = f"Someone else: a different {etype} who merely has a similar name"
         questions["same"] = Choice(
             instructions=(
@@ -174,7 +203,7 @@ def build_link_questions(
             ),
             criteria=dict(name_options),
         )
-    return questions, name_options, participant_options
+    return questions, name_options, participant_options, namesake_options
 
 
 def _describe_candidate(candidate: dict) -> str:
@@ -211,11 +240,15 @@ def apply_link(
     name_options: dict[str, str],
     participant: str | None = None,
     participant_probability: float = 0.0,
+    target_id: str | None = None,
 ) -> LinkVerdict:
     if 1.0 - p_mentioned >= UNLINK_MIN_PROBABILITY:
         return LinkVerdict("unlink", None, p_mentioned, p_same)
     if participant and participant_probability >= REASSIGN_MIN_PROBABILITY:
-        return LinkVerdict("reassign", participant, p_mentioned, p_same, participant_probability)
+        return LinkVerdict(
+            "reassign", participant, p_mentioned, p_same, participant_probability,
+            target_id=target_id,
+        )
     fuller = name_options.get(name_choice or "")
     if not (fuller and fuller != name and name_probability >= NAME_MIN_PROBABILITY
             and len(fuller.split()) > len(name.split())):
@@ -269,8 +302,8 @@ async def judge_links(
         windows = transcript_windows(transcript, names)
         forms = surface_forms(transcript, link["name"])
         candidate = link.get("candidate")
-        questions, name_options, participant_options = build_link_questions(
-            link, candidate, forms, (meeting or {}).get("participants")
+        questions, name_options, participant_options, namesake_options = build_link_questions(
+            link, candidate, forms, (meeting or {}).get("participants"), link.get("namesakes")
         )
         try:
             result = await client.decide(
@@ -278,15 +311,21 @@ async def judge_links(
             )
             p_mentioned = result.noul("mentioned")
             p_same = None
-            participant, participant_p = None, 0.0
+            participant, participant_p, target_id = None, 0.0, None
             if "same" in questions:
                 same = result.choice("same")
                 if candidate is not None:
                     p_same = same.probabilities.get("existing", 0.0)
                 for key, pname in participant_options.items():
                     pp = same.probabilities.get(key, 0.0)
+                    if result.noul(f"compat_{key}") < COMPAT_MIN_PROBABILITY:
+                        continue  # the names cannot refer to each other
                     if pp > participant_p:
-                        participant, participant_p = pname, pp
+                        participant, participant_p, target_id = pname, pp, None
+                for key, c in namesake_options.items():
+                    pp = same.probabilities.get(key, 0.0)
+                    if pp > participant_p:
+                        participant, participant_p, target_id = c.get("name"), pp, c.get("id")
             name_choice, name_p = None, 0.0
             if "name" in questions:
                 nm = result.choice("name")
@@ -296,13 +335,13 @@ async def judge_links(
             return link["id"], KEEP
         verdict = apply_link(
             link["name"], p_mentioned, p_same, name_choice, name_p, name_options,
-            participant, participant_p,
+            participant, participant_p, target_id,
         )
         logger.info(
             "[LINK] %s %s %r: mentioned=%.2f%s%s%s -> %s%s",
             mode, link["id"], link["name"], p_mentioned,
             f" same={p_same:.2f}" if p_same is not None else "",
-            f" participant={participant!r}@{participant_p:.2f}" if participant else "",
+            f" reassign_to={participant!r}@{participant_p:.2f}" if participant else "",
             f" name={name_options.get(name_choice, '')!r}@{name_p:.2f}" if name_choice else "",
             verdict.action, f" ({verdict.name})" if verdict.name else "",
         )

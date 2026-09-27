@@ -974,6 +974,13 @@ class IngestOrchestrator(BaseOrchestrator):
         return resolved_entities, id_map
 
     @staticmethod
+    def _first_token(name: str) -> str:
+        from app.services.entity_resolver import normalize_entity_name
+
+        tokens = normalize_entity_name(name or "", "person").split()
+        return tokens[0] if tokens else ""
+
+    @staticmethod
     def _is_fuller_name(candidate: str, current: str, entity_type: str) -> bool:
         """True when ``candidate`` contains every word of ``current`` plus
         more ("Ankit Patel" vs "Ankit") — a strict refinement, never a
@@ -1073,6 +1080,16 @@ class IngestOrchestrator(BaseOrchestrator):
             }
             if surface and surface.casefold() != name.casefold():
                 link["heard_as"] = surface
+            if e.get("type") == "person":
+                by_id = candidates_by_type.setdefault(
+                    "person", {c["id"]: c for c in helper._candidates("person")}
+                )
+                first = self._first_token(surface or name)
+                link["namesakes"] = [
+                    helper.with_profile(c)
+                    for c in by_id.values()
+                    if c["id"] != e["id"] and self._first_token(c.get("name", "")) == first
+                ][:4]
             if e["id"] in known:
                 by_id = candidates_by_type.setdefault(
                     e.get("type"), {c["id"]: c for c in helper._candidates(e.get("type"))}
@@ -1104,11 +1121,16 @@ class IngestOrchestrator(BaseOrchestrator):
                 unlinked.add(e["id"])
                 continue
             if verdict.action == "reassign":
-                # The mention is one of the meeting's participants (nickname or
-                # initials): move the link onto that participant's entity.
-                resolved = helper.resolve(e.get("type"), verdict.name)
-                remap[e["id"]] = resolved.id
-                entry = {**e, "id": resolved.id, "name": resolved.canonical_name or verdict.name}
+                # The mention is a meeting participant (nickname/initials) or
+                # another existing person with the same first name: move the
+                # link onto that entity.
+                if verdict.target_id:
+                    target_id, target_name = verdict.target_id, verdict.name
+                else:
+                    resolved = helper.resolve(e.get("type"), verdict.name)
+                    target_id, target_name = resolved.id, resolved.canonical_name or verdict.name
+                remap[e["id"]] = target_id
+                entry = {**e, "id": target_id, "name": target_name}
                 if entry["id"] not in seen:
                     seen.add(entry["id"])
                     kept.append(entry)

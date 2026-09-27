@@ -57,6 +57,9 @@ class _Fake:
         self.calls.append((state, questions))
         p_mentioned, p_same, form = self.script[state["mention"]["name"]]
         answers = {"mentioned": NoulAnswer(p_mentioned)}
+        for q in questions:
+            if q.startswith("compat_"):
+                answers[q] = NoulAnswer(0.9)
         if "same" in questions:
             answers["same"] = ChoiceAnswer(
                 choice="existing" if p_same >= 0.5 else "different",
@@ -162,8 +165,8 @@ def test_name_question_is_only_asked_for_people():
     from app.services.entity_linking import build_link_questions
 
     forms = ["Anthropic", "Anthropic Academy"]
-    q_org, _, _ = build_link_questions({"type": "account", "name": "Anthropic"}, None, forms)
-    q_person, opts, _ = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
+    q_org, _, _, _ = build_link_questions({"type": "account", "name": "Anthropic"}, None, forms)
+    q_person, opts, _, _ = build_link_questions({"type": "person", "name": "Brian"}, None, ["Brian", "Brian Vigilani"])
     assert "name" not in q_org
     assert "name" in q_person and set(opts.values()) == {"Brian", "Brian Vigilani"}
 
@@ -171,9 +174,9 @@ def test_name_question_is_only_asked_for_people():
 def test_identity_question_is_only_asked_for_people():
     from app.services.entity_linking import build_link_questions
 
-    q_org, _, _ = build_link_questions({"type": "account", "name": "Anthropic"},
+    q_org, _, _, _ = build_link_questions({"type": "account", "name": "Anthropic"},
                                        {"name": "Anthropic", "context": {}}, [])
-    q_person, _, _ = build_link_questions({"type": "person", "name": "Brian"},
+    q_person, _, _, _ = build_link_questions({"type": "person", "name": "Brian"},
                                           {"name": "Brian", "context": {}}, [])
     assert set(q_org) == {"mentioned"}
     assert set(q_person) == {"mentioned", "same"}
@@ -182,7 +185,7 @@ def test_identity_question_is_only_asked_for_people():
 def test_participants_are_offered_as_identity_answers():
     from app.services.entity_linking import build_link_questions
 
-    q, _, parts = build_link_questions(
+    q, _, parts, _ = build_link_questions(
         {"type": "person", "name": "Aditya"}, {"name": "Aditya", "context": {}}, [],
         ["Scott Jennings", "Paul Evers", "Anudeep", "Aditya"],
     )
@@ -213,6 +216,9 @@ async def test_enrich_graph_moves_initials_mention_onto_participant(monkeypatch)
 
         async def decide(self, state, questions, *, operation):
             answers = {"mentioned": NoulAnswer(0.91)}
+            for q in questions:
+                if q.startswith("compat_"):
+                    answers[q] = NoulAnswer(0.8)
             if "same" in questions:
                 key = next(k for k, v in questions["same"].criteria.items() if v.startswith("Anudeep"))
                 answers["same"] = ChoiceAnswer(choice=key, probabilities={key: 0.84, "existing": 0.1}, confidence=0.84)
@@ -278,3 +284,50 @@ async def test_heard_form_reaches_link_verification():
     await judge_links([link], text, client=_Fake())
     assert seen["mention"]["heard_as"] == "F and G"
     assert any("F and G" in w for w in seen["transcript_excerpts"])
+
+
+
+@pytest.mark.asyncio
+async def test_participant_reassignment_needs_compatible_names():
+    """Wendy (an unlisted speaker) must not be moved onto Scott Jennings, the
+    only listed participant, even if the identity pick favours him."""
+    class _Fake:
+        def mode(self, operation):
+            return "on"
+
+        async def decide(self, state, questions, *, operation):
+            key = next(k for k, v in questions["same"].criteria.items() if v.startswith("Scott Jennings"))
+            return DecisionResult({
+                "mentioned": NoulAnswer(0.88),
+                "same": ChoiceAnswer(choice=key, probabilities={key: 0.74}, confidence=0.74),
+                f"compat_{key}": NoulAnswer(0.03),
+            }, "jev", "fake", 0, 0, 0.0, 0, {})
+
+    link = {"id": "person-wendy", "type": "person", "name": "Wendy"}
+    verdicts = await judge_links([link], "Wendy, you're in the room now.",
+                                 meeting={"participants": ["Scott Jennings"]}, client=_Fake())
+    assert verdicts == {}  # kept, not reassigned
+
+
+@pytest.mark.asyncio
+async def test_namesake_in_kb_can_take_the_link():
+    """'Brian' resolved to the cohort Brian; the Foley context points to the
+    existing Brian Vigilani, offered as a namesake option."""
+    class _Fake:
+        def mode(self, operation):
+            return "on"
+
+        async def decide(self, state, questions, *, operation):
+            key = next(k for k, v in questions["same"].criteria.items() if v.startswith("Brian Vigilani"))
+            return DecisionResult({
+                "mentioned": NoulAnswer(0.95),
+                "same": ChoiceAnswer(choice=key, probabilities={key: 0.86, "existing": 0.1}, confidence=0.86),
+            }, "jev", "fake", 0, 0, 0.0, 0, {})
+
+    link = {"id": "person-brian", "type": "person", "name": "Brian",
+            "candidate": {"id": "person-brian", "name": "Brian", "context": {"title": "Consultant"}},
+            "namesakes": [{"id": "person-brian-vigilani", "name": "Brian Vigilani",
+                           "context": {"company": "Foley"}}]}
+    verdicts = await judge_links([link], "present it as a product to Brian at Foley", client=_Fake())
+    v = verdicts["person-brian"]
+    assert (v.action, v.target_id, v.name) == ("reassign", "person-brian-vigilani", "Brian Vigilani")
