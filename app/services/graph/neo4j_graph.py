@@ -535,6 +535,21 @@ class Neo4jKnowledgeGraph:
                 targets = extract_relationship_targets(metadata, rel_def.type)
                 for target_id in targets:
                     normalized = self._normalize_target_id(target_id, rel_def.target)
+                    # The id's prefix names its type. A profile listing an
+                    # account under ``projects`` would otherwise MERGE a
+                    # Project stub with the account's id, which violates the
+                    # Entity.id constraint and aborts the whole batch/rebuild.
+                    id_type = next(
+                        (t for t in sorted(self.domain.entities, key=len, reverse=True)
+                         if normalized.startswith(f"{t}-")),
+                        None,
+                    )
+                    if id_type is not None and id_type != rel_def.target:
+                        logger.warning(
+                            "Skipping %s edge %s -> %s: target is a %s, not a %s (%s)",
+                            rel_def.type, eid, normalized, id_type, rel_def.target, file_path,
+                        )
+                        continue
                     # Ensure target node exists (as stub) so the MERGE finds it
                     # Use _ensure_entity_exists (ON CREATE only) to avoid overwriting
                     # real entity data when the target was already ingested from its own file

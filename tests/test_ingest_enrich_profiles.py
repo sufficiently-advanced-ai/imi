@@ -212,3 +212,23 @@ def test_stale_refs_are_resolved_instead_of_dropped(tmp_path):
 
     import yaml
     assert yaml.safe_load(out.split("---", 2)[1])["people"] == ["person-ankit"]
+
+
+def test_ids_filed_under_another_types_list_are_dropped(tmp_path):
+    # projects: [account-foley] made the builder MERGE a Project stub with an
+    # account's id, which violated the Entity.id constraint and aborted a rebuild
+    proc = DomainAwareEntityProcessor.__new__(DomainAwareEntityProcessor)
+    proc.git_ops = SimpleNamespace(repo_path=str(tmp_path))
+    domain = SimpleNamespace(entities={
+        "person": SimpleNamespace(plural="people"), "project": SimpleNamespace(plural="projects"),
+        "account": SimpleNamespace(plural="accounts")})
+    for d, f in (("projects", "rally.md"), ("accounts", "foley.md")):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / f).write_text("---\n---\n")
+    generated = "---\nname: Dan\nprojects:\n- project-rally\n- account-foley\naccounts:\n- account-foley\n---\n# Dan\n"
+
+    out = proc._drop_unknown_entity_ids(generated, "person-dan", domain)
+
+    import yaml
+    fm = yaml.safe_load(out.split("---", 2)[1])
+    assert fm["projects"] == ["project-rally"] and fm["accounts"] == ["account-foley"]

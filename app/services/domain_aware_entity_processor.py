@@ -206,6 +206,10 @@ class DomainAwareEntityProcessor:
             if not isinstance(value, str):
                 return True, value
             etype = next((t for t in types if value.startswith(f"{t}-")), None)
+            # An id filed under another type's list (``projects: [account-foley]``)
+            # is a mistyped relationship, not a reference to keep.
+            if etype is not None and key in key_types and etype != key_types[key]:
+                return False, value
             candidate = value
             if etype is None and key in key_types:
                 etype = key_types[key]
