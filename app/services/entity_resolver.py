@@ -568,7 +568,8 @@ class EntityResolver:
         return candidates
 
     def _graph_candidates(self, entity_type: str) -> list[dict]:
-        if self._kg is None or not getattr(self._kg, "nodes", None):
+        nodes = getattr(self._kg, "nodes", None) if self._kg is not None else None
+        if not isinstance(nodes, dict) or not nodes:
             return []
         candidates = []
         for node in self._kg.nodes.values():

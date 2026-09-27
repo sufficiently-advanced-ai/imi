@@ -1081,15 +1081,18 @@ class IngestOrchestrator(BaseOrchestrator):
             if surface and surface.casefold() != name.casefold():
                 link["heard_as"] = surface
             if e.get("type") == "person":
-                by_id = candidates_by_type.setdefault(
-                    "person", {c["id"]: c for c in helper._candidates("person")}
-                )
-                first = self._first_token(surface or name)
-                link["namesakes"] = [
-                    helper.with_profile(c)
-                    for c in by_id.values()
-                    if c["id"] != e["id"] and self._first_token(c.get("name", "")) == first
-                ][:4]
+                try:
+                    by_id = candidates_by_type.setdefault(
+                        "person", {c["id"]: c for c in helper._candidates("person")}
+                    )
+                    first = self._first_token(surface or name)
+                    link["namesakes"] = [
+                        helper.with_profile(c)
+                        for c in by_id.values()
+                        if c["id"] != e["id"] and self._first_token(c.get("name", "")) == first
+                    ][:4]
+                except Exception as ex:  # context only — never fail the ingest
+                    logger.warning("[INGEST] Namesake lookup failed for %s: %s", e["id"], ex)
             if e["id"] in known:
                 by_id = candidates_by_type.setdefault(
                     e.get("type"), {c["id"]: c for c in helper._candidates(e.get("type"))}
