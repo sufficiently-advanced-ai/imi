@@ -641,6 +641,16 @@ class IngestOrchestrator(BaseOrchestrator):
             )
             promoted = filter_salient_entities(labeled, resolver)
             mentioned = to_entities_mentioned(promoted)
+            # Remember which existing entity a heard form resolved to, so the
+            # evidence and the heard form reach link verification under the
+            # canonical name the later phases use.
+            resolved_to = {
+                (p["type"], p["heard_as"]): p["canonical_name"] for p in promoted if p.get("heard_as")
+            }
+            for e in labeled:
+                target = resolved_to.get((e.get("type"), e.get("canonical_name")))
+                if target:
+                    e["resolved_name"] = target
 
             # Participants always count as person entities
             for name in observation.participants or []:
@@ -1048,9 +1058,15 @@ class IngestOrchestrator(BaseOrchestrator):
         out = {}
         for e in (getattr(observation, "metadata", None) or {}).get("salient_entities", []) or []:
             if isinstance(e, dict) and e.get("canonical_name"):
-                out[(e.get("type"), e["canonical_name"])] = {
-                    k: e[k] for k in ("evidence", "role", "aliases_heard") if e.get(k)
-                }
+                entry = {k: e[k] for k in ("evidence", "role", "aliases_heard") if e.get(k)}
+                out[(e.get("type"), e["canonical_name"])] = entry
+                if e.get("resolved_name"):
+                    # heard as canonical_name, resolved onto an existing entity
+                    heard = [e["canonical_name"], *(entry.get("aliases_heard") or [])]
+                    out.setdefault(
+                        (e.get("type"), e["resolved_name"]),
+                        {**entry, "aliases_heard": heard, "heard_as": e["canonical_name"]},
+                    )
         return out
 
     @staticmethod
@@ -1100,6 +1116,8 @@ class IngestOrchestrator(BaseOrchestrator):
                 surface = also_heard[0]  # the canonical form was not what was heard
             extra = salient.get((e.get("type"), surface), {}) or salient.get((e.get("type"), name), {})
             names = list(extra.get("aliases_heard") or [])
+            if (not surface or surface.casefold() == name.casefold()) and extra.get("heard_as"):
+                surface = extra["heard_as"]  # resolved from a heard form in an earlier phase
             for h in also_heard:
                 if h not in names:
                     names.append(h)

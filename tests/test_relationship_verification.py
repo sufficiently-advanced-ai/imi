@@ -285,3 +285,26 @@ async def test_misheard_mention_resolves_to_the_canonical_entity(tmp_path):
     assert asked == ["imi"]
     assert out[0]["id"] == "project-imi" and out[0]["name"] == "imi" and out[0]["surface"] == "EME"
     assert id_map == {"project-eme": "project-imi"}  # signal refs follow
+
+
+def test_promotion_remembers_the_heard_form():
+    from app.services.salient_entity_extractor import filter_salient_entities
+
+    class _R:
+        def resolve(self, etype, name):
+            return SimpleNamespace(matched_via="tiebreak", canonical_name="Faulkner Media Group",
+                                   id="account-faulkner-media-group")
+
+    labeled = [{"type": "account", "canonical_name": "F&G", "salience": "subject", "confidence": 0.9}]
+    out = filter_salient_entities(labeled, _R())
+    assert out[0]["canonical_name"] == "Faulkner Media Group" and out[0]["heard_as"] == "F&G"
+
+
+def test_salient_evidence_is_found_under_the_resolved_name():
+    obs = SimpleNamespace(metadata={"salient_entities": [
+        {"type": "account", "canonical_name": "F&G", "resolved_name": "Faulkner Media Group",
+         "evidence": "Share a little bit about F and G"}]})
+    ev = IngestOrchestrator._salient_evidence(obs)
+    entry = ev[("account", "Faulkner Media Group")]
+    assert entry["heard_as"] == "F&G" and "F&G" in entry["aliases_heard"]
+    assert entry["evidence"].startswith("Share")

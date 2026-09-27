@@ -187,6 +187,16 @@ def _parse_entity_items(items, entity_types: list[str]) -> list[dict]:
 MAX_NEW_PROMOTED_PER_DOC = 6
 
 
+def _resolved_as(entity: dict, canonical: str | None) -> dict:
+    """The mention under the existing entity's name, remembering the form that
+    was heard ("F&G" -> Faulkner Media Group): link verification must look for
+    what the transcript says, not for the canonical name."""
+    heard = entity["canonical_name"]
+    if not canonical or canonical == heard:
+        return entity
+    return {**entity, "canonical_name": canonical, "heard_as": heard}
+
+
 def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
     """Apply the promotion rule. resolver is an EntityResolver (or None —
     then mentions are dropped outright)."""
@@ -201,9 +211,7 @@ def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
                     resolved = resolver.resolve(entity["type"], entity["canonical_name"])
                     if resolved.matched_via != "new":
                         # Existing entity: link freely, exempt from the cap.
-                        promoted.append(
-                            {**entity, "canonical_name": resolved.canonical_name}
-                        )
+                        promoted.append(_resolved_as(entity, resolved.canonical_name))
                         continue
                 except Exception as e:
                     logger.debug(
@@ -225,9 +233,7 @@ def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
             try:
                 resolved = resolver.resolve(entity["type"], entity["canonical_name"])
                 if resolved.matched_via != "new":
-                    promoted.append(
-                        {**entity, "canonical_name": resolved.canonical_name}
-                    )
+                    promoted.append(_resolved_as(entity, resolved.canonical_name))
                     continue
             except Exception as e:
                 logger.debug(
