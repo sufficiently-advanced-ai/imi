@@ -1437,6 +1437,14 @@ class IngestOrchestrator(BaseOrchestrator):
                     return target_id, rel.type, source_id
         return None
 
+    @staticmethod
+    def _relationship_description(domain, holder_id: str, rel_type: str) -> str | None:
+        ent = domain.entities.get(IngestOrchestrator._entity_type_from_id(holder_id))
+        for rel in getattr(ent, "relationships", None) or []:
+            if rel.type == rel_type:
+                return getattr(rel, "description", None)
+        return None
+
     async def _write_relationship_edges(
         self,
         relationships: list[dict],
@@ -1506,6 +1514,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 "target_type": self._entity_type_from_id(other),
                 "evidence": rel.get("evidence") or "",
                 "description": rel.get("description") or "",
+                "type_description": self._relationship_description(domain, holder, key) or "",
             }
             if helper is not None:
                 for side, eid in (("source", holder), ("target", other)):

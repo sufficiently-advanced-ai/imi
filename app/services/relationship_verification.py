@@ -44,13 +44,15 @@ def build_verify_question():
     return {
         "supported": Noul(
             instructions=(
-                "Does this meeting establish the proposed relationship, in exactly this "
-                "direction? Answer yes only when the transcript states it or clearly implies "
-                "it. Being on the same call, being mentioned together, or working on the same "
-                "deal is not enough. Keep organisations straight: a vendor's lead and the "
-                "client's contact do not report to or manage each other, and a person manages "
-                "an account only if they own that relationship for their own organisation. "
-                "Use the profiles to know who works where."
+                "Does this meeting support the proposed relationship, in this direction? "
+                "Read the relationship by its meaning. Answer yes when the transcript states "
+                "it or it is the natural reading of how the people talk and work together "
+                "(people jointly doing the work collaborate; whoever runs a project works on "
+                "it; the knowledge-base owner's 'we' and 'our' are the owner). Answer no when "
+                "it is reversed, contradicts who works where (use the profiles: a vendor's "
+                "lead and the client's contact do not report to or manage each other; working "
+                "at an organisation is not managing it as an account), or rests only on two "
+                "names appearing near each other."
             ),
         ),
     }
@@ -79,7 +81,22 @@ def build_verify_state(rel: dict, windows: list[str], meeting: dict | None) -> d
     }
     if meeting:
         state["meeting"] = {k: v for k, v in meeting.items() if v}
+    owner = _kb_owner()
+    if owner:
+        state["knowledge_base_owner"] = (
+            f"{owner} — records these meetings; 'we', 'our' and 'my' in the transcript "
+            "are usually them and their own company"
+        )
     return state
+
+
+def _kb_owner() -> str | None:
+    try:
+        from app.config import settings
+
+        return (getattr(settings, "KB_OWNER_NAME", None) or "").strip() or None
+    except Exception:
+        return None
 
 
 def _default_client():

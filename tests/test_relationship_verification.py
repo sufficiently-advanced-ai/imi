@@ -182,3 +182,27 @@ async def test_record_live_files_stamps_the_manifest(tmp_path):
     assert out["action"] == "recorded" and out["semantica_indexed"] == 1
     files = load_manifest(mpath).files
     assert "accounts/foley.md" in files and "accounts/bad.md" not in files  # bad retried at next boot
+
+
+def test_state_carries_owner_and_relationship_meaning(monkeypatch):
+    from app.config import settings
+    from app.services.relationship_verification import build_verify_state
+
+    monkeypatch.setattr(settings, "KB_OWNER_NAME", "Scott Jennings", raising=False)
+    rel = {**_rel("Scott Jennings", "person", "works_on_projects", "Open Brain", "project"),
+           "type_description": "The person does work on the project"}
+    state = build_verify_state(rel, [], {"title": "Open Brain sync"})
+    assert state["knowledge_base_owner"].startswith("Scott Jennings")
+    assert state["proposal"]["relationship_meaning"] == "The person does work on the project"
+
+    monkeypatch.setattr(settings, "KB_OWNER_NAME", None, raising=False)
+    assert "knowledge_base_owner" not in build_verify_state(rel, [], None)
+
+
+def test_domain_relationships_accept_a_description():
+    from app.model_schemas.domain_config import DomainRelationship
+
+    r = DomainRelationship(type="manages_accounts", target="account", cardinality="one_to_many",
+                           description="Owns our relationship with that organisation")
+    assert r.description.startswith("Owns")
+    assert DomainRelationship(type="x", target="y", cardinality="one_to_many").description is None
