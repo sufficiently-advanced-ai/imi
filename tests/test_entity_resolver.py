@@ -266,6 +266,26 @@ class TestPrefetch:
         assert r.resolve("account", "BCBS").matched_via == "new"
 
     @pytest.mark.asyncio
+    async def test_unexpected_errors_never_escape_or_discard_other_jobs(self):
+        class _Broken(_FakeDecisions):
+            async def decide(self, state, questions, *, operation):
+                if state["mention"]["name"] == "Joan Smith":
+                    raise TypeError("bad answer shape")
+                return await super().decide(state, questions, operation=operation)
+
+        r = EntityResolver(GRAPH, decisions=_Broken(pick="Blue Cross Blue Shield"))
+        changed = await r.prefetch([{"type": "person", "name": "Joan Smith"}, {"type": "account", "name": "BCBS"}])
+        assert changed == 1
+        assert r.resolve("account", "BCBS").id == "account-blue-cross-blue-shield"
+        assert r.resolve("person", "Joan Smith").id == "person-john-smith"  # heuristic kept
+
+        class _BrokenMode(_FakeDecisions):
+            def mode(self, operation):
+                raise KeyError(operation)
+
+        assert await EntityResolver(GRAPH, decisions=_BrokenMode()).prefetch([{"type": "account", "name": "BCBS"}]) == 0
+
+    @pytest.mark.asyncio
     async def test_no_client_is_pure_heuristic(self):
         r = EntityResolver(GRAPH, decisions=None)
         assert await r.prefetch([{"type": "account", "name": "BCBS"}]) == 0

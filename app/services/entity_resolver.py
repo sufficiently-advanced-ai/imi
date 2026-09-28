@@ -495,6 +495,13 @@ class EntityResolver:
         mentions: [{"type", "name", optional "evidence", "role",
         "aliases_heard"}]. Never raises; returns the number of decisions that
         will change what ``resolve`` returns (always 0 in shadow mode)."""
+        try:
+            return await self._prefetch(mentions)
+        except Exception:
+            logger.exception("[RESOLVER] Tiebreak prefetch failed, keeping heuristic outcomes")
+            return 0
+
+    async def _prefetch(self, mentions: list[dict]) -> int:
         client = self._decisions
         if client is None:
             return 0
@@ -529,16 +536,21 @@ class EntityResolver:
         from app.services.inference.decisions import DecisionUnavailable
 
         etype, name = mention["type"], mention["name"]
-        question, options = build_tiebreak_question(etype, zone)
-        state = build_tiebreak_state(mention, options)
+        # One job failing must neither fail the caller (prefetch never raises)
+        # nor discard the other jobs' outcomes: any error keeps the heuristic.
         try:
+            question, options = build_tiebreak_question(etype, zone)
+            state = build_tiebreak_state(mention, options)
             result = await client.decide(state, {"match": question}, operation=TIEBREAK_OPERATION)
+            answer = result.choice("match")
+            probability = answer.probabilities.get(answer.choice, 0.0)
+            decided = apply_tiebreak(heuristic, options, answer.choice, probability, etype, name)
         except (DecisionUnavailable, ValueError) as e:
             logger.warning("[RESOLVER] Tiebreak failed for %s/%r, keeping heuristic: %s", etype, name, e)
             return False
-        answer = result.choice("match")
-        probability = answer.probabilities.get(answer.choice, 0.0)
-        decided = apply_tiebreak(heuristic, options, answer.choice, probability, etype, name)
+        except Exception:
+            logger.exception("[RESOLVER] Tiebreak error for %s/%r, keeping heuristic", etype, name)
+            return False
         differs = decided.id != heuristic.id
         logger.info(
             "[RESOLVER] tiebreak %s %s/%r: heuristic=%s(%s) decision=%s p=%.2f -> %s%s",
