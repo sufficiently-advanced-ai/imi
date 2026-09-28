@@ -228,13 +228,24 @@ async def apply(args) -> None:
     repo = Path(args.repo)
     store = CaptureStore(capture_dir=repo / "memory" / "captures", repo_root=repo)
     audit_store = capture_audit_store(repo_root=repo)
-    existing_ids = {m.id for m in store.iter_all()}
+    # Dedup index loaded once: the store's find_existing re-reads every file
+    # per call, which is quadratic over thousands of captures.
+    existing = list(store.iter_all())
+    existing_ids = {m.id for m in existing}
+    existing_sources = {(m.source, m.source_id) for m in existing if m.source_id}
+    existing_prints = {m.content_fingerprint for m in existing if m.content_fingerprint}
     counts: collections.Counter = collections.Counter()
     written: list[CapturedMemory] = []
+    bundle_ids: list[str] = []
 
     for line in args.bundle.open():
         cap = CapturedMemory.model_validate(json.loads(line))
-        if cap.id in existing_ids or store.find_existing(cap.content, cap.source, cap.source_id):
+        bundle_ids.append(cap.id)
+        if (
+            cap.id in existing_ids
+            or (cap.source_id and (cap.source, cap.source_id) in existing_sources)
+            or content_fingerprint(cap.content) in existing_prints
+        ):
             counts["skip: already present"] += 1
             continue
         counts[f"write: {cap.lane}"] += 1
@@ -248,6 +259,9 @@ async def apply(args) -> None:
             before={}, after=_governance_snapshot(cap),
         ))
         existing_ids.add(cap.id)
+        if cap.source_id:
+            existing_sources.add((cap.source, cap.source_id))
+        existing_prints.add(content_fingerprint(cap.content))
         written.append(cap)
 
     if args.apply and args.enrich:
@@ -270,10 +284,16 @@ async def apply(args) -> None:
                 "enrichment": enrichment, "summary": enrichment.get("summary") or cap.summary,
             }))
             counts["enriched"] += 1
+            if counts["enriched"] % 100 == 0:
+                print(f"enriched {counts['enriched']}/{counts['to enrich']}", file=sys.stderr, flush=True)
 
-        await asyncio.gather(*(one(c) for c in written))
+        # Every bundle capture in the store without a summary — including
+        # ones written by an earlier, interrupted run.
+        targets = [c for c in (store.get(i) for i in bundle_ids) if c is not None and not c.summary]
+        counts["to enrich"] = len(targets)
+        await asyncio.gather(*(one(c) for c in targets))
 
-    if args.apply and written:
+    if args.apply and (written or counts["enriched"]):
         try:
             await git_ops.commit_and_push(
                 ["memory/captures", "memory/audit"],
