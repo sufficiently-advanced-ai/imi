@@ -487,8 +487,10 @@ class DecisionClient:
 
         # Usage only feeds cost reporting, so tolerate its absence, but a
         # present-and-wrong shape is still a malformed response.
-        usage = data.get("usage") or {}
-        if not isinstance(usage, dict):
+        usage = data.get("usage")
+        if usage is None:
+            usage = {}
+        elif not isinstance(usage, dict):
             raise DecisionUnavailable(f"{ep.name}: 'usage' is {type(usage).__name__}, not an object")
         try:
             in_tok = int(usage.get("input_tokens", 0) or 0)
