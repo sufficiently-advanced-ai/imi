@@ -70,8 +70,20 @@ KEEP = LinkVerdict("keep")
 # --- evidence gathering (context only; never decides) ------------------------
 
 
+_PUNCT_FOLD = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
+
+
+def _fold_char(ch: str) -> str:
+    folded = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode().lower()
+    return folded[0] if folded else " "
+
+
 def _fold(text: str) -> str:
-    return unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    """Case/accent-fold ``text`` one character per character, so match
+    offsets in the folded copy index the original (transcript_windows slices
+    the original with them). Characters with no ASCII form become a space,
+    which keeps ``\\b`` word boundaries."""
+    return "".join(_fold_char(ch) for ch in (text or "").translate(_PUNCT_FOLD))
 
 
 def transcript_windows(transcript: str, names: list[str]) -> list[str]:

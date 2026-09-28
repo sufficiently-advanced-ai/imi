@@ -31,6 +31,14 @@ def test_windows_and_forms_are_context_only():
     assert surface_forms(TRANSCRIPT, "Dan") == ["Dan Kauppi"]
 
 
+def test_windows_stay_on_the_name_past_non_ascii_text():
+    # Each of these used to drop out of the folded copy (or, for the
+    # ligature, expand), shifting every later offset off the name.
+    noise = "it’s “great” — really… 🎉 Straße ﬁne æ. " * 60
+    windows = transcript_windows(noise + "then Renée Ó’Brien joined", ["Renee O'Brien"])
+    assert windows and "Renée Ó’Brien" in windows[0]
+
+
 def test_apply_link_bars():
     opts = {"n1": "Brian", "n2": "Brian Vigilani"}
     assert apply_link("Aditya", 0.10, 0.9, None, 0.0, {}).action == "unlink"
