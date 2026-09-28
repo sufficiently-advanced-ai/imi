@@ -8,7 +8,8 @@
 # back to record (the pre-lanes behaviour).
 
 # Whose knowledge base this is — used in the model's lane questions.
-owner: Your Name
+# Defaults to the KB_OWNER_NAME setting.
+# owner: Your Name
 
 sources:
   littlebird: record

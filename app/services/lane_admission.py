@@ -136,7 +136,17 @@ def source_default(source: str | None) -> str:
 
 
 def owner_name() -> str:
-    return str(lanes_config().get("owner") or DEFAULT_OWNER)
+    """lanes.yaml ``owner``, else the KB_OWNER_NAME setting, else a neutral phrase."""
+    configured = lanes_config().get("owner")
+    if configured:
+        return str(configured)
+    try:
+        from app.config import settings
+
+        kb_owner = (getattr(settings, "KB_OWNER_NAME", None) or "").strip()
+    except Exception:
+        kb_owner = ""
+    return kb_owner or DEFAULT_OWNER
 
 
 # ---- questions (calibrated 2026-09-26; see module docstring) ----------------
