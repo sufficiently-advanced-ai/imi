@@ -316,6 +316,48 @@ class TestIngestFile:
 # ──────────────────────────────────────────────────────────────
 
 
+class TestMergeRedirect:
+    """A rebuild from files reproduces a merge: references to the merged-away
+    id land on the primary, and the duplicate is never re-stubbed."""
+
+    PRIMARY = "---\nid: person-ankit-patel\ntype: person\nname: Ankit Patel\nmerged_ids: [person-ankit]\n---\n"
+
+    @staticmethod
+    def _ids(mock_neo4j, needle):
+        return [c[0][1] for c in mock_neo4j.execute_write.call_args_list if needle in c[0][0]]
+
+    @pytest.mark.asyncio
+    async def test_meeting_entity_ids_follow_the_merge(self, graph, mock_neo4j):
+        graph._refresh_merged_into([("people/ankit-patel.md", self.PRIMARY)])
+        await graph._ingest_file("meetings/m1.md", {"title": "Call", "entity_ids": ["person-ankit"]})
+
+        stubs = [p["id"] for p in self._ids(mock_neo4j, "stub = true")]
+        links = [p["eid"] for p in self._ids(mock_neo4j, "MENTIONED_IN")]
+        assert "person-ankit" not in stubs
+        assert links == ["person-ankit-patel"]
+        assert graph.document_entities["meetings/m1.md"] == {"doc:meetings/m1.md", "person-ankit-patel"}
+
+    @pytest.mark.asyncio
+    async def test_relationship_targets_follow_the_merge(self, graph, mock_neo4j):
+        graph._refresh_merged_into(
+            [("projects/alpha.md", "---\nid: project-alpha\nname: Alpha\nmerged_ids: [project-alpha-old]\n---\n")]
+        )
+        await graph._ingest_file(
+            "people/tom.md", {"id": "person-tom", "type": "person", "name": "Tom", "has_projects": ["project-alpha-old"]}
+        )
+        targets = [p["target"] for p in self._ids(mock_neo4j, "HAS_PROJECTS")]
+        assert targets == ["project-alpha"]
+
+    def test_archived_primary_contributes_no_redirect_and_chains_resolve(self, graph):
+        archived = self.PRIMARY.replace("merged_ids", "is_archived: true\nmerged_ids")
+        graph._refresh_merged_into([("people/ankit-patel.md", archived)])
+        assert graph._canonical_id("person-ankit") == "person-ankit"
+
+        graph._merged_into = {"person-a": "person-b", "person-b": "person-c", "person-x": "person-y", "person-y": "person-x"}
+        assert graph._canonical_id("person-a") == "person-c"
+        assert graph._canonical_id("person-x") in {"person-x", "person-y"}  # cycle terminates
+
+
 class TestFindRelatedEntities:
     @pytest.mark.asyncio
     async def test_returns_formatted_list(self, graph, mock_neo4j):
