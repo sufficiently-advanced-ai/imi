@@ -2,8 +2,8 @@
 """Classify a corpus's memory records into lanes — read-only, report only.
 
 The memory store mixes two things recall should not rank together: a *library*
-(articles, newsletters, videos, news Scott read or received) and *memory*
-(his own decisions, notes, conversations and commitments). This script judges
+(articles, newsletters, videos, news the owner read or received) and *memory*
+(their own decisions, notes, conversations and commitments). This script judges
 every record and writes verdicts; it never modifies the corpus.
 
 Records judged
@@ -52,9 +52,10 @@ from app.services.inference.decisions import (  # noqa: E402
     DecisionUnavailable,
     Noul,
 )
-from app.services.lane_admission import build_lane_questions, lane_criteria  # noqa: E402
+from app.services.lane_admission import build_lane_questions, lane_criteria, owner_name  # noqa: E402
 
-OWNER = "Scott Jennings"
+# Whose KB this is: lanes.yaml `owner`, else the KB_OWNER_NAME setting.
+OWNER = owner_name()
 CAPTURE_CHARS = 2500  # Jev degrades on large, noisy state; the head is enough to judge a lane
 DOC_CHARS = 2500
 SIGNAL_DOC_CHARS = 600
@@ -229,15 +230,15 @@ CAPTURE_QUESTIONS = {
 DOC_KIND_CRITERIA = {
     "conversation": (
         f"A conversation {OWNER} took part in: a meeting or call transcript, meeting notes, or a "
-        "discussion in a group or community he belongs to (e.g. AI Circle)."
+        "discussion in a group or community they belong to (e.g. a peer group)."
     ),
     "own_note": (
-        f"Something {OWNER} wrote or dictated himself: notes, plans, ideas, retrospectives, "
+        f"Something {OWNER} wrote or dictated themselves: notes, plans, ideas, retrospectives, "
         "decision records, drafts."
     ),
     "third_party": (
         "Third-party published content: an article, newsletter issue, blog post, video, podcast, "
-        "news item, announcement, paper or documentation that he received or read."
+        "news item, announcement, paper or documentation that they received or read."
     ),
     "junk": (
         "No durable value: transactional or automated mail, test fixtures, error or login pages, "
@@ -259,7 +260,7 @@ DOC_QUESTIONS = {
 SIGNAL_TYPES = {
     "decision": (
         "A decision: a choice actually made or agreed by the people in the conversation (or by "
-        f"{OWNER} himself) about what they will do. A company's news or an author's claim is not "
+        f"{OWNER} themselves) about what they will do. A company's news or an author's claim is not "
         "a decision."
     ),
     "action_item": (

@@ -66,7 +66,7 @@ def store(tmp_path):
 
 @pytest.mark.asyncio
 async def test_default_recall_is_record_lane_only(store, maker):
-    mine = _cap("Scott decided to price the pilot at 10k.")
+    mine = _cap("Ada decided to price the pilot at 10k.")
     article = _cap("Anthropic raised a new round.", lane="library")
     for r in (mine, article):
         index_capture(store, _Embedder(), r)
@@ -80,7 +80,7 @@ async def test_default_recall_is_record_lane_only(store, maker):
 
 @pytest.mark.asyncio
 async def test_library_is_returned_separately_under_background(store, maker):
-    mine = _cap("Scott decided to price the pilot at 10k.")
+    mine = _cap("Ada decided to price the pilot at 10k.")
     article = _cap("Anthropic raised a new round.", lane="library")
     for r in (mine, article):
         index_capture(store, _Embedder(), r)
@@ -96,7 +96,7 @@ async def test_library_is_returned_separately_under_background(store, maker):
 async def test_library_volume_cannot_starve_record_hits(store, maker):
     """limit=1 searches k=3 per lane: with 30 library vectors, a post-hoc
     lane filter would see no record vector at all."""
-    mine = _cap("Scott decided to price the pilot at 10k.")
+    mine = _cap("Ada decided to price the pilot at 10k.")
     articles = [_cap(f"Newsletter issue {i} about AI.", lane="library") for i in range(30)]
     for r in [mine, *articles]:
         index_capture(store, _Embedder(), r)

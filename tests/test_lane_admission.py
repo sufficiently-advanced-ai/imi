@@ -194,8 +194,8 @@ async def test_dedup_keeps_the_existing_lane_without_a_new_judgment(tmp_path):
 def test_owner_falls_back_to_kb_owner_name(monkeypatch):
     from app.config import settings
 
-    monkeypatch.setattr(settings, "KB_OWNER_NAME", "Scott Jennings", raising=False)
+    monkeypatch.setattr(settings, "KB_OWNER_NAME", "Ada Lovelace", raising=False)
     la.reset_lanes_config()
-    assert la.owner_name() == "Scott Jennings"
+    assert la.owner_name() == "Ada Lovelace"
     monkeypatch.setattr(settings, "KB_OWNER_NAME", None, raising=False)
     assert la.owner_name() == la.DEFAULT_OWNER

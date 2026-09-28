@@ -26,7 +26,7 @@ with the full `decision` / `action_item` taxonomy. Captures (`POST /api/captures
 exist is by *API*, not by what the content is.
 
 A full classification of the production corpus with the decision model (Jev, 2026-09-26;
-`scripts/classify_memories.py`, report in `~/Data/agent-context/memory-lanes-20260926/`) measured
+`scripts/classify_memories.py`) measured
 the result:
 
 | | memory | library | junk |
