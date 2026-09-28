@@ -587,9 +587,6 @@ class EntityResolver:
                 for k in _CANDIDATE_CONTEXT_KEYS
                 if isinstance(metadata.get(k), str | int | float) and str(metadata[k]).strip()
             }
-            co_mentioned = self._co_mentioned_names(node.id)
-            if co_mentioned:
-                context["co_mentioned_with"] = co_mentioned
             candidates.append(
                 {
                     "id": node.id,
@@ -604,7 +601,17 @@ class EntityResolver:
     def _co_mentioned_names(self, entity_id: str, limit: int = 8) -> list[str]:
         """Names of entities that share documents (meetings) with this one —
         who it is usually talked about with. Lets the tiebreak tell 'Ankit
-        from the cohort calls' from an unrelated Ankit."""
+        from the cohort calls' from an unrelated Ankit.
+
+        Decision-model context only, so it is computed in ``with_profile``
+        (candidates that reach a decision call), never on every ``resolve``:
+        it walks each of the entity's documents' entity sets."""
+        cache = self.__dict__.setdefault("_co_mention_cache", {})
+        if entity_id not in cache:
+            cache[entity_id] = self._compute_co_mentioned_names(entity_id, limit)
+        return cache[entity_id]
+
+    def _compute_co_mentioned_names(self, entity_id: str, limit: int) -> list[str]:
         entity_documents = getattr(self._kg, "entity_documents", None) or {}
         document_entities = getattr(self._kg, "document_entities", None) or {}
         nodes = getattr(self._kg, "nodes", None) or {}
@@ -660,10 +667,19 @@ class EntityResolver:
         return summary
 
     def with_profile(self, candidate: dict) -> dict:
-        summary = self.profile_summary(candidate.get("id", ""))
-        if not summary:
+        """``candidate`` plus the context only a decision call needs: its
+        profile summary and who it is usually mentioned with."""
+        entity_id = candidate.get("id", "")
+        extra: dict[str, Any] = {}
+        co_mentioned = self._co_mentioned_names(entity_id) if entity_id else []
+        if co_mentioned:
+            extra["co_mentioned_with"] = co_mentioned
+        summary = self.profile_summary(entity_id)
+        if summary:
+            extra["profile_summary"] = summary
+        if not extra:
             return candidate
-        return {**candidate, "context": {**(candidate.get("context") or {}), "profile_summary": summary}}
+        return {**candidate, "context": {**(candidate.get("context") or {}), **extra}}
 
     async def prefetch(self, mentions: list[dict], meeting: dict | None = None) -> int:
         """Run the decision tiebreak for every mention that needs one.
