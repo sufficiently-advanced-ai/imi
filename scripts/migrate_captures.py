@@ -297,7 +297,10 @@ async def apply(args) -> None:
         try:
             await git_ops.commit_and_push(
                 ["memory/captures", "memory/audit"],
-                f"migrate: {len(written)} captures from the previous KB (ADR-003)",
+                # Describe this commit's content: a resumed run may write no new
+                # files and only summarize ones an earlier run wrote.
+                f"migrate: {len(written)} new captures, {counts['enriched']} summarized "
+                f"(bundle of {len(bundle_ids)} from the previous KB, ADR-003)",
             )
             counts["committed"] = 1
         except Exception as e:
