@@ -12,7 +12,7 @@ Run inside the app container:
 
 The rebuild replaces the current graph with the file-derived one, so run it
 only on a KB whose files you trust (that is what it tests). Exit code 1 when
-the snapshots differ.
+the snapshots differ, 2 when the rebuild did not complete.
 """
 
 from __future__ import annotations
@@ -99,6 +99,13 @@ def main() -> int:
 
     live_nodes, live_edges = snapshot()
     status = rebuild()
+    state = status.get("state") or status.get("status")
+    if state != "completed":
+        # A rebuild that failed before touching the graph would otherwise
+        # "match" the live snapshot and report parity.
+        print(f"rebuild did not complete (state={state!r}): {json.dumps(status, default=str)}",
+              file=sys.stderr)
+        return 2
     file_nodes, file_edges = snapshot()
 
     diff = {

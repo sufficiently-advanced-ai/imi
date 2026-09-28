@@ -305,7 +305,8 @@ async def find_day(session: ClientSession, mid: str, window: tuple[date, date]) 
             start_date=d.isoformat(), end_date=(d + timedelta(days=1)).isoformat(), limit=200,
         )
         if mid in text:
-            return f"{d.isoformat()}T12:00:00-04:00"
+            # Noon in the local zone, so the offset follows DST.
+            return datetime(d.year, d.month, d.day, 12).astimezone().isoformat()
         d += timedelta(days=1)
     return None
 
@@ -313,10 +314,17 @@ async def find_day(session: ClientSession, mid: str, window: tuple[date, date]) 
 # --- Main ---------------------------------------------------------------------
 
 
+def _alias(value: str) -> tuple[str, str]:
+    name, sep, canonical = value.partition("=")
+    if not sep or not name.strip() or not canonical.strip():
+        raise argparse.ArgumentTypeError(f"expected NAME=Canonical, got {value!r}")
+    return name.strip(), canonical.strip()
+
+
 async def export(args) -> None:
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
-    aliases = dict(a.split("=", 1) for a in args.alias)
+    aliases = dict(args.alias or [])
 
     async with create_mcp_http_client(auth=build_auth()) as http:
         async with streamable_http_client(SERVER_URL, http_client=http) as (read, write, *_):
@@ -411,7 +419,7 @@ def main() -> None:
     ap.add_argument("--since", default="2026-01-01", help="earliest month to scan (ISO date)")
     ap.add_argument("--self-name", default="Scott Jennings", help="replaces Littlebird's [You]")
     ap.add_argument(
-        "--alias", action="append", default=["AD=Anudeep"],
+        "--alias", action="append", type=_alias, default=None,
         help="NAME=Canonical rewrite for attendee/speaker labels (repeatable)",
     )
     ap.add_argument("--force", action="store_true", help="re-export meetings already on disk")
