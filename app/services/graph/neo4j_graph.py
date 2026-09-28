@@ -278,6 +278,10 @@ class Neo4jKnowledgeGraph:
         # doubling corpus I/O and log volume on every startup.
         documents: list[tuple[str, str | None]] = []
         try:
+            # A build is the "files are the source of truth" path: read disk,
+            # never the 60s corpus cache (a merge's write-through just
+            # changed files it holds).
+            self.git_ops.invalidate_markdown_files_cache()
             files_obj = await self.git_ops.read_markdown_files()
             documents = [(f.path, f.content) for f in files_obj]
         except Exception:

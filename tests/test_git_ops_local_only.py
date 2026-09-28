@@ -66,3 +66,22 @@ async def test_commit_file_works_without_remote(local_ops):
         ["git", "remote"], cwd=local_ops.repo_path, capture_output=True, text=True
     )
     assert remotes.stdout.strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_commit_invalidates_the_corpus_read_cache(local_ops):
+    # A merge write-through edits a file then commits; a rebuild inside the
+    # cache TTL must not get the pre-edit content back.
+    await local_ops.initialize()
+    path = f"{local_ops.repo_path}/people/ankit.md"
+    import os
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("---\nid: person-ankit\n---\n")
+    assert "is_archived" not in (await local_ops.read_markdown_files())[0].content
+
+    with open(path, "w") as f:
+        f.write("---\nid: person-ankit\nis_archived: true\n---\n")
+    await local_ops.commit_and_push(["people/ankit.md"], "archive")
+    assert "is_archived: true" in (await local_ops.read_markdown_files())[0].content
