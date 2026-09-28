@@ -321,7 +321,11 @@ async def test_answer_type_must_match_question_type(monkeypatch):
     await c.aclose()
 
 
-@pytest.mark.parametrize("payload", [[], "ok", {"answers": {"q": {"type": "noul", "noul": 1}}, "usage": [1]}])
+@pytest.mark.parametrize(
+    "payload",
+    [[], "ok"]
+    + [{"answers": {"q": {"type": "noul", "noul": 1}}, "usage": u} for u in ([1], [], 0, False, "")],
+)
 @pytest.mark.asyncio
 async def test_non_object_response_or_usage_is_unavailable(monkeypatch, payload):
     c = _client(lambda req: httpx.Response(200, json=payload), monkeypatch)
