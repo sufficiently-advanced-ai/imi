@@ -348,6 +348,20 @@ class TestMergeRedirect:
         targets = [p["target"] for p in self._ids(mock_neo4j, "HAS_PROJECTS")]
         assert targets == ["project-alpha"]
 
+    @pytest.mark.asyncio
+    async def test_merge_drops_the_archived_profile_document(self, graph, mock_neo4j, tmp_path):
+        (tmp_path / "people").mkdir()
+        (tmp_path / "people" / "ankit.md").write_text("---\nid: person-ankit\nis_archived: true\n---\n")
+        graph._git_ops.repo_path = str(tmp_path)
+        graph.document_entities["people/ankit.md"] = {"person-ankit-patel", "project-alpha"}
+        graph.entity_documents["project-alpha"].add("people/ankit.md")
+
+        await graph._drop_profile_document("person-ankit")
+
+        assert self._ids(mock_neo4j, "Document") == [{"id": "doc:people/ankit.md"}]
+        assert "people/ankit.md" not in graph.document_entities
+        assert "people/ankit.md" not in graph.entity_documents["project-alpha"]
+
     def test_archived_primary_contributes_no_redirect_and_chains_resolve(self, graph):
         archived = self.PRIMARY.replace("merged_ids", "is_archived: true\nmerged_ids")
         graph._refresh_merged_into([("people/ankit-patel.md", archived)])

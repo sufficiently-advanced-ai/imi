@@ -3137,6 +3137,8 @@ class Neo4jKnowledgeGraph:
         # Files are the source of truth: bring them in line with the graph so
         # a rebuild reproduces the merge instead of resurrecting the duplicate.
         duplicate_file_archived = await self._archive_entity_file(duplicate_id)
+        if duplicate_file_archived:
+            await self._drop_profile_document(duplicate_id)
         await self._update_entity_frontmatter(
             primary_id, {"aliases": new_aliases, "merged_ids": new_merged_ids}
         )
@@ -3727,6 +3729,22 @@ class Neo4jKnowledgeGraph:
             return bool(archived)
         except Exception:
             return False
+
+    async def _drop_profile_document(self, entity_id: str) -> None:
+        """Remove the Document node of an entity's (now archived) profile file.
+
+        Rebuilds skip archived files, so no Document exists for them there;
+        without this the live graph kept ``doc:<profile>`` plus the MENTIONED_IN
+        edges the merge had just moved onto the primary."""
+        full_path = self._find_entity_file(entity_id)
+        if not full_path:
+            return
+        rel_path = os.path.relpath(full_path, self.git_ops.repo_path)
+        await self.neo4j.execute_write(
+            "MATCH (d:Document {id: $id}) DETACH DELETE d", {"id": f"doc:{rel_path}"}
+        )
+        for eid in self.document_entities.pop(rel_path, set()):
+            self.entity_documents.get(eid, set()).discard(rel_path)
 
     async def _archive_entity_file(self, entity_id: str) -> bool:
         """Write-through: soft-delete an entity by setting is_archived: true.
