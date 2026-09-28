@@ -365,7 +365,8 @@ async def test_semantica_ingest_file_indexes_the_graph_node_and_distinguishes_sk
     from app.services.semantica_knowledge import SemanticaKnowledge
 
     sk = SemanticaKnowledge.__new__(SemanticaKnowledge)
-    sk.domain = None
+    # Only configured types index (the graph writes anything else as a Document).
+    sk.domain = SimpleNamespace(entities={"person": SimpleNamespace(plural="people")})
     node = {"id": "person-ankit", "name": "Ankit Patel", "entity_type": "person",
             "source_file": "people/ankit.md", "title": "Engineer"}
     sk._query = AsyncMock(return_value=[{"n": node}])
