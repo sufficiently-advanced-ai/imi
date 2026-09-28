@@ -6,7 +6,7 @@ Initializes:
 - VectorStore (FAISS backend, in-memory)
 - EmbeddingGenerator (FastEmbed with all-MiniLM-L6-v2)
 - ContextGraph (decision intelligence)
-- NERExtractor (LLM-backed entity extraction)
+- ClaudeNERExtractor (entity extraction routed through ClaudeClient)
 - DuplicateDetector (entity deduplication)
 
 All components are created once and shared via SemanticaKnowledge facade.
@@ -86,25 +86,99 @@ def create_context_graph() -> Any:
     return graph
 
 
-def create_ner_extractor(api_key: str | None = None) -> Any:
-    """Create an NER extractor using Anthropic Claude for LLM-based extraction."""
-    from semantica.semantic_extract import NERExtractor
+class ClaudeNERExtractor:
+    """LLM entity extraction through ``ClaudeClient.generate_message``
+    (operation ``semantica_ner``), so it follows ``config/inference.yaml``
+    routing like every other model call — the subscription backend, not a
+    separate Anthropic API key. Replaces Semantica's ``NERExtractor(method=
+    "llm", provider="anthropic", api_key=...)``, which called the API directly
+    and, when that key was stale, fell back to a pattern extractor that
+    returned hundreds of junk spans per transcript.
 
-    api_key = api_key or _get_anthropic_key()
-    if not api_key:
-        raise ValueError(
-            "ANTHROPIC_API_KEY is required for NER extraction. "
-            "Set it in .env or environment variables."
+    Returns objects with Semantica's Entity shape (text, label, confidence,
+    start_char, end_char, metadata) so ``SemanticaExtraction`` is unchanged.
+    Never raises: returns [] when the call or the parse fails.
+    """
+
+    OPERATION = "semantica_ner"
+    LABELS = ("PERSON", "ORG", "PROJECT", "PRODUCT", "TEAM", "EVENT", "TOPIC", "LOCATION")
+    MAX_CHARS = 100_000
+
+    def __init__(self, client: Any = None, min_confidence: float = 0.7, labels: tuple[str, ...] | None = None):
+        self._client = client
+        self.min_confidence = min_confidence
+        self.labels = tuple(labels or self.LABELS)
+
+    def _prompt(self, text: str) -> str:
+        return (
+            "Extract the named entities from the text below. Only specific, named things: "
+            "people, organisations, projects, products, teams, events, topics, places. Not "
+            "roles, pronouns, or generic nouns.\n"
+            f"Use one of these labels: {', '.join(self.labels)}.\n"
+            'Return JSON only: {"entities": [{"text": "...", "label": "...", "confidence": 0.0}]}\n'
+            "Use the name exactly as written in the text; list each entity once.\n\n"
+            f"Text:\n{text[: self.MAX_CHARS]}"
         )
-    extractor = NERExtractor(
-        method="llm",
-        provider="anthropic",
-        llm_model="claude-haiku-4-5-20251001",
-        min_confidence=0.7,
-        post_process=True,
-        api_key=api_key,
-    )
-    logger.info("Semantica NERExtractor initialized (anthropic/claude-haiku-4-5)")
+
+    async def aextract_entities(self, text: str) -> list[Any]:
+        import json
+        import re
+        from types import SimpleNamespace
+
+        if not (text or "").strip():
+            return []
+        try:
+            from app.config import settings
+
+            client = self._client
+            if client is None:
+                from app.services.claude_client import get_claude_client
+
+                client = get_claude_client()
+            response = await client.generate_message(
+                messages=[{"role": "user", "content": self._prompt(text)}],
+                model=settings.CLAUDE_HAIKU_MODEL,
+                max_tokens=4000,
+                temperature=0.0,
+                operation=self.OPERATION,
+            )
+            raw = ""
+            if hasattr(response, "content") and response.content:
+                raw = getattr(response.content[0], "text", "") or ""
+            elif isinstance(response, dict) and response.get("content"):
+                first = response["content"][0]
+                raw = first.get("text", "") if isinstance(first, dict) else ""
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            data = json.loads(match.group(0)) if match else {}
+        except Exception as e:
+            logger.warning("[SEMANTICA] NER extraction failed: %s", e)
+            return []
+        out, seen = [], set()
+        for item in data.get("entities", []) if isinstance(data, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("text") or "").strip()
+            label = str(item.get("label") or "").strip().upper()
+            try:
+                confidence = float(item.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if not name or not label or confidence < self.min_confidence or (name.lower(), label) in seen:
+                continue
+            seen.add((name.lower(), label))
+            start = text.find(name)
+            out.append(SimpleNamespace(
+                text=name, label=label, confidence=confidence,
+                start_char=max(start, 0), end_char=max(start, 0) + len(name) if start >= 0 else 0,
+                metadata={"extraction_method": "claude_client", "operation": self.OPERATION},
+            ))
+        return out
+
+
+def create_ner_extractor(client: Any = None) -> Any:
+    """Entity extractor routed through ClaudeClient (see ClaudeNERExtractor)."""
+    extractor = ClaudeNERExtractor(client=client, min_confidence=0.7)
+    logger.info("Semantica NER extractor initialized (ClaudeClient, operation=semantica_ner)")
     return extractor
 
 
@@ -164,11 +238,3 @@ def _get_neo4j_username() -> str:
 def _get_neo4j_password() -> str:
     import os
     return os.environ.get("NEO4J_PASSWORD", "password")
-
-
-def _get_anthropic_key() -> str:
-    import os
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        logger.warning("ANTHROPIC_API_KEY not set — LLM extraction will fail")
-    return key
