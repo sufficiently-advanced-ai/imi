@@ -92,7 +92,10 @@ def apply_relation(candidate: dict, relation: str, probabilities: dict[str, floa
     pending, with the model's probability replacing the entity-overlap ratio.
     Candidates a reviewer already actioned are annotated but never re-decided.
     """
-    p_supersedes = round(float(probabilities.get("supersedes", 0.0)), 3)
+    # Gate on the raw probability; round only what is stored for display, so
+    # 0.7496 never rounds up past the bar.
+    raw_supersedes = float(probabilities.get("supersedes", 0.0))
+    p_supersedes = round(raw_supersedes, 3)
     out = {
         **candidate,
         "relation": relation,
@@ -103,7 +106,7 @@ def apply_relation(candidate: dict, relation: str, probabilities: dict[str, floa
         return out
     out.setdefault("entity_overlap", candidate.get("confidence"))
     out["confidence"] = p_supersedes
-    if relation == "supersedes" and p_supersedes >= SUPERSEDE_MIN_PROBABILITY:
+    if relation == "supersedes" and raw_supersedes >= SUPERSEDE_MIN_PROBABILITY:
         return out
     out["status"] = "dismissed"
     out["dismissed_by"] = _DISMISSED_BY

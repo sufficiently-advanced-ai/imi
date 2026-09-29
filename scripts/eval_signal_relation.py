@@ -99,7 +99,10 @@ async def main() -> int:
     ap.add_argument("--runs", type=int, default=1)
     args = ap.parse_args()
 
-    cases = json.loads(args.fixture.read_text())["cases"]
+    cases = json.loads(args.fixture.read_text()).get("cases") or []
+    if not cases:
+        print(f"fixture error: {args.fixture} has no cases", file=sys.stderr)
+        return 2
     client = DecisionClient({
         "endpoints": {"do-jev": {"type": "digitalocean", "api_key_env": "DIGITALOCEAN_MODEL_ACCESS_KEY",
                                  "pricing": {"input": 0.042}}},

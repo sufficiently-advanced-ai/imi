@@ -150,3 +150,27 @@ async def test_detect_supersession_phase_counts_only_pending(tmp_path, monkeypat
     [cand] = new.metadata["supersession_candidates"]
     assert cand["status"] == "dismissed"
     assert cand["relation"] == "refines"
+
+
+def test_gate_compares_the_unrounded_probability():
+    """0.7496 would round to 0.75; it is still below the bar."""
+    below = apply_relation(_candidate(), "supersedes", {"supersedes": 0.7496, "refines": 0.2504}, "on")
+    assert below["status"] == "dismissed"
+    assert below["confidence"] == 0.75  # rounded for display only
+    at_bar = apply_relation(_candidate(), "supersedes", {"supersedes": 0.75, "refines": 0.25}, "on")
+    assert at_bar["status"] == "pending"
+
+
+def test_eval_rejects_an_empty_fixture(tmp_path, capsys, monkeypatch):
+    import asyncio
+    import json
+    import sys as _sys
+
+    _sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "scripts"))
+    import eval_signal_relation as ev
+
+    fixture = tmp_path / "empty.json"
+    fixture.write_text(json.dumps({"cases": []}))
+    monkeypatch.setattr(_sys, "argv", ["eval_signal_relation.py", "--fixture", str(fixture)])
+    assert asyncio.run(ev.main()) == 2
+    assert "has no cases" in capsys.readouterr().err
