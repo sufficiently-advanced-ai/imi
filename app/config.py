@@ -311,7 +311,12 @@ class Settings(JSONConfigSettings):
     model_config = SettingsConfigDict(
         env_file=".env.test"
         if "ENV_FILE" in os.environ and os.environ["ENV_FILE"] == ".env.test"
-        else ".env"
+        else ".env",
+        # .env is shared with config/inference.yaml's `api_key_env` lookups
+        # (DIGITALOCEAN_MODEL_ACCESS_KEY, TAILNET_LLM_KEY, ...), which read
+        # os.getenv directly. pydantic-settings defaults to extra="forbid" once
+        # env_file is set, which made any such key a startup crash.
+        extra="ignore",
     )
 
 class TelemetryConfig:
