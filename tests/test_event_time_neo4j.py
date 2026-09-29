@@ -56,7 +56,12 @@ def _domain() -> DomainConfiguration:
             ),
             "project": DomainEntity(
                 name="project", description="p", plural="projects", attributes=name,
-                relationships=[],
+                relationships=[
+                    DomainRelationship(
+                        type="has_team_members", target="person",
+                        cardinality="many-to-many", inverse_name="works_on_projects",
+                    ),
+                ],
             ),
             "account": DomainEntity(
                 name="account", description="a", plural="accounts", attributes=name,
