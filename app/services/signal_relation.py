@@ -117,7 +117,7 @@ def _default_client():
         client = get_decision_client()
         return client if client.mode(RELATION_OPERATION) != "off" else None
     except Exception as e:  # config errors must never break ingest
-        logger.warning("[RELATION] Decision model unavailable: %s", e)
+        logger.warning("[SIG_RELATION] Decision model unavailable: %s", e)
         return None
 
 
@@ -160,13 +160,13 @@ async def judge_candidates(
             answer = result.choice("relation")
         except (DecisionUnavailable, ValueError, KeyError, TypeError) as e:
             logger.warning(
-                "[RELATION] Judgment failed for %s -> %s, leaving candidate as is: %s",
+                "[SIG_RELATION] Judgment failed for %s -> %s, leaving candidate as is: %s",
                 new_signal.id, candidate.get("old_signal_id"), e,
             )
             return candidate
         out = apply_relation(candidate, answer.choice, answer.probabilities, mode)
         logger.info(
-            "[RELATION] %s %s -> %s: %s p=%.2f p_supersedes=%.2f overlap=%s -> %s",
+            "[SIG_RELATION] %s %s -> %s: %s p=%.2f p_supersedes=%.2f overlap=%s -> %s",
             mode, new_signal.id[:8], old.id[:8], answer.choice,
             out["relation_probability"], answer.probabilities.get("supersedes", 0.0),
             candidate.get("confidence"), out.get("status", "pending"),
