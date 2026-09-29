@@ -1840,15 +1840,14 @@ class IngestOrchestrator(BaseOrchestrator):
         # Flatten all standing signals
         standing: list = [sig for batch in all_batches for sig in batch.signals]
 
-        total_candidates = 0
+        found: list[tuple] = []
         for sig in meeting_signals.signals:
             if sig.type != "decision":
                 continue
             try:
                 candidates = find_supersession_candidates(sig, standing)
                 if candidates:
-                    sig.metadata["supersession_candidates"] = candidates
-                    total_candidates += len(candidates)
+                    found.append((sig, candidates))
             except Exception as e:
                 logger.warning(
                     "[INGEST] DETECT_SUPERSESSION: candidate matching failed for "
@@ -1856,6 +1855,22 @@ class IngestOrchestrator(BaseOrchestrator):
                     sig.id,
                     e,
                 )
+
+        # Entity overlap only proposes; the decision model judges what each
+        # pair actually is (signal_relation: off/shadow/on, never raises).
+        if found:
+            from app.services.signal_relation import judge_candidates
+
+            by_id = {s.id: s for s in standing}
+            judged = await asyncio.gather(
+                *(judge_candidates(sig, cands, by_id) for sig, cands in found)
+            )
+            found = [(sig, cands) for (sig, _), cands in zip(found, judged, strict=True)]
+
+        total_candidates = 0
+        for sig, candidates in found:
+            sig.metadata["supersession_candidates"] = candidates
+            total_candidates += sum(1 for c in candidates if c.get("status") == "pending")
 
         if total_candidates > 0:
             logger.info(
