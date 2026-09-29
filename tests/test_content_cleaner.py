@@ -66,7 +66,8 @@ def test_markdown_links_survive_on_web():
 
 def test_record_sources_are_never_rewritten():
     note = "[Skip to content](x)\n![](img.png)\nMy note. Unsubscribe from that list."
-    for source in ("manual", "fathom", "local_recording", "openbrain-import", "ai-circle-inbox", None):
+    for source in ("manual", "fathom", "local_recording", "openbrain-import", "ai-circle-inbox",
+                   "document", "other", "zoom", None):
         assert not should_clean(source)
         assert clean_content(note, source).text == note
 
@@ -93,3 +94,19 @@ def test_capture_embedding_text_is_summary_then_head():
     assert text.startswith("A summary.\n\n") and len(text) == len("A summary.\n\n") + 2000
     bare = capture_memory("short body", source="web")
     assert capture_embedding_text(bare) == "short body"
+
+
+def test_markdown_tables_and_linked_titles_survive_on_web():
+    text = (
+        "# [How we cut latency](https://example.com/post)\n\n"
+        "We measured three things across the fleet this quarter.\n\n"
+        "| metric | before | after |\n|---|---|---|\n| p50 | 120ms | 80ms |\n\n"
+        "The rest of the article explains how each change was made in detail."
+    )
+    assert clean_content(text, "web").text == text
+
+
+def test_mail_table_debris_is_removed():
+    text = "Hi Scott, the invoice is attached for this month.\n| | |\n|---|---|\nThanks, the billing team"
+    out = clean_content(text, "mail").text
+    assert "| | |" not in out and "|---|---|" not in out and "invoice is attached" in out

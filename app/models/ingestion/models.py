@@ -20,6 +20,7 @@ class ContentSource(str, Enum):
     GRAIN = "grain"
     PLAUD = "plaud"
     LOCAL_RECORDING = "local_recording"
+    ZOOM = "zoom"
     SLACK = "slack"
     EMAIL = "email"
     DOCUMENT = "document"

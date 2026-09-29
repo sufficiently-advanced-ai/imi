@@ -63,6 +63,7 @@ SOURCE_DEFAULTS: dict[str, str] = {
     "otter": "record",
     "fathom": "record",
     "grain": "record",
+    "zoom": "record",
     "plaud": "record",
     "local_recording": "record",
     "littlebird": "record",

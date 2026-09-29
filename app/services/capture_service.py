@@ -88,12 +88,19 @@ async def capture_and_persist(
         # Safety-net cleanup of third-party content (no-op for record
         # sources) before dedup, admission and persistence, so the stored,
         # judged and embedded text are the same clean text.
+        raw_content = content
         cleaned = clean_content(content, source)
         if cleaned.changed and cleaned.text != content:
             logger.info("[CAPTURE] Cleaned %s/%s: -%d chars %s",
                         source, source_id, cleaned.removed_chars, cleaned.rules)
             content = cleaned.text
         existing = store.find_existing(content, source, source_id)
+        if existing is None and content != raw_content:
+            # Captured before cleaning existed (or before a cleaner rule
+            # changed): the stored copy has the raw text's fingerprint.
+            existing = store.find_existing(raw_content, source, source_id)
+            if existing is not None:
+                content = raw_content  # so store.capture dedups onto it
         if existing is None:
             decision = await admit(
                 content, source, source_id=source_id, client=decision_client

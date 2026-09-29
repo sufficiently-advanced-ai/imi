@@ -811,7 +811,11 @@ class IngestOrchestrator(BaseOrchestrator):
             or getattr(observation, "title", None)
         )
         as_of = observation.occurred_at.isoformat() if getattr(observation, "occurred_at", None) else None
-        stale_after = library_stale_after(None)
+        # Counted from the document's own date, not the wall clock, so a
+        # rebuild or re-ingest reproduces the same horizon instead of
+        # reviving signals that already decayed (ADR-003 §5).
+        anchor = getattr(observation, "occurred_at", None) or getattr(observation, "observed_at", None)
+        stale_after = library_stale_after(None, anchor)
         for sig in meeting_signals.signals:
             fields = library_claim_fields(
                 sig, attributed_to=attributed_to, as_of=as_of, stale_after=stale_after

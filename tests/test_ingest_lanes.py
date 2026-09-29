@@ -109,6 +109,8 @@ def test_library_signals_become_attributed_dated_claims():
         assert sig.metadata["attributed_to"] == "The AI Enterprise"
         assert sig.metadata["as_of"].startswith("2026-09-02")
     assert [s.metadata["extracted_type"] for s in ms.signals] == ["decision", "action_item"]
+    # Decay counts from the document's date, so a rebuild reproduces it
+    assert ms.signals[0].stale_after.startswith("2027-03-01")
 
 
 def test_record_signals_are_untouched():
@@ -224,6 +226,8 @@ async def test_rebuild_never_mints_stubs_from_library_name_fields():
 
     none = await kg._extract_entity_references("meetings/m.md", {"lane": "library", **names})
     assert none == set()
+    # Hand-edited casing reads as library, as Observation reads it
+    assert await kg._extract_entity_references("meetings/m.md", {"lane": " Library", **names}) == set()
     kg._ensure_entity_exists.assert_not_called()
 
     linked = await kg._extract_entity_references(

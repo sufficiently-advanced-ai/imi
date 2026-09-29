@@ -362,3 +362,26 @@ async def test_review_capture_invalid_action_errors(tmp_path, monkeypatch):
             created["id"], "bless", store=store, repo_root=tmp_path
         )
     assert result["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_recapture_of_uncleaned_content_dedups(tmp_path, monkeypatch):
+    """Web content stored before the cleaner existed is still found when the
+    same raw text arrives again (the cleaned text has another fingerprint)."""
+    from app.services import capture_service, signal_indexing
+
+    monkeypatch.setattr(capture_service, "enrich_capture", _fake_enrich)
+    monkeypatch.setattr(signal_indexing, "index_capture_one", _FakeIndexing())
+    store = _make_store(tmp_path)
+    raw = ("[Skip to content](https://example.com)\n"
+           "A long article body about vector databases and why they matter for retrieval.\n"
+           "More paragraphs of real article content follow here for length.")
+    old = store.capture(raw, source="web").memory  # stored raw, pre-cleaner
+
+    with patch("app.services.capture_service.git_ops", MagicMock(commit_and_push=AsyncMock())):
+        result = await capture_service.capture_and_persist(
+            raw, source="web", store=store, repo_root=tmp_path
+        )
+
+    assert result["deduped"] is True and result["id"] == old.id
+    assert len(store.list()) == 1
