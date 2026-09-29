@@ -780,6 +780,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 id_map = {k: link_map.get(v, v) for k, v in id_map.items()}
                 id_map.update(link_map)
             dropped_ids = set(dropped_ids) | unlinked
+            entities = await self._apply_name_upgrades(entities)
 
             if meeting_signals:
                 # Ids AND names: a ref resolved "Paul" -> person-paul-evers
@@ -962,20 +963,19 @@ class IngestOrchestrator(BaseOrchestrator):
             new_id = resolved.id or eid
             # A more complete surface form resolved onto an existing entity
             # with a shorter name ("Ankit Patel" -> person-ankit "Ankit"):
-            # adopt the fuller name so the merged entity reads correctly.
-            if (
+            # adopt the fuller name so the merged entity reads correctly. The
+            # stored entity is only renamed once link verification keeps the
+            # link (_apply_name_upgrades); a split or unlink must not leave an
+            # unrelated "Brian" renamed "Brian Vigilani".
+            upgrade = (
                 resolved.matched_via != "new"
                 and self._is_fuller_name(lookup, resolved.canonical_name, etype)
-                and hasattr(self._graph, "upgrade_entity_name")
-            ):
-                try:
-                    if await self._graph.upgrade_entity_name(new_id, lookup):
-                        resolved = type(resolved)(
-                            id=new_id, canonical_name=lookup,
-                            matched_via=resolved.matched_via, score=resolved.score,
-                        )
-                except Exception as e:
-                    logger.warning("[INGEST] Name upgrade failed for %s: %s", new_id, e)
+            )
+            if upgrade:
+                resolved = type(resolved)(
+                    id=new_id, canonical_name=lookup,
+                    matched_via=resolved.matched_via, score=resolved.score,
+                )
             if eid and new_id != eid:
                 id_map[eid] = new_id
                 logger.info(
@@ -1006,8 +1006,25 @@ class IngestOrchestrator(BaseOrchestrator):
             updated.setdefault("surface", ename)
             if (resolved.matched_via != "new" or lookup != ename) and resolved.canonical_name:
                 updated["name"] = resolved.canonical_name
+            if upgrade:
+                updated["upgrade_name_of"] = new_id
             resolved_entities.append(updated)
         return resolved_entities, id_map
+
+    async def _apply_name_upgrades(self, entities: list[dict]) -> list[dict]:
+        """Rename existing entities to the fuller name they were resolved
+        under, for links that survived verification on the same id. A link
+        that was split or reassigned has a different id and is left alone."""
+        out = []
+        for e in entities:
+            target = e.pop("upgrade_name_of", None)
+            if target and target == e.get("id") and hasattr(self._graph, "upgrade_entity_name"):
+                try:
+                    await self._graph.upgrade_entity_name(target, e["name"])
+                except Exception as ex:
+                    logger.warning("[INGEST] Name upgrade failed for %s: %s", target, ex)
+            out.append(e)
+        return out
 
     @staticmethod
     def _first_token(name: str) -> str:

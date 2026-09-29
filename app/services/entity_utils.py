@@ -69,8 +69,15 @@ def is_valid_entity_name(name: str) -> bool:
 # since the same words can be real names.
 _PLACEHOLDER_RE = re.compile(
     r"^(?:"
-    r"(?:unnamed|unknown|unidentified|anonymous|unspecified)\b.*"
-    r"|(?:speaker|participant|attendee|caller|guest|user|person|voice)\s*[#-]?\s*(?:\d+|[a-z])"
+    # "Unknown", "Unnamed facilitator", "Unknown Speaker" -- but not a proper
+    # name that starts with the word ("Unknown Worlds", "Anonymous Content")
+    r"(?:unnamed|unknown|unidentified|anonymous|unspecified)"
+    r"(?:\s+(?:(?-i:[a-z][\w'-]*(?:\s+[a-z][\w'-]*)*)|(?:speaker|participant|person|attendee"
+    r"|caller|guest|user|voice|contact|individual|male|female|man|woman)))?"
+    # "Speaker 2", "Speaker2", "Participant B", "Guest #3" -- a separator or a
+    # digit is required, so "Persona", "Guesty", "Users" stay names
+    r"|(?:speaker|participant|attendee|caller|guest|user|person|voice)"
+    r"(?:\s*[#-]?\s*\d+|\s*[#-]\s*[a-z]|\s+[a-z])"
     r"|(?:someone|somebody|everyone|everybody|anyone|nobody|others?|they|we|you)"
     r"|(?:other|another)\s+(?:speaker|participant|person|attendee)s?"
     r")$",
