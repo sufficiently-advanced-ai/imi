@@ -1,0 +1,23 @@
+# Lane admission (ADR-003): which lane each intake source defaults to.
+# Copy to config/lanes.yaml to override the built-in defaults in
+# app/services/lane_admission.py (SOURCE_DEFAULTS). Values:
+#   record    — we were party to it (meetings, own notes, business comms)
+#   library   — third-party content we watch (feeds, articles, videos)
+#   per_item  — mixed; the decision model (op `lane_admission`) judges each item
+# Unknown sources are per_item. With the model off or failing, per_item falls
+# back to record (the pre-lanes behaviour).
+
+# Whose knowledge base this is — used in the model's lane questions.
+# Defaults to the KB_OWNER_NAME setting.
+# owner: Your Name
+
+sources:
+  littlebird: record
+  ai-circle-inbox: record
+  mail: per_item
+  web: library
+
+# Extra senders to drop at admission (substring match on the From: line),
+# on top of the built-in automated-mail rule (DMARC reports, statements).
+drop_senders:
+  - notifications@example-vendor.com

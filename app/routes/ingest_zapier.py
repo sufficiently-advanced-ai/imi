@@ -22,7 +22,7 @@ _PROVIDER_MAP = {
     "otter": ContentSource.OTTER,
     "fathom": ContentSource.FATHOM,
     "grain": ContentSource.GRAIN,
-    "zoom": ContentSource.OTHER,  # Zoom transcripts have no dedicated enum yet
+    "zoom": ContentSource.ZOOM,
 }
 
 
@@ -40,7 +40,10 @@ def _to_ingest_request(payload: ZapierTranscriptPayload) -> IngestRequest:
     normalized_provider = payload.provider.strip().lower()
     return IngestRequest(
         content=payload.transcript,
-        source=_PROVIDER_MAP.get(normalized_provider, ContentSource.OTHER),
+        # Every Zapier payload is a recorder's transcript of a meeting we were
+        # in: an unlisted recorder is still a recording (record lane, ADR-003),
+        # never a per-item "other" that admission could file as library.
+        source=_PROVIDER_MAP.get(normalized_provider, ContentSource.LOCAL_RECORDING),
         source_id=payload.external_id,
         title=payload.title,
         participants=payload.participants,

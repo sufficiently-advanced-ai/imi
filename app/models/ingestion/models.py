@@ -20,6 +20,7 @@ class ContentSource(str, Enum):
     GRAIN = "grain"
     PLAUD = "plaud"
     LOCAL_RECORDING = "local_recording"
+    ZOOM = "zoom"
     SLACK = "slack"
     EMAIL = "email"
     DOCUMENT = "document"
@@ -78,7 +79,7 @@ class IngestResult(BaseModel):
 class IngestJobStatus(BaseModel):
     """Status of an ingestion job."""
     job_id: str
-    status: str  # pending/running/completed/failed
+    status: str  # pending/running/completed/failed/dropped
     content_type: str | None = None
     phases_completed: list[str] = Field(default_factory=list)
     current_phase: str | None = None

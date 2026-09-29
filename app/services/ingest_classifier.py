@@ -21,6 +21,7 @@ _SOURCE_TO_TYPE = {
     "grain": "call_transcript",
     "plaud": "call_transcript",
     "local_recording": "call_transcript",
+    "zoom": "call_transcript",
     "slack": "slack_thread",
     "email": "email_thread",
     "document": "document",

@@ -150,12 +150,26 @@ def index_signal(vector_store, embedder, signal: Signal) -> str | None:
             "can_use_as_evidence": signal.can_use_as_evidence,
             "can_use_as_instruction": signal.can_use_as_instruction,
             "tenant_id": signal.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(signal, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
     except Exception as e:
         logger.error("Failed to index signal %s: %s", signal.id, e)
         return None
+
+
+CAPTURE_EMBED_CHARS = 2000
+
+
+def capture_embedding_text(capture) -> str:
+    """What a capture's vector represents: its summary, then the opening of
+    its text. Embedders read only the first few hundred tokens, so embedding a
+    long page or transcript as-is encodes whatever happens to come first."""
+    summary = (getattr(capture, "summary", None) or "").strip()
+    head = capture.content.strip()[:CAPTURE_EMBED_CHARS]
+    return f"{summary}\n\n{head}" if summary else head
 
 
 def index_capture(vector_store, embedder, capture) -> str | None:
@@ -168,7 +182,7 @@ def index_capture(vector_store, embedder, capture) -> str | None:
     if not capture.content or not capture.content.strip():
         return None
     try:
-        embedding = embedder.generate_embeddings(capture.content, data_type="text")
+        embedding = embedder.generate_embeddings(capture_embedding_text(capture), data_type="text")
         if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
             embedding = embedding[0]
 
@@ -184,6 +198,8 @@ def index_capture(vector_store, embedder, capture) -> str | None:
             "can_use_as_evidence": capture.can_use_as_evidence,
             "can_use_as_instruction": capture.can_use_as_instruction,
             "tenant_id": capture.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(capture, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
@@ -220,6 +236,8 @@ def index_agent_memory(vector_store, embedder, memory) -> str | None:
             "can_use_as_evidence": memory.can_use_as_evidence,
             "can_use_as_instruction": memory.can_use_as_instruction,
             "tenant_id": memory.tenant_id,
+            # ADR-003: store-side lane filter; recall re-hydrates it from the record.
+            "lane": getattr(memory, "lane", "record"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None

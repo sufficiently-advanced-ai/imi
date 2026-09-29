@@ -76,6 +76,7 @@ def _parse_content_timestamp(content: str) -> datetime | None:
 
 
 PHASES = [
+    "ADMIT",
     "CLASSIFY",
     "BUILD_MEETING",
     "EXTRACT_ENTITIES",
@@ -169,6 +170,21 @@ class IngestOrchestrator(BaseOrchestrator):
         }
 
         try:
+            # Phase 0: ADMIT (ADR-003) — record, library, or drop, before
+            # anything is built. Never raises; an outage degrades to record.
+            admission = await self._run_phase(
+                job_store, job_key, "ADMIT", self._phase_admit, request
+            )
+            job_store[job_key]["lane"] = admission.lane
+            if admission.drop:
+                result["status"] = "dropped"
+                result["admission"] = admission.as_dict()
+                job_store[job_key]["status"] = "dropped"
+                job_store[job_key]["result"] = result
+                await self._emit("ingest_dropped", {"reason": admission.reason})
+                result["processing_time_ms"] = int((time.time() - start_time) * 1000)
+                return result
+
             # Phase 1: CLASSIFY
             content_type = await self._run_phase(
                 job_store, job_key, "CLASSIFY", self._phase_classify, request
@@ -184,6 +200,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 request,
                 bot_id,
                 content_type,
+                admission.lane,
             )
 
             # Phases 3-9 — shared with process_observation() (rebuild replay)
@@ -465,16 +482,69 @@ class IngestOrchestrator(BaseOrchestrator):
     # Phase implementations
     # ------------------------------------------------------------------
 
+    async def _phase_admit(self, request):
+        """Phase 0 (ADR-003): decide lane or drop. Drops are written to the
+        admission log (memory/admission/), never to the corpus."""
+        from app.services.content_cleaner import clean_content
+        from app.services.lane_admission import admit
+
+        source = request.source.value if request.source else None
+        # Safety-net cleanup of third-party content before anything reads it
+        # (no-op for transcripts and other record sources).
+        cleaned = clean_content(request.content, source)
+        if cleaned.changed and cleaned.text != request.content:
+            logger.info("[INGEST] Cleaned %s content: -%d chars %s",
+                        source, cleaned.removed_chars, cleaned.rules)
+            request.content = cleaned.text
+        decision = await admit(
+            request.content,
+            source,
+            source_id=getattr(request, "source_id", None),
+            summary=request.title,
+        )
+        logger.info(
+            "[INGEST] Admission: source=%s lane=%s drop=%s (%s)",
+            source, decision.lane, decision.drop, decision.reason,
+        )
+        if decision.drop:
+            await self._log_admission_drop(decision, request, source)
+        return decision
+
+    async def _log_admission_drop(self, decision, request, source) -> None:
+        from app.services.lane_admission import AdmissionLog
+        from app.services.memory_capture import REPO_ROOT
+
+        try:
+            log = AdmissionLog(REPO_ROOT)
+            written = log.append(
+                decision,
+                content=request.content,
+                source=source,
+                source_id=getattr(request, "source_id", None),
+            )
+            if written and self._git_ops and hasattr(self._git_ops, "commit_and_push"):
+                await self._git_ops.commit_and_push(
+                    [log.relative_path()], f"admission: drop {source} ({decision.reason[:60]})"
+                )
+        except Exception as e:
+            logger.warning("[INGEST] Admission log write failed (non-fatal): %s", e)
+
     async def _phase_classify(self, request) -> str:
         """Phase 1: Classify content type."""
         source_hint = request.source.value if request.source else None
         return await self._classifier.classify(request.content, source_hint=source_hint)
 
-    async def _phase_build_observation(self, request, bot_id: str, content_type: str):
+    async def _phase_build_observation(
+        self, request, bot_id: str, content_type: str, lane: str = "record"
+    ):
         """Phase 2: Build an Observation from the ingested content.
 
         This translates the external transcript into an Observation so the
         downstream signal promotion pipeline is source-agnostic.
+
+        A library observation (ADR-003) has no participants: the people named
+        on third-party content are its authors, kept as text, and never become
+        person nodes or meeting semantics.
         """
         from app.models.observation import Observation
 
@@ -496,6 +566,9 @@ class IngestOrchestrator(BaseOrchestrator):
             logger.info("[INGEST] No content Date: header; using ingest time %s", now.isoformat())
         title = request.title or f"Ingested {content_type}"
         participants = request.participants or []
+        authors: list[str] = []
+        if lane == "library":
+            authors, participants = list(participants), []
 
         # Build entities_mentioned: start with participants, then enrich with
         # domain-aware NER so domain types (client, engagement, ...) are present
@@ -532,10 +605,12 @@ class IngestOrchestrator(BaseOrchestrator):
             title=title,
             occurred_at=observed_at,
             participants=participants,
+            lane=lane,
+            authors=authors,
             update_count=1,
         )
 
-        logger.info(f"[INGEST] Built Observation: external_id={bot_id} title={title}")
+        logger.info(f"[INGEST] Built Observation: external_id={bot_id} title={title} lane={lane}")
         return observation
 
     @staticmethod
@@ -702,6 +777,8 @@ class IngestOrchestrator(BaseOrchestrator):
                 knowledge_graph=self._graph,
             )
             meeting_signals = await promoter.promote(observation)
+            if meeting_signals:
+                self._apply_lane_to_signals(meeting_signals, observation)
 
             if meeting_signals:
                 logger.info(
@@ -718,6 +795,33 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning(f"[INGEST] Signal promotion failed (non-fatal): {e}")
             return None
+
+    @staticmethod
+    def _apply_lane_to_signals(meeting_signals, observation) -> None:
+        """ADR-003 §3: signals inherit their observation's lane. Library
+        signals are claims — attributed to the source and dated, never our
+        decisions or action items — and decay (stale_after)."""
+        lane = getattr(observation, "lane", "record") or "record"
+        if lane != "library":
+            return
+        from app.services.lane_admission import library_claim_fields, library_stale_after
+
+        attributed_to = (
+            ", ".join(getattr(observation, "authors", None) or [])
+            or getattr(observation, "title", None)
+        )
+        as_of = observation.occurred_at.isoformat() if getattr(observation, "occurred_at", None) else None
+        # Counted from the document's own date, not the wall clock, so a
+        # rebuild or re-ingest reproduces the same horizon instead of
+        # reviving signals that already decayed (ADR-003 §5).
+        anchor = getattr(observation, "occurred_at", None) or getattr(observation, "observed_at", None)
+        stale_after = library_stale_after(None, anchor)
+        for sig in meeting_signals.signals:
+            fields = library_claim_fields(
+                sig, attributed_to=attributed_to, as_of=as_of, stale_after=stale_after
+            )
+            for name, value in fields.items():
+                setattr(sig, name, value)
 
     async def _phase_enrich_graph(
         self, meeting_signals, content: str, observation
@@ -752,21 +856,32 @@ class IngestOrchestrator(BaseOrchestrator):
             # existing node instead of minting a duplicate slug. The id map
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
+            library = getattr(observation, "lane", "record") == "library"
             entities, id_map = await self._resolve_collected_entities(
                 entities,
                 participants=observation.participants if observation else None,
                 meeting=self._meeting_context(observation),
                 resolver=self._resolver_for(observation, release=True),
                 evidence=self._salient_evidence(observation),
+                link_only=library,
             )
 
-            # Decision-model admission for entities that would be NEW nodes:
-            # drop roles/placeholders/generic groups, fix the type (a company
-            # extracted as a team). Existing nodes and meeting participants
-            # are already vetted and skip it.
-            entities, admission_map, dropped_ids = await self._admit_new_entities(
-                entities, observation
-            )
+            # ADR-003 §3: library content links to EXISTING entities only —
+            # it never creates a node. Everything the resolver could not match
+            # to a known node is dropped here, before admission's create path.
+            if library:
+                known_nodes = getattr(self._graph, "nodes", None) or {}
+                not_known = {e["id"] for e in entities if e.get("id") and e["id"] not in known_nodes}
+                entities = [e for e in entities if e.get("id") in known_nodes]
+                admission_map, dropped_ids = {}, not_known
+            else:
+                # Decision-model admission for entities that would be NEW nodes:
+                # drop roles/placeholders/generic groups, fix the type (a company
+                # extracted as a team). Existing nodes and meeting participants
+                # are already vetted and skip it.
+                entities, admission_map, dropped_ids = await self._admit_new_entities(
+                    entities, observation
+                )
             if admission_map:
                 id_map = {k: admission_map.get(v, v) for k, v in id_map.items()}
                 id_map.update(admission_map)
@@ -775,7 +890,9 @@ class IngestOrchestrator(BaseOrchestrator):
             # link, new or existing: is it really mentioned, is it really the
             # existing entity, is there a fuller name? Unlinks, splits and
             # renames are applied before any node or edge is written.
-            entities, link_map, unlinked = await self._verify_links(entities, observation, content)
+            entities, link_map, unlinked = await self._verify_links(
+                entities, observation, content, link_only=library
+            )
             if link_map:
                 id_map = {k: link_map.get(v, v) for k, v in id_map.items()}
                 id_map.update(link_map)
@@ -808,7 +925,9 @@ class IngestOrchestrator(BaseOrchestrator):
             # on individual failures so a single bad entity doesn't drop the
             # whole batch's relationship inference.
             add_failures = 0
-            for entity in entities:
+            # Library links only to nodes that already exist: nothing to add,
+            # and add_node's MERGE would overwrite their properties.
+            for entity in ([] if library else entities):
                 eid = entity.get("id", "")
                 etype = entity.get("type", "unknown")
                 ename = entity.get("name", "")
@@ -865,7 +984,9 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
 
         # Step 3 (C): Infer entity-to-entity relationships and write edges.
-        if self._graph and len(entities) >= 2:
+        # Never from library content (ADR-003 §3): third-party text must not
+        # assert relationships between our entities.
+        if self._graph and len(entities) >= 2 and getattr(observation, "lane", "record") != "library":
             relationships = await self._infer_relationships(content, entities)
             logger.info(f"[INGEST] Inferred {len(relationships)} relationships")
             result["edge_count"] = await self._write_relationship_edges(
@@ -889,9 +1010,14 @@ class IngestOrchestrator(BaseOrchestrator):
         meeting: dict | None = None,
         resolver=None,
         evidence: dict | None = None,
+        link_only: bool = False,
     ) -> tuple[list[dict], dict[str, str]]:
         """Resolve each (type, name) against existing graph entities and
         against the entities minted earlier in this same batch.
+
+        ``link_only`` (library lane, ADR-003): resolve, but never adopt a
+        fuller name onto an existing node — third-party text must not rename
+        our entities.
 
         Longer names resolve first and every new entity is registered with
         the resolver, so a later short form ("Dan") can land on a full form
@@ -968,7 +1094,8 @@ class IngestOrchestrator(BaseOrchestrator):
             # link (_apply_name_upgrades); a split or unlink must not leave an
             # unrelated "Brian" renamed "Brian Vigilani".
             upgrade = (
-                resolved.matched_via != "new"
+                not link_only
+                and resolved.matched_via != "new"
                 and self._is_fuller_name(lookup, resolved.canonical_name, etype)
             )
             if upgrade:
@@ -1102,12 +1229,17 @@ class IngestOrchestrator(BaseOrchestrator):
             return {}
 
     async def _verify_links(
-        self, entities: list[dict], observation, content: str
+        self, entities: list[dict], observation, content: str, link_only: bool = False
     ) -> tuple[list[dict], dict[str, str], set[str]]:
         """Put each (meeting, entity) link to the decision model (operation
         entity_link) and apply its verdicts. Returns (entities, old_id ->
         new_id for splits/renames, unlinked ids). No-op in off/shadow mode or
-        without a decision model."""
+        without a decision model.
+
+        ``link_only`` (library lane, ADR-003): third-party text may confirm or
+        remove a link but never changes the graph — a rename keeps the existing
+        name, and a split (a different entity than our node) is an unlink
+        rather than a new node."""
         from app.services.entity_linking import judge_links
         from app.services.entity_resolver import EntityResolver
 
@@ -1191,6 +1323,17 @@ class IngestOrchestrator(BaseOrchestrator):
                 continue
             if verdict.action == "unlink":
                 unlinked.add(e["id"])
+                continue
+            if link_only:
+                # Library (ADR-003): third-party text only confirms or removes
+                # a link. A rename keeps our name; a split or a reassign (a
+                # different entity / a participant — library has none) unlinks.
+                if verdict.action == "rename" and e["id"] in known:
+                    if e["id"] not in seen:
+                        seen.add(e["id"])
+                        kept.append(e)
+                else:
+                    unlinked.add(e["id"])
                 continue
             if verdict.action == "reassign":
                 # The mention is a meeting participant (nickname/initials) or
@@ -1987,6 +2130,11 @@ class IngestOrchestrator(BaseOrchestrator):
                 signal_store.save(meeting_signals)
             except Exception as e:
                 logger.warning("[INGEST] ENRICH_PROFILES: signal_store.save failed: %s", e)
+
+        # ADR-003 §3: third-party content never feeds entity profiles.
+        if getattr(observation, "lane", "record") == "library":
+            logger.info("[INGEST] ENRICH_PROFILES: library observation, profiles untouched")
+            return result
 
         entity_ids = list(getattr(observation, "entity_ids", None) or [])
         if not entity_ids or not self._claude:

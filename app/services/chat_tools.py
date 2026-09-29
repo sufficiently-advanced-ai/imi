@@ -464,6 +464,7 @@ async def memory_recall(
     recency_weight: float = 0.0,
     task_id: str | None = None,
     runtime_name: str | None = None,
+    lanes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Unified governed recall (Phase 3 wiring). Delegates to memory_recall.recall."""
     from app.services import memory_recall as recall_service
@@ -478,6 +479,7 @@ async def memory_recall(
             task_id=task_id,
             runtime_name=runtime_name,
             surface="mcp",
+            **({"lanes": lanes} if lanes else {}),
         )
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1755,6 +1757,15 @@ async def add_call_transcript(
         return {
             "error": f"Ingestion failed: {outcome.get('error') or 'unknown error'}",
             "job_id": outcome.get("job_id"),
+        }
+
+    if state == "dropped":
+        admission = (outcome.get("result") or {}).get("admission") or {}
+        return {
+            "status": "dropped",
+            "job_id": outcome.get("job_id"),
+            "reason": admission.get("reason"),
+            "message": "Lane admission (ADR-003) rejected this content as junk; nothing was stored.",
         }
 
     if state == "pending":

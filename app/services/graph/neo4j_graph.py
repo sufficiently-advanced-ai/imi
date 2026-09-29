@@ -775,7 +775,15 @@ class Neo4jKnowledgeGraph:
         if not self.domain:
             return refs
 
+        # ADR-003: a library document links only to the ids live ingest
+        # resolved to existing entities. Its name fields (entities_mentioned,
+        # authors) are third-party surface forms and must never mint stubs —
+        # with no entity_ids it links to nothing.
+        # Normalized as Observation normalizes it: hand-edited "Library" is library.
+        library = str(metadata.get("lane") or "").strip().lower() == "library"
         resolved_ids = metadata.get("entity_ids")
+        if library and not (isinstance(resolved_ids, list) and resolved_ids):
+            return refs
         if isinstance(resolved_ids, list) and resolved_ids:
             for eid in resolved_ids:
                 if not isinstance(eid, str) or "-" not in eid:

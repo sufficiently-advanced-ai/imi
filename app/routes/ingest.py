@@ -129,6 +129,8 @@ async def submit_and_wait(
     Returns a dict with `state` one of:
       - "completed": includes `job_id`, `poll_url`, `content_type`, `result`
       - "failed":    includes `job_id`, `poll_url`, `error`
+      - "dropped":   lane admission (ADR-003) rejected the content as junk;
+                     includes `job_id`, `poll_url`, `result` (with the reason)
       - "pending":   timed out before a terminal state; includes `job_id`,
                      `poll_url` so the caller can poll later
     """
@@ -150,6 +152,13 @@ async def submit_and_wait(
                     "job_id": job_id,
                     "poll_url": poll_url,
                     "content_type": job.get("content_type"),
+                    "result": job.get("result") or {},
+                }
+            if state == "dropped":
+                return {
+                    "state": "dropped",
+                    "job_id": job_id,
+                    "poll_url": poll_url,
                     "result": job.get("result") or {},
                 }
             if state == "failed":
@@ -256,7 +265,8 @@ async def get_job_status(
     )
 
 
-_INGEST_TERMINAL_TYPES = frozenset({"ingest_complete", "ingest_failed"})
+# ingest_dropped: lane admission (ADR-003) rejected the content — terminal.
+_INGEST_TERMINAL_TYPES = frozenset({"ingest_complete", "ingest_failed", "ingest_dropped"})
 
 
 @router.get("/{job_id}/stream")

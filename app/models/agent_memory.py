@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.captured_memory import VISIBILITIES
+from app.models.lane import DEFAULT_LANE, validate_lane
 from app.services.signal_governance import (
     PROVENANCE_STATUSES,
     REVIEW_STATUSES,
@@ -99,6 +100,12 @@ class AgentMemory(BaseModel):
     related_record_ids: list[str] = Field(default_factory=list)
 
     # --- Scope (tenant enforced; workspace/project/visibility dormant) -------
+    # --- Lane (ADR-003): record vs library; server-assigned at admission ------
+    lane: str = Field(
+        DEFAULT_LANE,
+        description="record (we were party to it) or library (third-party content "
+        "we watch). Server-assigned at admission; never accepted from clients",
+    )
     tenant_id: str | None = None
     workspace_id: str | None = None
     project_id: str | None = None
@@ -122,6 +129,11 @@ class AgentMemory(BaseModel):
         if value not in PROVENANCE_STATUSES:
             raise ValueError(f"Unknown provenance_status: {value!r}")
         return value
+
+    @field_validator("lane")
+    @classmethod
+    def _validate_lane(cls, value: str) -> str:
+        return validate_lane(value)
 
     @field_validator("review_status")
     @classmethod

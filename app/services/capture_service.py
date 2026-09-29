@@ -9,6 +9,10 @@ best-effort and can never lose the capture.
 Governance fields are server-injected (ADR-002): captures enter as
 ``imported`` evidence-grade; ``review_capture`` is the only governance entry
 point, routing through the shared audited state machine.
+
+Lane admission (ADR-003) runs after dedup and before persist: it assigns the
+lane (record / library) or drops the item into the admission log. It never
+raises, and record-default sources (manual thoughts) are never dropped.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ from app.git_ops import git_ops
 from app.models.signal import SignalAuditRecord
 from app.services import signal_indexing
 from app.services.capture_enrichment import enrich_capture
+from app.services.content_cleaner import clean_content
+from app.services.lane_admission import AdmissionLog, admit
 from app.services.memory_capture import REPO_ROOT, CaptureStore
 from app.services.memory_governance import (
     capture_audit_store,
@@ -74,10 +80,37 @@ async def capture_and_persist(
     claude_client=None,
     store: CaptureStore | None = None,
     repo_root: Path = REPO_ROOT,
+    decision_client=None,
 ) -> dict[str, Any]:
     """Capture a thought end-to-end. Returns a result dict, never raises."""
     try:
         store = store or CaptureStore()
+        # Safety-net cleanup of third-party content (no-op for record
+        # sources) before dedup, admission and persistence, so the stored,
+        # judged and embedded text are the same clean text.
+        raw_content = content
+        cleaned = clean_content(content, source)
+        if cleaned.changed and cleaned.text != content:
+            logger.info("[CAPTURE] Cleaned %s/%s: -%d chars %s",
+                        source, source_id, cleaned.removed_chars, cleaned.rules)
+            content = cleaned.text
+        existing = store.find_existing(content, source, source_id)
+        if existing is None and content != raw_content:
+            # Captured before cleaning existed (or before a cleaner rule
+            # changed): the stored copy has the raw text's fingerprint.
+            existing = store.find_existing(raw_content, source, source_id)
+            if existing is not None:
+                content = raw_content  # so store.capture dedups onto it
+        if existing is None:
+            decision = await admit(
+                content, source, source_id=source_id, client=decision_client
+            )
+            if decision.drop:
+                return await _record_drop(decision, content, source, source_id, repo_root)
+            lane, stale_after = decision.lane, decision.stale_after
+        else:
+            decision = None
+            lane, stale_after = existing.lane, existing.stale_after
         result = store.capture(
             content,
             source,
@@ -85,6 +118,8 @@ async def capture_and_persist(
             tenant_id=tenant_id,
             tags=tags,
             source_date=source_date,
+            lane=lane,
+            stale_after=stale_after,
         )
         memory = result.memory
         if result.deduped:
@@ -92,6 +127,7 @@ async def capture_and_persist(
                 "success": True,
                 "id": memory.id,
                 "deduped": True,
+                "lane": memory.lane,
                 "enrichment": memory.enrichment,
                 "vector_indexed": False,
                 "committed": False,
@@ -133,7 +169,7 @@ async def capture_and_persist(
             action="capture",
             actor=actor,
             tenant_id=memory.tenant_id,
-            reasoning=f"captured from source={source}",
+            reasoning=f"captured from source={source}; lane={memory.lane} ({decision.reason if decision else 'deduped'})",
             before={},
             after=_governance_snapshot(memory),
         )
@@ -154,6 +190,7 @@ async def capture_and_persist(
             "success": True,
             "id": memory.id,
             "deduped": False,
+            "lane": memory.lane,
             "enrichment": enrichment,
             "vector_indexed": vec_id is not None,
             "committed": committed,
@@ -167,6 +204,28 @@ async def capture_and_persist(
     except Exception as e:
         logger.error("[CAPTURE] capture_and_persist failed: %s", e, exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+async def _record_drop(decision, content, source, source_id, repo_root) -> dict[str, Any]:
+    """Log a dropped item (ADR-003 §2) and commit the log. Nothing else is written."""
+    log = AdmissionLog(repo_root)
+    written = False
+    try:
+        written = log.append(decision, content=content, source=source, source_id=source_id)
+        if written:
+            await git_ops.commit_and_push(
+                [log.relative_path()], f"admission: drop {source} ({decision.reason[:60]})"
+            )
+    except Exception as e:
+        logger.warning("[CAPTURE] Admission log write/commit failed (non-fatal): %s", e)
+    logger.info("[CAPTURE] Dropped %s/%s at admission: %s", source, source_id, decision.reason)
+    return {
+        "success": True,
+        "id": None,
+        "dropped": True,
+        "reason": decision.reason,
+        "logged": written,
+    }
 
 
 async def review_capture(

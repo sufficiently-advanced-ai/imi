@@ -17,12 +17,16 @@ def test_maps_provider_and_fields():
     assert req.metadata == {"provider": "otter"}
 
 
-def test_unknown_provider_falls_back_to_other():
+def test_unknown_provider_is_still_a_recording():
     req = _to_ingest_request(ZapierTranscriptPayload(provider="superphone", transcript="hi"))
-    assert req.source == ContentSource.OTHER
+    assert req.source == ContentSource.LOCAL_RECORDING
+    assert req.metadata["provider"] == "superphone"
 
 
-def test_zoom_maps_to_other_but_preserves_provider():
+def test_zoom_maps_to_zoom_and_preserves_provider():
+    from app.services.lane_admission import source_default
+
     req = _to_ingest_request(ZapierTranscriptPayload(provider="Zoom", transcript="hi"))
-    assert req.source == ContentSource.OTHER
+    assert req.source == ContentSource.ZOOM
     assert req.metadata["provider"] == "zoom"
+    assert source_default("zoom") == "record"

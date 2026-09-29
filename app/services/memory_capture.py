@@ -118,8 +118,13 @@ def capture_memory(
     summary: str | None = None,
     tags: list[str] | None = None,
     source_date: str | None = None,
+    lane: str = "record",
+    stale_after: str | None = None,
 ) -> CapturedMemory:
-    """Build a CapturedMemory (imported, evidence-grade) with its fingerprint."""
+    """Build a CapturedMemory (imported, evidence-grade) with its fingerprint.
+
+    ``lane`` / ``stale_after`` come from server-side admission (ADR-003),
+    never from client input."""
     return CapturedMemory(
         content=content,
         source=source,
@@ -130,6 +135,8 @@ def capture_memory(
         source_date=source_date,
         content_fingerprint=content_fingerprint(content),
         provenance_status="imported",
+        lane=lane,
+        stale_after=stale_after,
     )
 
 
@@ -177,6 +184,12 @@ class CaptureStore:
     def iter_all(self) -> Iterator[CapturedMemory]:
         """Every readable capture, unfiltered (backfill / bulk re-index)."""
         yield from self._iter_memories()
+
+    def find_existing(
+        self, content: str, source: str, source_id: str | None = None
+    ) -> CapturedMemory | None:
+        """The record ``capture()`` would dedup this content against, if any."""
+        return self._find_existing(source, source_id, content_fingerprint(content))
 
     def _find_existing(
         self, source: str, source_id: str | None, fingerprint: str
@@ -264,6 +277,8 @@ class CaptureStore:
         summary: str | None = None,
         tags: list[str] | None = None,
         source_date: str | None = None,
+        lane: str = "record",
+        stale_after: str | None = None,
     ) -> CaptureResult:
         """Capture content, returning the existing record if it is a duplicate."""
         fingerprint = content_fingerprint(content)
@@ -280,6 +295,8 @@ class CaptureStore:
                 summary=summary,
                 tags=tags,
                 source_date=source_date,
+                lane=lane,
+                stale_after=stale_after,
             )
             self._save(memory)
         return CaptureResult(deduped=False, memory=memory)
