@@ -84,6 +84,13 @@ class DomainRelationship(BaseModel):
     inverse_name: str | None = Field(
         default=None, description="Name of the inverse relationship"
     )
+    description: str | None = Field(
+        default=None,
+        description=(
+            "What the relationship means, in a sentence. Shown to the decision "
+            "model that verifies inferred relationships (relationship_verify)."
+        ),
+    )
 
     @property
     def name(self) -> str:

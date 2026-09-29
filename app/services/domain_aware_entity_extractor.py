@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from app.model_schemas.domain_config import DomainConfiguration
+from app.services.entity_utils import slugify
 from app.services.file_cache import file_cache
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ class DomainAwareEntityExtractor:
                 name = re.sub(pattern, "", name, flags=re.IGNORECASE)
 
         # Normalize to lowercase and replace non-alphanumeric with hyphens
-        normalized = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        normalized = slugify(name)
 
         # Add prefix
         return f"{prefix}-{normalized}"

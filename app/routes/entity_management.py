@@ -229,6 +229,8 @@ async def merge_entities(entity_id: str, merge_request: EntityMergeRequest):
                 "strategy": "primary_wins",
                 "relationships_transferred": result.get("relationships_transferred", 0),
                 "aliases": result.get("aliases", []),
+                "merged_ids": result.get("merged_ids", []),
+                "duplicate_file_archived": result.get("duplicate_file_archived", False),
             },
             # Rollback is not supported on the graph merge path. The duplicate's
             # markdown file is soft-archived (recoverable), and merges run

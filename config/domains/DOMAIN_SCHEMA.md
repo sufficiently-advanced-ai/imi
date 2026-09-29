@@ -39,6 +39,8 @@ domain:
           cardinality: one_to_many     # one_to_one|one_to_many|many_to_one|many_to_many
           inverse_name: for_client     # optional — target MUST declare the
                                        # reciprocal or startup fails
+          description: "The client has this engagement with us"  # optional —
+                                       # meaning shown to the relationship verifier
 
   intelligence_patterns:   # dict keyed by pattern id
     renewal_risk:

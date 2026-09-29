@@ -98,6 +98,10 @@ class Settings(JSONConfigSettings):
     GIT_USER_EMAIL: str | None = None
     GIT_USER_NAME: str | None = None
 
+    # The person whose knowledge base this is (records the meetings). Decision
+    # models get it as context, so "we"/"our project" resolve to them.
+    KB_OWNER_NAME: str | None = None
+
     # Claude settings
     ANTHROPIC_API_KEY: str = ""  # required for claude
     # Optional override for the Anthropic API base URL. Lets the default

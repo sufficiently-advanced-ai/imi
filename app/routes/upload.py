@@ -206,17 +206,10 @@ async def process_file_background(file_path: str, upload_id: str):
                         attributes={"content_preview": content[:500], "source": "upload"},
                         file_path=file_path,
                     )
-                    # Extract and index entities from content
-                    entities = await sk.extract_entities(content)
-                    for entity in entities:
-                        await sk.add_entity(
-                            entity_id=entity["id"],
-                            entity_type=entity["type"],
-                            name=entity["name"],
-                            properties=entity.get("metadata", {}),
-                            file_path=file_path,
-                        )
-                    logger.info(f"Semantica: indexed document + {len(entities)} entities from {file_path}")
+                    # Entities reach the graph through the domain-validated
+                    # pipeline (files first); raw NER output written straight
+                    # to Neo4j here became file-less junk nodes.
+                    logger.info(f"Semantica: indexed document {file_path}")
         except Exception as sem_err:
             logger.warning(f"Semantica document embedding failed (non-fatal): {sem_err}")
 

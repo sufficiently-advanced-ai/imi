@@ -4,8 +4,23 @@ Entity utility functions for working with entity IDs and types.
 
 import logging
 import re
+import unicodedata
 
 logger = logging.getLogger(__name__)
+
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(text: str) -> str:
+    """The one slug rule for entity ids and file names.
+
+    Folds accents to ASCII first ("Deloné" -> "delone") — without that the
+    slug regex treats "é" as a separator and silently truncates the name
+    ("delon"), and generators that skipped the regex kept the "é", so the same
+    name produced two different ids.
+    """
+    folded = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return _NON_SLUG_RE.sub("-", folded.lower()).strip("-")
 
 # Control characters (incl. newline, carriage return, tab) never appear in a
 # real entity name. Their presence means transcript text leaked into the
@@ -46,6 +61,43 @@ def is_valid_entity_name(name: str) -> bool:
     if not any(c.isalpha() for c in stripped):
         return False
     return True
+
+
+# Unambiguous placeholders for someone/something unnamed. Deliberately narrow:
+# role nouns ("Recruiter") and generic groups ("Partners") are judgment calls
+# left to the entity_admission decision model (app/services/entity_admission.py),
+# since the same words can be real names.
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:"
+    # "Unknown", "Unnamed facilitator", "Unknown Speaker" -- but not a proper
+    # name that starts with the word ("Unknown Worlds", "Anonymous Content")
+    r"(?:unnamed|unknown|unidentified|anonymous|unspecified)"
+    r"(?:\s+(?:(?-i:[a-z][\w'-]*(?:\s+[a-z][\w'-]*)*)|(?:speaker|participant|person|attendee"
+    r"|caller|guest|user|voice|contact|individual|male|female|man|woman)))?"
+    # "Speaker 2", "Speaker2", "Participant B", "Guest #3" -- a separator or a
+    # digit is required, so "Persona", "Guesty", "Users" stay names
+    r"|(?:speaker|participant|attendee|caller|guest|user|person|voice)"
+    r"(?:\s*[#-]?\s*\d+|\s*[#-]\s*[a-z]|\s+[a-z])"
+    r"|(?:someone|somebody|everyone|everybody|anyone|nobody|others?|they|we|you)"
+    r"|(?:other|another)\s+(?:speaker|participant|person|attendee)s?"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def is_placeholder_entity_name(name: str) -> bool:
+    """True for names that stand in for an unnamed party ("Unnamed
+    facilitator", "Speaker 2", "Participant B", "someone") or a lowercase
+    descriptive phrase ("the facilitator") rather than a proper name."""
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    if not stripped:
+        return False
+    if _PLACEHOLDER_RE.match(stripped):
+        return True
+    # Proper names are capitalised; "the recruiter" is a description.
+    return bool(re.match(r"^(?:the|a|an|our|their|his|her|my)\s", stripped))
 
 
 # Common entity type prefixes used throughout the system
@@ -128,9 +180,8 @@ def ensure_entity_id_format(entity_type: str, name: str) -> str:
     if name.startswith(f"{entity_type}-"):
         return name
 
-    # Otherwise, create the ID
-    normalized_name = name.lower().replace(" ", "-").replace("_", "-")
-    return f"{entity_type}-{normalized_name}"
+    # Otherwise, create the ID (same slug rule as the resolver's make_slug)
+    return f"{entity_type}-{slugify(name)}"
 
 
 def get_valid_entity_types() -> set[str]:

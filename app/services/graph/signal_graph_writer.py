@@ -60,6 +60,23 @@ MATCH (c:Entity {id: $client_id})
 MERGE (s)-[:FOR_CLIENT]->(c)
 """
 
+# Cypher for FROM_DOCUMENT relationship (Signal -> the meeting Document it was
+# extracted from). MERGEs the Document by id: during live ingest signals are
+# written before the meeting file is persisted and linked (same id, see
+# Neo4jKnowledgeGraph._link_entity_to_document), during a rebuild it exists.
+_UPSERT_FROM_DOCUMENT = """
+MATCH (s:Signal {id: $signal_id})
+MERGE (d:Document {id: $doc_id})
+ON CREATE SET d.path = $path, d.name = $name
+MERGE (s)-[:FROM_DOCUMENT]->(d)
+"""
+
+
+def meeting_document_path(bot_id: str) -> str:
+    """Corpus path of the meeting a signal came from (ingest + meeting paths
+    both persist meetings/meeting-{bot_id}.md)."""
+    return f"meetings/meeting-{bot_id}.md"
+
 
 # Cypher for updating specific properties on a Signal node
 _UPDATE_SIGNAL_PROPS = """
@@ -126,6 +143,7 @@ class SignalGraphWriter:
         - (Signal)-[:MENTIONS]->(Entity) per entity ref
         - (Signal)-[:ASSIGNED_TO]->(Entity) for action item owners
         - (Signal)-[:FOR_CLIENT]->(Entity) for client-scoped signals (best-effort)
+        - (Signal)-[:FROM_DOCUMENT]->(Document) for the source meeting
 
         Args:
             meeting_signals: Container with all signals from a meeting
@@ -191,7 +209,8 @@ class SignalGraphWriter:
         await self._client.execute_write(_UPSERT_SIGNAL, params)
 
     async def _write_entity_relationships(self, signal: Signal) -> None:
-        """Create MENTIONS and ASSIGNED_TO relationships for a signal."""
+        """Create MENTIONS, ASSIGNED_TO, FROM_DOCUMENT and FOR_CLIENT
+        relationships for a signal."""
         # MENTIONS relationships for all entity refs
         for ref in signal.entities:
             try:
@@ -227,6 +246,28 @@ class SignalGraphWriter:
                     "[SIGNAL_GRAPH] Could not link signal %s -> owner %s: %s",
                     signal.id,
                     signal.owner.id,
+                    e,
+                )
+
+        # FROM_DOCUMENT — ties the signal to its source meeting so signals that
+        # name no entity are still connected to the graph.
+        if signal.source_meeting_id:
+            path = meeting_document_path(signal.source_meeting_id)
+            try:
+                await self._client.execute_write(
+                    _UPSERT_FROM_DOCUMENT,
+                    {
+                        "signal_id": signal.id,
+                        "doc_id": f"doc:{path}",
+                        "path": path,
+                        "name": path.rsplit("/", 1)[-1],
+                    },
+                )
+            except Exception as e:
+                logger.debug(
+                    "[SIGNAL_GRAPH] Could not link signal %s -> document %s: %s",
+                    signal.id,
+                    path,
                     e,
                 )
 

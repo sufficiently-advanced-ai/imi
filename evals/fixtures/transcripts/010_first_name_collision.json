@@ -1,0 +1,114 @@
+{
+  "id": "010_first_name_collision",
+  "version": 1,
+  "description": "Ingest into a non-empty KB. The KB already has a person 'Brian' (an unrelated independent consultant) and 'Aditya'; the meeting names 'Brian Vigilani from Keystone Rentals' (first introduced as just 'Brian') and never mentions Aditya. Traps: collapsing Brian Vigilani into the existing 'Brian', and extracting Aditya from the existing-entities context. 'Farmerica' is a speech-to-text variant of the existing account Pharmerica and should still count.",
+  "meeting": {
+    "title_context": "Keystone Rentals demo prep",
+    "date": "2026-09-18",
+    "participants": [
+      "Dana Whitfield",
+      "Marco Reyes"
+    ],
+    "transcript": "**Dana Whitfield**: Thanks for making time, Marco. Quick update before the demo — I finally got a meeting with Brian.\n**Marco Reyes**: Brian who?\n**Dana Whitfield**: Brian Vigilani from Keystone Rentals. He runs their rental desk. They want Quote Assist in front of three reps by the end of the month.\n**Marco Reyes**: Great. Quote Assist still needs the warranty pricing table before that demo.\n**Dana Whitfield**: I'll get the table from their ops team. Farmerica is the other reference customer we can cite — they went live last quarter.\n**Marco Reyes**: Perfect. Send me the Keystone Rentals agenda and I'll prep the Quote Assist walkthrough.",
+    "existing_entities": [
+      {
+        "type": "person",
+        "name": "Brian",
+        "context": {
+          "title": "Independent consultant, member of a peer AI-consulting cohort",
+          "co_mentioned_with": [
+            "Ann",
+            "Johnny",
+            "Aditya"
+          ]
+        }
+      },
+      {
+        "type": "person",
+        "name": "Aditya",
+        "context": {
+          "title": "Member of a peer AI-consulting cohort"
+        }
+      },
+      {
+        "type": "account",
+        "name": "Pharmerica",
+        "context": {
+          "description": "Pharmacy services company; reference customer"
+        }
+      }
+    ]
+  },
+  "gold": {
+    "entities": [
+      {
+        "canonical_id": "person-dana-whitfield",
+        "canonical_name": "Dana Whitfield",
+        "type": "person",
+        "aliases": [
+          "Dana"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "person-marco-reyes",
+        "canonical_name": "Marco Reyes",
+        "type": "person",
+        "aliases": [
+          "Marco"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "person-brian-vigilani",
+        "canonical_name": "Brian Vigilani",
+        "type": "person",
+        "aliases": [],
+        "required": true
+      },
+      {
+        "canonical_id": "account-keystone-rentals",
+        "canonical_name": "Keystone Rentals",
+        "type": "account",
+        "aliases": [
+          "Keystone"
+        ],
+        "required": true
+      },
+      {
+        "canonical_id": "project-quote-assist",
+        "canonical_name": "Quote Assist",
+        "type": "project",
+        "aliases": [],
+        "required": true
+      },
+      {
+        "canonical_id": "account-pharmerica",
+        "canonical_name": "Pharmerica",
+        "type": "account",
+        "aliases": [
+          "Farmerica"
+        ],
+        "required": false
+      }
+    ],
+    "forbidden_entities": [
+      {
+        "name": "Brian",
+        "type": "person",
+        "reason": "collapses Brian Vigilani into the unrelated existing KB 'Brian'"
+      },
+      {
+        "name": "Aditya",
+        "type": null,
+        "reason": "existing KB entity never mentioned in this meeting"
+      }
+    ],
+    "relationships": null,
+    "forbidden_relationships": [],
+    "signals": null,
+    "forbidden_signals": [],
+    "summary": null,
+    "profiles": null
+  }
+}

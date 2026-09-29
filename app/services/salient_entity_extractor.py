@@ -22,7 +22,7 @@ import logging
 import re
 
 from app.config import settings
-from app.services.entity_utils import is_valid_entity_name
+from app.services.entity_utils import is_placeholder_entity_name, is_valid_entity_name
 from app.services.prompt_loader import load_prompt
 
 logger = logging.getLogger(__name__)
@@ -40,14 +40,25 @@ def build_salient_extraction_prompt(
     transcript: str,
     entity_types: list[str],
     existing_entities: dict[str, list[str]] | None = None,
+    type_descriptions: dict[str, str] | None = None,
 ) -> str:
     """Assemble the v2 extraction prompt (mirrors the historical
-    EntityService._build_transcript_extraction_prompt template shape)."""
+    EntityService._build_transcript_extraction_prompt template shape).
+
+    ``type_descriptions`` (domain DomainEntity.description) are rendered next
+    to each type: with bare names the model cannot tell a team from a company.
+    """
     instructions = load_prompt("transcript_entity_extract")
     # Escape interpolated fields: transcript/entity text is embedded into
     # XML-like tags, so a stray "</transcript>" or "<" could break the prompt
     # structure or steer the model. html.escape covers &, <, > (and quotes).
-    entity_type_list = "\n".join(f"- {html.escape(t)}" for t in entity_types)
+    descriptions = type_descriptions or {}
+    entity_type_list = "\n".join(
+        f"- {html.escape(t)}: {html.escape(descriptions[t].strip())}"
+        if (descriptions.get(t) or "").strip()
+        else f"- {html.escape(t)}"
+        for t in entity_types
+    )
 
     existing_context = ""
     if existing_entities:
@@ -61,7 +72,9 @@ def build_salient_extraction_prompt(
                 "<existing_entities>\n"
                 "For reference, here are some existing entities in the knowledge base:\n"
                 + "\n".join(lines)
-                + "\nUse this context to keep canonical names consistent.\n"
+                + "\nReference only: use it to recognize spelling variants of entities that "
+                "ARE named in the transcript. Do not extract an entity because it appears "
+                "here, and do not shorten a name to match one of these.\n"
                 "</existing_entities>"
             )
 
@@ -137,7 +150,7 @@ def _parse_entity_items(items, entity_types: list[str]) -> list[dict]:
         salience = (raw.get("salience") or "").strip().lower()
         if etype not in valid_types or not canonical:
             continue
-        if not is_valid_entity_name(canonical):
+        if not is_valid_entity_name(canonical) or is_placeholder_entity_name(canonical):
             logger.debug(
                 "[SALIENT-EXTRACT] Dropping junk-named entity: %s/%r",
                 etype,
@@ -174,6 +187,16 @@ def _parse_entity_items(items, entity_types: list[str]) -> list[dict]:
 MAX_NEW_PROMOTED_PER_DOC = 6
 
 
+def _resolved_as(entity: dict, canonical: str | None) -> dict:
+    """The mention under the existing entity's name, remembering the form that
+    was heard ("F&G" -> Faulkner Media Group): link verification must look for
+    what the transcript says, not for the canonical name."""
+    heard = entity["canonical_name"]
+    if not canonical or canonical == heard:
+        return entity
+    return {**entity, "canonical_name": canonical, "heard_as": heard}
+
+
 def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
     """Apply the promotion rule. resolver is an EntityResolver (or None —
     then mentions are dropped outright)."""
@@ -188,9 +211,7 @@ def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
                     resolved = resolver.resolve(entity["type"], entity["canonical_name"])
                     if resolved.matched_via != "new":
                         # Existing entity: link freely, exempt from the cap.
-                        promoted.append(
-                            {**entity, "canonical_name": resolved.canonical_name}
-                        )
+                        promoted.append(_resolved_as(entity, resolved.canonical_name))
                         continue
                 except Exception as e:
                     logger.debug(
@@ -212,9 +233,7 @@ def filter_salient_entities(labeled: list[dict], resolver=None) -> list[dict]:
             try:
                 resolved = resolver.resolve(entity["type"], entity["canonical_name"])
                 if resolved.matched_via != "new":
-                    promoted.append(
-                        {**entity, "canonical_name": resolved.canonical_name}
-                    )
+                    promoted.append(_resolved_as(entity, resolved.canonical_name))
                     continue
             except Exception as e:
                 logger.debug(
@@ -245,6 +264,7 @@ async def extract_salient_entities(
     transcript: str,
     entity_types: list[str],
     existing_entities: dict[str, list[str]] | None = None,
+    type_descriptions: dict[str, str] | None = None,
 ) -> dict:
     """Run the v2 extraction prompt over a transcript.
 
@@ -252,7 +272,9 @@ async def extract_salient_entities(
     "meeting_title": str|None}; callers apply filter_salient_entities."""
     if not (transcript or "").strip():
         return {"entities": [], "meeting_title": None}
-    prompt = build_salient_extraction_prompt(transcript, entity_types, existing_entities)
+    prompt = build_salient_extraction_prompt(
+        transcript, entity_types, existing_entities, type_descriptions
+    )
     response = await claude_client.generate_message(
         messages=[{"role": "user", "content": prompt}],
         model=settings.CLAUDE_HAIKU_MODEL,

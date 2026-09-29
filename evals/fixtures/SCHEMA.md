@@ -24,6 +24,13 @@ All transcripts are synthetic — no real client data.
     "transcript": "**Elena Vasquez**: Morning everyone...\n**Marcus Webb**: ..."
     // Speaker lines MUST use the production "**Full Name**:" header format —
     // app/prompts/transcript_entity_extract.xml depends on it.
+    "existing_entities": [                   // OPTIONAL — simulated knowledge base
+      {"type": "person", "name": "Brian",
+       "context": {"title": "Independent consultant"}}
+    ]
+    // Rendered into the extraction prompt's <existing_entities> block (as an
+    // ingest into a non-empty KB would), and — with run_evals.py --decisions —
+    // the candidates the entity_link decision verifies links against.
   },
   "gold": {
     "entities": [...],            // or null to opt out of the entities task

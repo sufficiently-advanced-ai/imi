@@ -6,29 +6,18 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from pydantic import BaseModel
 
 from ..domain.entities.services import get_entity_repository
 from ..models import (
     BulkEnrichmentRequest,
     BulkEnrichmentResponse,
-    BulkMergeOperation,
-    BulkMergeResponse,
     BulkValidationRequest,
     BulkValidationResponse,
 )
 from ..services.enrichment_job_manager import get_job_manager
 from ..services.entity_enrichment import get_entity_enrichment_service
-from ..services.entity_webhook_service import get_webhook_service
 
 router = APIRouter(prefix="/api/entities/bulk", tags=["entity-bulk"])
-
-
-class BulkMergeRequest(BaseModel):
-    """Request for bulk merge operations"""
-
-    operations: list[BulkMergeOperation]
-    transaction_mode: bool = False
 
 
 async def _validate_entity(entity_id: str, rules: list[str]) -> dict[str, Any]:
@@ -114,99 +103,10 @@ async def _validate_entity(entity_id: str, rules: list[str]) -> dict[str, Any]:
     }
 
 
-@router.post("/merge", response_model=BulkMergeResponse)
-async def bulk_merge_entities(request: BulkMergeRequest = Body(...)):
-    """Perform multiple entity merges in bulk"""
-    if len(request.operations) == 0:
-        raise HTTPException(status_code=422, detail="No merge operations provided")
-
-    if len(request.operations) > 100:
-        raise HTTPException(status_code=422, detail="Too many operations (max 100)")
-
-    registry = get_entity_repository()
-    results = []
-    successful = 0
-    failed = 0
-
-    # If transaction mode, validate all operations first
-    if request.transaction_mode:
-        for op in request.operations:
-            source = registry.get_canonical_entity(op.source_entity_id)
-            target = registry.get_canonical_entity(op.target_entity_id)
-
-            if not source or not target:
-                # Rollback - don't perform any merges
-                return BulkMergeResponse(
-                    total_operations=len(request.operations),
-                    successful=0,
-                    failed=len(request.operations),
-                    results=[
-                        {
-                            "source_entity_id": op.source_entity_id,
-                            "target_entity_id": op.target_entity_id,
-                            "success": False,
-                            "error": "Transaction failed: One or more entities not found",
-                        }
-                        for op in request.operations
-                    ],
-                    transaction_mode=True,
-                )
-
-    # Process each merge operation
-    for op in request.operations:
-        try:
-            merged_id = registry.merge_entities(
-                op.source_entity_id,
-                op.target_entity_id,
-                canonical_name=op.keep_canonical_name,
-            )
-
-            results.append(
-                {
-                    "source_entity_id": op.source_entity_id,
-                    "target_entity_id": op.target_entity_id,
-                    "merged_entity_id": merged_id,
-                    "success": True,
-                }
-            )
-            successful += 1
-
-        except Exception as e:
-            results.append(
-                {
-                    "source_entity_id": op.source_entity_id,
-                    "target_entity_id": op.target_entity_id,
-                    "success": False,
-                    "error": str(e),
-                }
-            )
-            failed += 1
-
-            # In transaction mode, stop on first failure
-            if request.transaction_mode:
-                break
-
-    # Publish bulk operation event
-    if successful > 0:
-        webhook_service = get_webhook_service()
-        successful_ops = [r for r in results if r["success"]]
-        await webhook_service.publish_bulk_event(
-            "merge",
-            [op["source_id"] for op in successful_ops],
-            {
-                "total_merged": successful,
-                "total_attempted": len(request.operations),
-                "failed": failed,
-            },
-        )
-
-    return BulkMergeResponse(
-        total_operations=len(request.operations),
-        successful=successful,
-        failed=failed,
-        results=results,
-        transaction_mode=request.transaction_mode,
-    )
+# Entity merges go through the graph: POST /api/entities/{id}/merge
+# (entity_management.merge_entities -> Neo4jKnowledgeGraph.merge_nodes). The
+# registry-backed merge endpoints were removed: EntityRepository has no
+# merge_entities, so they could only fail.
 
 
 @router.post("/validate", response_model=BulkValidationResponse)

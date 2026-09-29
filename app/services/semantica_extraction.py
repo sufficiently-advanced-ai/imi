@@ -5,10 +5,11 @@ Replaces:
 - domain_aware_entity_extractor.py
 - entity_registry.py (extraction parts)
 
-Uses Semantica's NERExtractor with Anthropic provider for LLM-based extraction,
+Uses ClaudeNERExtractor (semantica_init) — LLM extraction routed through ClaudeClient —
 plus DuplicateDetector for entity deduplication.
 """
 
+import inspect
 import logging
 from typing import Any
 
@@ -51,8 +52,13 @@ class SemanticaExtraction:
             return []
 
         try:
-            # Use Semantica NER extractor
-            raw_entities = self.ner.extract_entities(text)
+            # ClaudeNERExtractor is async (routed through ClaudeClient); plain
+            # Semantica extractors and test doubles are sync.
+            aextract = getattr(self.ner, "aextract_entities", None)
+            if inspect.iscoroutinefunction(aextract):
+                raw_entities = await aextract(text)
+            else:
+                raw_entities = self.ner.extract_entities(text)
 
             # Convert Semantica Entity objects to our format
             entities = []

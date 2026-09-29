@@ -301,3 +301,117 @@ def test_split_bar_is_lower_than_merge_bar():
     assert apply_tiebreak(new, opts, "c1", 0.66, "person", "Dana Brown") is new
     # And a weak "none" leaves the heuristic alone.
     assert apply_tiebreak(fuzzy, opts, "none", 0.5, "person", "Dana Brown") is fuzzy
+
+
+# ---------------------------------------------------------------------------
+# Batch resolution: short forms of entities that are new in the same ingest
+# ---------------------------------------------------------------------------
+
+from app.services.entity_resolver import participant_for_first_name  # noqa: E402
+
+
+class TestParticipantFirstName:
+    def test_unique_first_name_resolves_to_participant(self):
+        people = ["Scott Jennings", "Dan Kauppi", "Paul Evers"]
+        assert participant_for_first_name("Dan", people) == "Dan Kauppi"
+        assert participant_for_first_name("dan", people) == "Dan Kauppi"
+
+    def test_ambiguous_missing_or_multiword_is_none(self):
+        assert participant_for_first_name("Dan", ["Dan Kauppi", "Dan Brown"]) is None
+        assert participant_for_first_name("Will", ["Dan Kauppi"]) is None
+        assert participant_for_first_name("Dan Smith", ["Dan Kauppi"]) is None
+        # A single-word participant is itself just a first name — no expansion.
+        assert participant_for_first_name("Anudeep", ["Anudeep"]) is None
+
+
+def test_registered_pending_entity_is_a_candidate():
+    r = EntityResolver(_graph([]), decisions=None)
+    assert r.resolve("person", "Paul Evers").matched_via == "new"
+    r.register("person", "person-paul-evers", "Paul Evers")
+    assert r.resolve("person", "Paul Evers").id == "person-paul-evers"
+    assert r.resolve("person", "paul evers").matched_via == "exact"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_batch_merges_short_form_into_new_participant(monkeypatch):
+    """Fresh KB: 'Dan Kauppi' (participant) and 'Dan' (from a signal) arrive in
+    one batch; neither is in the graph. They must become one entity."""
+    import app.services.entity_resolver as er
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator
+
+    monkeypatch.setattr(er, "_default_decision_client", lambda: None)
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = _graph([])
+    entities = [
+        {"id": "person-dan", "name": "Dan", "type": "person"},
+        {"id": "person-dan-kauppi", "name": "Dan Kauppi", "type": "person"},
+        {"id": "person-scott-jennings", "name": "Scott Jennings", "type": "person"},
+    ]
+    resolved, id_map = await orch._resolve_collected_entities(
+        entities, participants=["Scott Jennings", "Dan Kauppi"]
+    )
+    assert sorted(e["id"] for e in resolved) == ["person-dan-kauppi", "person-scott-jennings"]
+    assert id_map == {"person-dan": "person-dan-kauppi"}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_batch_without_participant_context_keeps_ambiguous_first_name(monkeypatch):
+    import app.services.entity_resolver as er
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator
+
+    monkeypatch.setattr(er, "_default_decision_client", lambda: None)
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = _graph([])
+    entities = [
+        {"id": "person-dan", "name": "Dan", "type": "person"},
+        {"id": "person-dan-kauppi", "name": "Dan Kauppi", "type": "person"},
+        {"id": "person-dan-brown", "name": "Dan Brown", "type": "person"},
+    ]
+    resolved, id_map = await orch._resolve_collected_entities(
+        entities, participants=["Dan Kauppi", "Dan Brown"]
+    )
+    # Two Dans on the call: never guess.
+    assert "person-dan" in {e["id"] for e in resolved}
+    assert id_map == {}
+
+
+class TestSpeechToTextZone:
+    """Sound-alikes and letter-spelled short forms reach the tiebreak (the
+    decision model still decides, at the same merge bar)."""
+
+    def test_sound_alike_enters_the_zone(self):
+        cands = [{"id": "account-foley", "name": "Foley"}, {"id": "account-fable", "name": "Fable"}]
+        assert [c["id"] for _, c in fuzzy_zone("account", "Fully", cands)] == ["account-foley"]
+
+    def test_partial_initials_enter_the_zone(self):
+        cands = [{"id": "account-faulkner-media-group", "name": "Faulkner Media Group"}]
+        assert [c["id"] for _, c in fuzzy_zone("account", "F&G", cands)] == ["account-faulkner-media-group"]
+
+    def test_unrelated_names_stay_out(self):
+        cands = [{"id": "person-tony", "name": "Tony"}, {"id": "account-snowflake", "name": "Snowflake"}]
+        assert fuzzy_zone("person", "Ryan", cands) == []
+        assert fuzzy_zone("account", "Salesforce", cands) == []
+
+
+def test_person_merges_need_a_higher_bar(tmp_path):
+    from app.services.entity_resolver import (
+        TIEBREAK_MIN_PROBABILITY,
+        TIEBREAK_MIN_PROBABILITY_PERSON,
+        EntityResolver,
+    )
+
+    assert TIEBREAK_MIN_PROBABILITY_PERSON > TIEBREAK_MIN_PROBABILITY
+    (tmp_path / "people").mkdir()
+    (tmp_path / "people" / "nate.md").write_text(
+        "---\nid: person-nate\nname: Nate\n---\n# Nate\n\nAI content creator whose community "
+        "Scott follows; publishes the 'five levels of AI building' series.\n\n## Recent Signals\n- x\n"
+    )
+    kg = SimpleNamespace(
+        nodes={"person-nate": SimpleNamespace(id="person-nate", name="Nate", type="person",
+                                              metadata={"source_file": "people/nate.md"})},
+        git_ops=SimpleNamespace(repo_path=str(tmp_path)),
+    )
+    r = EntityResolver(kg, decisions=None)
+    assert r.profile_summary("person-nate").startswith("AI content creator whose community")
+    enriched = r.with_profile({"id": "person-nate", "name": "Nate", "context": {}})
+    assert "AI content creator" in enriched["context"]["profile_summary"]

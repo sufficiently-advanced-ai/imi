@@ -13,9 +13,11 @@ Note: The phase name BUILD_MEETING is kept in the job-tracking API for
 backwards compatibility; internally the phase now builds an Observation.
 """
 
+import asyncio
 import email.utils
 import inspect
 import logging
+import os
 import re
 import time
 import uuid
@@ -26,7 +28,11 @@ from typing import Any
 from app.config import settings
 from app.services.conflict_detector import find_conflict_candidates
 
-from ..entity_utils import ensure_entity_id_format, is_valid_entity_name
+from ..entity_utils import (
+    ensure_entity_id_format,
+    is_placeholder_entity_name,
+    is_valid_entity_name,
+)
 from ..graph.factory import get_semantica_knowledge
 from ..ingest_classifier import compute_content_hash
 from .base import BaseOrchestrator
@@ -576,7 +582,6 @@ class IngestOrchestrator(BaseOrchestrator):
             return 0
 
         try:
-            from app.services.entity_resolver import EntityResolver
             from app.services.entity_utils import SYSTEM_ENTITY_TYPES, get_active_entity_types
             from app.services.salient_entity_extractor import (
                 extract_salient_entities,
@@ -587,7 +592,11 @@ class IngestOrchestrator(BaseOrchestrator):
             entity_types = sorted(get_active_entity_types() - SYSTEM_ENTITY_TYPES)
             existing = self._existing_entity_context()
             extraction = await extract_salient_entities(
-                self._claude, transcript, entity_types, existing
+                self._claude,
+                transcript,
+                entity_types,
+                existing,
+                type_descriptions=self._entity_type_descriptions(),
             )
             labeled = extraction["entities"]
 
@@ -612,9 +621,11 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
                 return 0
 
-            resolver = EntityResolver(knowledge_graph=self._graph)
+            resolver = self._resolver_for(observation)
             # Decision-model tiebreak for near-miss names, batched before the
-            # synchronous promotion pass so it reads cached outcomes.
+            # synchronous promotion pass so it reads cached outcomes. This is
+            # the fullest context a mention ever gets (evidence quote, role,
+            # the meeting), and the shared resolver never re-asks it later.
             await resolver.prefetch(
                 [
                     {
@@ -625,10 +636,21 @@ class IngestOrchestrator(BaseOrchestrator):
                         "aliases_heard": e.get("aliases_heard"),
                     }
                     for e in labeled
-                ]
+                ],
+                meeting=self._meeting_context(observation),
             )
             promoted = filter_salient_entities(labeled, resolver)
             mentioned = to_entities_mentioned(promoted)
+            # Remember which existing entity a heard form resolved to, so the
+            # evidence and the heard form reach link verification under the
+            # canonical name the later phases use.
+            resolved_to = {
+                (p["type"], p["heard_as"]): p["canonical_name"] for p in promoted if p.get("heard_as")
+            }
+            for e in labeled:
+                target = resolved_to.get((e.get("type"), e.get("canonical_name")))
+                if target:
+                    e["resolved_name"] = target
 
             # Participants always count as person entities
             for name in observation.participants or []:
@@ -730,9 +752,48 @@ class IngestOrchestrator(BaseOrchestrator):
             # existing node instead of minting a duplicate slug. The id map
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
-            entities, id_map = await self._resolve_collected_entities(entities)
-            if id_map and meeting_signals:
-                self._remap_signal_entity_ids(meeting_signals, id_map)
+            entities, id_map = await self._resolve_collected_entities(
+                entities,
+                participants=observation.participants if observation else None,
+                meeting=self._meeting_context(observation),
+                resolver=self._resolver_for(observation, release=True),
+                evidence=self._salient_evidence(observation),
+            )
+
+            # Decision-model admission for entities that would be NEW nodes:
+            # drop roles/placeholders/generic groups, fix the type (a company
+            # extracted as a team). Existing nodes and meeting participants
+            # are already vetted and skip it.
+            entities, admission_map, dropped_ids = await self._admit_new_entities(
+                entities, observation
+            )
+            if admission_map:
+                id_map = {k: admission_map.get(v, v) for k, v in id_map.items()}
+                id_map.update(admission_map)
+
+            # Decision-model link verification for every (meeting, entity)
+            # link, new or existing: is it really mentioned, is it really the
+            # existing entity, is there a fuller name? Unlinks, splits and
+            # renames are applied before any node or edge is written.
+            entities, link_map, unlinked = await self._verify_links(entities, observation, content)
+            if link_map:
+                id_map = {k: link_map.get(v, v) for k, v in id_map.items()}
+                id_map.update(link_map)
+            dropped_ids = set(dropped_ids) | unlinked
+            entities = await self._apply_name_upgrades(entities)
+
+            if meeting_signals:
+                # Ids AND names: a ref resolved "Paul" -> person-paul-evers
+                # should read "Paul Evers" in the signal file and delta.
+                self._remap_signal_entity_ids(
+                    meeting_signals,
+                    id_map,
+                    {e["id"]: e["name"] for e in entities if e.get("id") and e.get("name")},
+                )
+                if dropped_ids:
+                    from app.services.signal_store import drop_entity_refs
+
+                    drop_entity_refs(meeting_signals, dropped_ids)
 
             logger.info(
                 f"[INGEST] Collected {len(entities)} domain entities for relationship inference"
@@ -774,6 +835,20 @@ class IngestOrchestrator(BaseOrchestrator):
                     add_failures,
                     len(entities),
                 )
+            await self._link_entity_files(entities)
+
+            # Record the resolved ids on the observation so the persisted
+            # meeting file links to exactly these nodes when the graph is
+            # rebuilt from files (see _extract_entity_references).
+            if observation is not None and hasattr(observation, "entity_ids"):
+                known = getattr(self._graph, "nodes", None)
+                observation.entity_ids = sorted(
+                    {
+                        e["id"]
+                        for e in entities
+                        if e.get("id") and (known is None or e["id"] in known)
+                    }
+                )
 
         # Step 2 (B): Write signal nodes to Neo4j — entity nodes now exist so
         # MENTIONS/ASSIGNED_TO/FOR_CLIENT edges will resolve correctly.
@@ -793,7 +868,12 @@ class IngestOrchestrator(BaseOrchestrator):
         if self._graph and len(entities) >= 2:
             relationships = await self._infer_relationships(content, entities)
             logger.info(f"[INGEST] Inferred {len(relationships)} relationships")
-            result["edge_count"] = await self._write_relationship_edges(relationships)
+            result["edge_count"] = await self._write_relationship_edges(
+                relationships,
+                transcript=content,
+                meeting=self._meeting_context(observation),
+                names={e.get("id"): e.get("name") for e in entities if e.get("id")},
+            )
 
             if result["edge_count"] > 0:
                 logger.info(
@@ -803,25 +883,62 @@ class IngestOrchestrator(BaseOrchestrator):
         return result
 
     async def _resolve_collected_entities(
-        self, entities: list[dict]
+        self,
+        entities: list[dict],
+        participants: list[str] | None = None,
+        meeting: dict | None = None,
+        resolver=None,
+        evidence: dict | None = None,
     ) -> tuple[list[dict], dict[str, str]]:
-        """Resolve each (type, name) against existing graph entities.
+        """Resolve each (type, name) against existing graph entities and
+        against the entities minted earlier in this same batch.
+
+        Longer names resolve first and every new entity is registered with
+        the resolver, so a later short form ("Dan") can land on a full form
+        ("Dan Kauppi") that is new in this ingest. A bare first name that
+        matches exactly one meeting participant resolves to that participant.
 
         Returns the entities with canonical ids/names plus an old_id->new_id
         map for every entity whose id changed. Resolution never crosses
         types; unresolvable entries keep their original id.
         """
         try:
-            from app.services.entity_resolver import EntityResolver
+            from app.services.entity_resolver import (
+                EntityResolver,
+                participant_for_first_name,
+            )
         except Exception:  # pragma: no cover - packaging error
             return entities, {}
 
-        resolver = EntityResolver(knowledge_graph=self._graph)
-        await resolver.prefetch(entities)
+        if resolver is None:
+            resolver = EntityResolver(knowledge_graph=self._graph)
+        # Names speech-to-text reliably mishears ("EME" for imi) resolve as
+        # the KB glossary's canonical name; the heard form stays the surface.
+        try:
+            from app.services.glossary import canonicalize_mentions, load_glossary
+
+            repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
+            entities = canonicalize_mentions(
+                entities, load_glossary(repo if isinstance(repo, str) else None)
+            )
+        except Exception as e:  # a bad glossary must never fail the ingest
+            logger.warning("[INGEST] Glossary not applied: %s", e)
+        # Mentions first seen here (signal refs/owners) still get the salient
+        # evidence quote when one exists for the same (type, name).
+        evidence = evidence or {}
+        await resolver.prefetch(
+            [{**evidence.get((e.get("type"), e.get("name")), {}), **e} for e in entities],
+            meeting=meeting,
+        )
         id_map: dict[str, str] = {}
         resolved_entities: list[dict] = []
         seen_ids: set[str] = set()
-        for entity in entities:
+        # Most-specific surface forms first: they become the batch-local
+        # candidates that shorter forms resolve onto.
+        ordered = sorted(
+            entities, key=lambda e: len((e.get("name") or "").split()), reverse=True
+        )
+        for entity in ordered:
             etype, ename, eid = (
                 entity.get("type", ""),
                 entity.get("name", ""),
@@ -830,8 +947,13 @@ class IngestOrchestrator(BaseOrchestrator):
             if not etype or not ename:
                 resolved_entities.append(entity)
                 continue
+            lookup = ename
+            if etype == "person":
+                lookup = participant_for_first_name(ename, participants or []) or ename
             try:
-                resolved = resolver.resolve(etype, ename)
+                resolved = resolver.resolve(etype, lookup)
+                if resolved.matched_via == "new":
+                    resolver.register(etype, resolved.id, lookup)
             except Exception as e:
                 logger.warning(
                     "[INGEST] Entity resolution failed for %s/%r: %s", etype, ename, e
@@ -839,6 +961,21 @@ class IngestOrchestrator(BaseOrchestrator):
                 resolved_entities.append(entity)
                 continue
             new_id = resolved.id or eid
+            # A more complete surface form resolved onto an existing entity
+            # with a shorter name ("Ankit Patel" -> person-ankit "Ankit"):
+            # adopt the fuller name so the merged entity reads correctly. The
+            # stored entity is only renamed once link verification keeps the
+            # link (_apply_name_upgrades); a split or unlink must not leave an
+            # unrelated "Brian" renamed "Brian Vigilani".
+            upgrade = (
+                resolved.matched_via != "new"
+                and self._is_fuller_name(lookup, resolved.canonical_name, etype)
+            )
+            if upgrade:
+                resolved = type(resolved)(
+                    id=new_id, canonical_name=lookup,
+                    matched_via=resolved.matched_via, score=resolved.score,
+                )
             if eid and new_id != eid:
                 id_map[eid] = new_id
                 logger.info(
@@ -850,26 +987,352 @@ class IngestOrchestrator(BaseOrchestrator):
                     resolved.matched_via,
                 )
             if new_id in seen_ids:
-                continue  # two surface forms resolved to the same entity
+                # Two surface forms resolved to the same entity. Keep the
+                # other form: the transcript may only contain this one
+                # ("F and G" while the extractor also emitted "Faulkner Media
+                # Group"), and link verification looks for what was heard.
+                for prev in resolved_entities:
+                    if prev.get("id") == new_id and ename and ename != prev.get("surface"):
+                        heard = prev.setdefault("also_heard", [])
+                        if ename not in heard:
+                            heard.append(ename)
+                continue
             seen_ids.add(new_id)
             updated = dict(entity)
             updated["id"] = new_id
-            if resolved.matched_via != "new" and resolved.canonical_name:
+            # The form actually heard ("F&G", "Dave") survives canonicalisation
+            # so link verification checks the transcript for what was said, not
+            # for the resolved entity's name ("Faulkner Media Group").
+            updated.setdefault("surface", ename)
+            if (resolved.matched_via != "new" or lookup != ename) and resolved.canonical_name:
                 updated["name"] = resolved.canonical_name
+            if upgrade:
+                updated["upgrade_name_of"] = new_id
             resolved_entities.append(updated)
         return resolved_entities, id_map
 
+    async def _apply_name_upgrades(self, entities: list[dict]) -> list[dict]:
+        """Rename existing entities to the fuller name they were resolved
+        under, for links that survived verification on the same id. A link
+        that was split or reassigned has a different id and is left alone."""
+        out = []
+        for e in entities:
+            target = e.pop("upgrade_name_of", None)
+            if target and target == e.get("id") and hasattr(self._graph, "upgrade_entity_name"):
+                try:
+                    await self._graph.upgrade_entity_name(target, e["name"])
+                except Exception as ex:
+                    logger.warning("[INGEST] Name upgrade failed for %s: %s", target, ex)
+            out.append(e)
+        return out
+
     @staticmethod
-    def _remap_signal_entity_ids(meeting_signals, id_map: dict[str, str]) -> None:
-        """Rewrite signal EntityRef ids that were remapped by resolution."""
-        for sig in meeting_signals.signals:
-            for ref in sig.entities:
-                if ref.id in id_map:
-                    ref.id = id_map[ref.id]
-            if sig.owner and sig.owner.id in id_map:
-                sig.owner.id = id_map[sig.owner.id]
-            if sig.client_id and sig.client_id in id_map:
-                sig.client_id = id_map[sig.client_id]
+    def _first_token(name: str) -> str:
+        from app.services.entity_resolver import normalize_entity_name
+
+        tokens = normalize_entity_name(name or "", "person").split()
+        return tokens[0] if tokens else ""
+
+    @staticmethod
+    def _is_fuller_name(candidate: str, current: str, entity_type: str) -> bool:
+        """True when ``candidate`` contains every word of ``current`` plus
+        more ("Ankit Patel" vs "Ankit") — a strict refinement, never a
+        different name."""
+        from app.services.entity_resolver import normalize_entity_name
+
+        cand = normalize_entity_name(candidate or "", entity_type).split()
+        cur = normalize_entity_name(current or "", entity_type).split()
+        return bool(cur) and len(cand) > len(cur) and all(w in cand for w in cur)
+
+    def _resolver_for(self, observation, release: bool = False):
+        """The EntityResolver shared by one ingest's EXTRACT_ENTITIES and
+        ENRICH_GRAPH phases, so each mention is put to the decision model
+        once. ``release`` hands it over for the last time and forgets it."""
+        from app.services.entity_resolver import EntityResolver
+
+        store = self.__dict__.setdefault("_run_resolvers", {})
+        key = getattr(observation, "external_id", None) or id(observation)
+        resolver = store.pop(key, None) if release else store.get(key)
+        if resolver is None:
+            resolver = EntityResolver(knowledge_graph=self._graph)
+            if not release:
+                store[key] = resolver
+        return resolver
+
+    @staticmethod
+    def _meeting_context(observation) -> dict | None:
+        if observation is None:
+            return None
+        return {
+            "title": getattr(observation, "title", None),
+            "participants": sorted(getattr(observation, "participants", None) or []),
+        }
+
+    @staticmethod
+    def _salient_evidence(observation) -> dict:
+        """(type, canonical name) -> {evidence, role, aliases_heard} from
+        the salient extraction, for mentions resolved later in the run."""
+        out = {}
+        for e in (getattr(observation, "metadata", None) or {}).get("salient_entities", []) or []:
+            if isinstance(e, dict) and e.get("canonical_name"):
+                entry = {k: e[k] for k in ("evidence", "role", "aliases_heard") if e.get(k)}
+                out[(e.get("type"), e["canonical_name"])] = entry
+                if e.get("resolved_name"):
+                    # heard as canonical_name, resolved onto an existing entity
+                    heard = [e["canonical_name"], *(entry.get("aliases_heard") or [])]
+                    out.setdefault(
+                        (e.get("type"), e["resolved_name"]),
+                        {**entry, "aliases_heard": heard, "heard_as": e["canonical_name"]},
+                    )
+        return out
+
+    @staticmethod
+    def _entity_type_descriptions() -> dict[str, str]:
+        """Domain entity type -> description (empty on any config error)."""
+        try:
+            from ...core.domain_config.domain_config_service import get_domain_config_service
+
+            domain = get_domain_config_service().get_active_domain()
+            return {
+                name: (getattr(ent, "description", "") or "")
+                for name, ent in ((domain.entities or {}) if domain else {}).items()
+            }
+        except Exception as e:
+            logger.warning("[INGEST] Entity type descriptions unavailable: %s", e)
+            return {}
+
+    async def _verify_links(
+        self, entities: list[dict], observation, content: str
+    ) -> tuple[list[dict], dict[str, str], set[str]]:
+        """Put each (meeting, entity) link to the decision model (operation
+        entity_link) and apply its verdicts. Returns (entities, old_id ->
+        new_id for splits/renames, unlinked ids). No-op in off/shadow mode or
+        without a decision model."""
+        from app.services.entity_linking import judge_links
+        from app.services.entity_resolver import EntityResolver
+
+        transcript = (
+            getattr(observation, "raw_content", None) or getattr(observation, "content", None) or content or ""
+        )
+        known = getattr(self._graph, "nodes", None) or {}
+        participants = {
+            p.strip().lower() for p in (getattr(observation, "participants", None) or [])
+        }
+        salient = self._salient_evidence(observation)
+        helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        candidates_by_type: dict[str, dict[str, dict]] = {}
+
+        def candidates_of(etype: str) -> dict[str, dict]:
+            # Built once per type: each _candidates call walks every graph node.
+            if etype not in candidates_by_type:
+                candidates_by_type[etype] = {c["id"]: c for c in helper._candidates(etype)}
+            return candidates_by_type[etype]
+
+        links = []
+        for e in entities:
+            name = (e.get("name") or "").strip()
+            if not e.get("id") or not name or name.lower() in participants:
+                continue
+            surface = (e.get("surface") or "").strip()
+            also_heard = [h for h in (e.get("also_heard") or []) if h and h.casefold() != name.casefold()]
+            if (not surface or surface.casefold() == name.casefold()) and also_heard:
+                surface = also_heard[0]  # the canonical form was not what was heard
+            extra = salient.get((e.get("type"), surface), {}) or salient.get((e.get("type"), name), {})
+            names = list(extra.get("aliases_heard") or [])
+            if (not surface or surface.casefold() == name.casefold()) and extra.get("heard_as"):
+                surface = extra["heard_as"]  # resolved from a heard form in an earlier phase
+            for h in also_heard:
+                if h not in names:
+                    names.append(h)
+            if surface and surface.casefold() != name.casefold() and surface not in names:
+                names.insert(0, surface)
+            link = {
+                "id": e["id"], "type": e.get("type"), "name": name,
+                "names": names,
+                "evidence": extra.get("evidence"), "role": extra.get("role"),
+            }
+            if surface and surface.casefold() != name.casefold():
+                link["heard_as"] = surface
+            if e.get("type") == "person":
+                try:
+                    by_id = candidates_of("person")
+                    first = self._first_token(surface or name)
+                    link["namesakes"] = [
+                        helper.with_profile(c)
+                        for c in by_id.values()
+                        if c["id"] != e["id"] and self._first_token(c.get("name", "")) == first
+                    ][:4]
+                except Exception as ex:  # context only — never fail the ingest
+                    logger.warning("[INGEST] Namesake lookup failed for %s: %s", e["id"], ex)
+            if e["id"] in known:
+                by_id = candidates_of(e.get("type"))
+                candidate = by_id.get(e["id"])
+                if candidate:
+                    link["candidate"] = helper.with_profile(candidate)
+                    link["names"] += list(candidate.get("aliases") or [])
+            links.append(link)
+        if not links:
+            return entities, {}, set()
+
+        verdicts = await judge_links(links, transcript, meeting=self._meeting_context(observation))
+        if not verdicts:
+            return entities, {}, set()
+
+        kept: list[dict] = []
+        remap: dict[str, str] = {}
+        unlinked: set[str] = set()
+        seen: set[str] = set()
+        for e in entities:
+            verdict = verdicts.get(e.get("id"))
+            if verdict is None:
+                if e["id"] not in seen:
+                    seen.add(e["id"])
+                    kept.append(e)
+                continue
+            if verdict.action == "unlink":
+                unlinked.add(e["id"])
+                continue
+            if verdict.action == "reassign":
+                # The mention is a meeting participant (nickname/initials) or
+                # another existing person with the same first name: move the
+                # link onto that entity.
+                if verdict.target_id:
+                    target_id, target_name = verdict.target_id, verdict.name
+                else:
+                    resolved = helper.resolve(e.get("type"), verdict.name)
+                    target_id, target_name = resolved.id, resolved.canonical_name or verdict.name
+                remap[e["id"]] = target_id
+                entry = {**e, "id": target_id, "name": target_name}
+                if entry["id"] not in seen:
+                    seen.add(entry["id"])
+                    kept.append(entry)
+                continue
+            if verdict.action == "rename" and e["id"] in known and hasattr(self._graph, "upgrade_entity_name"):
+                try:
+                    await self._graph.upgrade_entity_name(e["id"], verdict.name)
+                except Exception as ex:
+                    logger.warning("[INGEST] Name upgrade failed for %s: %s", e["id"], ex)
+                entry = {**e, "name": verdict.name}
+            else:
+                # split (a different entity than the existing match) or a
+                # rename of a not-yet-written entity: resolve the fuller name.
+                resolved = helper.resolve(e.get("type"), verdict.name)
+                remap[e["id"]] = resolved.id
+                entry = {**e, "id": resolved.id, "name": resolved.canonical_name or verdict.name}
+            if entry["id"] not in seen:
+                seen.add(entry["id"])
+                kept.append(entry)
+
+        # Keep the persisted surface-name list in line with what was linked.
+        mentioned = getattr(observation, "entities_mentioned", None)
+        if isinstance(mentioned, dict) and unlinked:
+            gone = {(e.get("type"), e.get("name")) for e in entities if e.get("id") in unlinked}
+            for etype, names in mentioned.items():
+                mentioned[etype] = [n for n in names or [] if (etype, n) not in gone]
+        return kept, remap, unlinked
+
+    def _profile_ref_resolver(self):
+        """(type, id) -> canonical existing id, for entity references in
+        generated profiles that use a stale or name-derived id."""
+        from app.services.entity_resolver import EntityResolver
+
+        helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+
+        def resolve(entity_type: str, entity_id: str) -> str | None:
+            name = entity_id.split("-", 1)[1].replace("-", " ") if "-" in entity_id else entity_id
+            resolved = helper.resolve(entity_type, name)
+            return resolved.id if resolved.matched_via != "new" else None
+
+        return resolve
+
+    async def _admit_new_entities(
+        self, entities: list[dict], observation
+    ) -> tuple[list[dict], dict[str, str], set[str]]:
+        """Ask the decision model (operation entity_admission) about entities
+        that would become new graph nodes; apply drop/retype verdicts.
+
+        Returns (entities, old_id->new_id for retypes, dropped ids). A no-op
+        when the operation is off/shadow or no decision model is configured.
+        """
+        from app.services.entity_admission import judge_entities
+
+        known = getattr(self._graph, "nodes", None) or {}
+        participants = {
+            p.strip().lower() for p in (getattr(observation, "participants", None) or [])
+        }
+        salient = {
+            (e.get("type"), (e.get("canonical_name") or "").strip()): e
+            for e in (getattr(observation, "metadata", None) or {}).get("salient_entities", [])
+            if isinstance(e, dict)
+        }
+        mentions = []
+        for e in entities:
+            if e.get("id") in known or (e.get("name") or "").strip().lower() in participants:
+                continue
+            extra = salient.get((e.get("type"), (e.get("name") or "").strip()), {})
+            mentions.append(
+                {
+                    "type": e.get("type"),
+                    "name": e.get("name"),
+                    "evidence": extra.get("evidence"),
+                    "role": extra.get("role"),
+                    "aliases_heard": extra.get("aliases_heard"),
+                }
+            )
+        if not mentions:
+            return entities, {}, set()
+
+        entity_types = self._entity_type_descriptions()
+        if not entity_types:
+            return entities, {}, set()
+
+        verdicts = await judge_entities(
+            mentions,
+            entity_types,
+            meeting={
+                "title": getattr(observation, "title", None),
+                "participants": sorted(getattr(observation, "participants", None) or []),
+            },
+        )
+        if not verdicts:
+            return entities, {}, set()
+
+        from app.services.entity_resolver import EntityResolver
+
+        resolver = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        kept: list[dict] = []
+        remap: dict[str, str] = {}
+        dropped: set[str] = set()
+        seen: set[str] = set()
+        for e in entities:
+            verdict = verdicts.get((e.get("type"), (e.get("name") or "").strip()))
+            if verdict is None:
+                if e["id"] not in seen:
+                    seen.add(e["id"])
+                    kept.append(e)
+                continue
+            if verdict.action == "drop":
+                dropped.add(e["id"])
+                continue
+            # retype: re-resolve under the new type (may land on an existing node)
+            resolved = resolver.resolve(verdict.new_type, e["name"])
+            remap[e["id"]] = resolved.id
+            if resolved.id not in seen:
+                seen.add(resolved.id)
+                kept.append(
+                    {**e, "id": resolved.id, "type": verdict.new_type,
+                     "name": resolved.canonical_name or e["name"]}
+                )
+        return kept, remap, dropped
+
+    @staticmethod
+    def _remap_signal_entity_ids(
+        meeting_signals, id_map: dict[str, str], names: dict[str, str] | None = None
+    ) -> None:
+        """Rewrite signal EntityRefs after resolution: ids and display names."""
+        from app.services.signal_store import remap_entity_refs
+
+        remap_entity_refs(meeting_signals, id_map, names)
 
     @staticmethod
     def _collect_entities(meeting_signals, observation) -> list[dict]:
@@ -952,7 +1415,12 @@ class IngestOrchestrator(BaseOrchestrator):
         # numbers, newline-contaminated fragments — before they become graph
         # nodes + stub files. Shares is_valid_entity_name with the extractor so
         # entities arriving via signals (not just salient extraction) are gated.
-        kept = [e for e in candidates if is_valid_entity_name(e.get("name", ""))]
+        kept = [
+            e
+            for e in candidates
+            if is_valid_entity_name(e.get("name", ""))
+            and not is_placeholder_entity_name(e.get("name", ""))
+        ]
         dropped = len(candidates) - len(kept)
         if dropped:
             logger.info(
@@ -1009,12 +1477,51 @@ class IngestOrchestrator(BaseOrchestrator):
                     return (target_id, source_id, rel.type)
         return None
 
-    async def _write_relationship_edges(self, relationships: list[dict]) -> int:
-        """Write entity-to-entity edges via create_semantic_relationship.
+    @staticmethod
+    def _relationship_holder(rel_type: str, source_id: str, target_id: str, domain):
+        """(holder_id, frontmatter_key, target_id): the entity whose domain
+        definition owns the relationship, and the key the graph build reads.
+        ``manages_accounts`` person->account lives on the person; an inverse
+        name (``belongs_to_account`` given as account->project) is stored on
+        the entity that defines it. None when the schema has neither."""
+        if not domain or not domain.entities:
+            return None
+        rt = rel_type.lower()
+        st = IngestOrchestrator._entity_type_from_id(source_id)
+        tt = IngestOrchestrator._entity_type_from_id(target_id)
+        ent = domain.entities.get(st)
+        if ent:
+            for rel in ent.relationships:
+                if rel.type == rt and rel.target == tt:
+                    return source_id, rel.type, target_id
+        ent = domain.entities.get(tt)
+        if ent:
+            for rel in ent.relationships:
+                if rel.inverse_name == rt and rel.target == st:
+                    return target_id, rel.type, source_id
+        return None
 
-        Resolves relationship types from the active domain schema by entity type
-        so they pass validation and appear in the domain graph visualization.
-        """
+    @staticmethod
+    def _relationship_description(domain, holder_id: str, rel_type: str) -> str | None:
+        ent = domain.entities.get(IngestOrchestrator._entity_type_from_id(holder_id))
+        for rel in getattr(ent, "relationships", None) or []:
+            if rel.type == rel_type:
+                return getattr(rel, "description", None)
+        return None
+
+    async def _write_relationship_edges(
+        self,
+        relationships: list[dict],
+        transcript: str = "",
+        meeting: dict | None = None,
+        names: dict[str, str] | None = None,
+    ) -> int:
+        """Files first: verify inferred entity-to-entity relationships with
+        the decision model (``relationship_verify``), write the accepted ones
+        into the owning entity's frontmatter, then ingest those files so the
+        edges (and their inverses) are built exactly as a rebuild builds them.
+        Writing Neo4j directly left edges no file recorded: a rebuild from
+        the corpus dropped them."""
         domain = None
         try:
             from ...core.domain_config.domain_config_service import (
@@ -1029,63 +1536,73 @@ class IngestOrchestrator(BaseOrchestrator):
                 e,
                 exc_info=True,
             )
+        if domain is None:
+            return 0
 
-        count = 0
+        names = names or {}
+        helper = None
+        try:
+            from app.services.entity_resolver import EntityResolver
+
+            helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
+        except Exception:  # profile context is optional
+            pass
+
+        proposals, seen = [], set()
         for rel in relationships:
-            source = rel.get("source", "")
-            target = rel.get("target", "")
-            if not source or not target:
+            source = (rel.get("source") or "").strip()
+            target = (rel.get("target") or "").strip()
+            if not source or not target or source == target:
                 continue
-            # Trust the LLM's typed triple when it is schema-valid — the tool
-            # (InferRelationshipsTool) already validated type signatures
-            # against the domain config. Falling back to
-            # _resolve_domain_relationship (which substitutes the FIRST
-            # type-pair match and silently rewrote reports_to into
-            # collaborates_with) only for legacy untyped output.
+            # Trust the LLM's typed triple when it is schema-valid (the tool
+            # validated type signatures). _resolve_domain_relationship picks
+            # the FIRST type-pair match (it silently rewrote reports_to into
+            # collaborates_with), so it is only for legacy untyped output.
             llm_type = (rel.get("type") or "").strip()
-            if llm_type and domain and self._is_schema_valid_relationship(
-                llm_type, source, target, domain
-            ):
-                from_id, to_id, domain_type = source, target, llm_type.lower()
-            else:
+            placed = self._relationship_holder(llm_type, source, target, domain) if llm_type else None
+            if placed is None and not llm_type:
                 resolved = self._resolve_domain_relationship(source, target, domain)
-                if not resolved:
-                    logger.debug(
-                        "[INGEST] No domain relationship for %s -> %s; skipping",
-                        source,
-                        target,
-                    )
-                    continue
-                from_id, to_id, domain_type = resolved
-            desc = rel.get("description", "")
-            evidence = rel.get("evidence", "")
-            raw_type = rel.get("type", "")
-            try:
-                await self._graph.create_semantic_relationship(
-                    from_entity_id=from_id,
-                    to_entity_id=to_id,
-                    relationship_type=domain_type,
-                    strength=0.8,
-                    evidence=evidence or desc or "Inferred from ingested content",
-                    reasoning=f"Inferred ({raw_type}): {desc}"
-                    if desc
-                    else f"Domain relationship: {domain_type}",
-                    source="ingest",
-                )
-                count += 1
-            except Exception as e:
-                logger.warning(
-                    "[INGEST] Edge write failed %s→%s→%s: %s",
-                    from_id,
-                    domain_type,
-                    to_id,
-                    e,
-                    exc_info=True,
-                )
+                placed = resolved and self._relationship_holder(resolved[2], resolved[0], resolved[1], domain)
+            if placed is None:
+                logger.debug("[INGEST] No domain relationship for %s -%s-> %s; skipping", source, llm_type, target)
+                continue
+            holder, key, other = placed
+            if (holder, key, other) in seen:
+                continue
+            seen.add((holder, key, other))
+            proposal = {
+                "source_id": holder, "type": key, "target_id": other,
+                "source_name": names.get(holder) or holder,
+                "target_name": names.get(other) or other,
+                "source_type": self._entity_type_from_id(holder),
+                "target_type": self._entity_type_from_id(other),
+                "evidence": rel.get("evidence") or "",
+                "description": rel.get("description") or "",
+                "type_description": self._relationship_description(domain, holder, key) or "",
+            }
+            if helper is not None:
+                for side, eid in (("source", holder), ("target", other)):
+                    summary = helper.profile_summary(eid)
+                    if summary:
+                        proposal[f"{side}_profile"] = summary
+            proposals.append(proposal)
 
-        if count > 0:
-            logger.info(f"[INGEST] Wrote {count} entity relationship edges")
-            # Invalidate domain graph cache so new edges appear immediately
+        from app.services.relationship_verification import verify_relationships
+
+        accepted = await verify_relationships(proposals, transcript, meeting=meeting)
+
+        by_holder: dict[str, dict[str, list[str]]] = {}
+        for p in accepted:
+            by_holder.setdefault(p["source_id"], {}).setdefault(p["type"], []).append(p["target_id"])
+        paths, count = [], 0
+        for holder, rels in by_holder.items():
+            path = await self._graph.add_frontmatter_relationships(holder, rels)
+            if path:
+                paths.append(path)
+                count += sum(len(t) for t in rels.values())
+        if paths:
+            await self._link_document_in_graph(*paths)
+            logger.info(f"[INGEST] Wrote {count} entity relationship edges to {len(paths)} files")
             try:
                 from ...services.graph.factory import invalidate_graph_response_cache
 
@@ -1349,12 +1866,17 @@ class IngestOrchestrator(BaseOrchestrator):
             # also surface ingested observations — otherwise they're invisible.
             meeting_path = f"meetings/meeting-{bot_id}.md"
             meeting_content = observation.to_markdown()
-            await self._git_ops.commit_file(
-                meeting_path,
-                meeting_content,
-                f"[ingest] Add meeting: {observation.title or bot_id}",
-            )
-            logger.info(f"[INGEST] Persisted observation to {meeting_path}")
+            try:
+                await self._git_ops.commit_file(
+                    meeting_path,
+                    meeting_content,
+                    f"[ingest] Add meeting: {observation.title or bot_id}",
+                )
+                logger.info(f"[INGEST] Persisted observation to {meeting_path}")
+            finally:
+                # commit_file writes the file before committing, so link it
+                # even if the commit itself failed.
+                await self._link_document_in_graph(meeting_path)
 
             # 2. Persist signals JSON (for signal feed)
             if meeting_signals and meeting_signals.signal_count > 0:
@@ -1372,87 +1894,168 @@ class IngestOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
 
+    async def _link_document_in_graph(self, *paths: str) -> None:
+        """Give persisted corpus files their graph footprint the same way a
+        rebuild would: Document node, MENTIONED_IN edges, co-occurrence
+        refresh (Neo4jKnowledgeGraph.ingest_files). Without this, live ingest
+        and a rebuild from files produced different graphs — ingested
+        meetings had no Document node and their entities no MENTIONED_IN."""
+        if not self._graph or not hasattr(self._graph, "ingest_files") or not paths:
+            return
+        try:
+            await self._graph.ingest_files(list(paths))
+        except Exception as e:
+            logger.warning("[INGEST] Graph document link failed for %s: %s", paths, e)
+            return
+        await self._record_live_files(list(paths))
+
+    async def _link_entity_files(self, entities: list[dict]) -> None:
+        """Ingest the entity files add_node wrote or touched, as a rebuild
+        does (each profile gets its own Document + MENTIONED_IN). Profiles the
+        ENRICH_PROFILES phase does not rewrite (accounts) were otherwise only
+        ever file-ingested by a rebuild."""
+        try:
+            finder = getattr(self._graph, "_find_entity_file", None)
+            repo = getattr(getattr(self._graph, "git_ops", None), "repo_path", None)
+            if not callable(finder) or not isinstance(repo, str):
+                return
+            paths = []
+            for entity in entities:
+                full = finder(entity.get("id", ""))
+                if isinstance(full, str) and full:
+                    rel = os.path.relpath(full, repo)
+                    if rel not in paths:
+                        paths.append(rel)
+        except Exception as e:  # graph footprint only — never fail the ingest
+            logger.warning("[INGEST] Entity file lookup failed: %s", e)
+            return
+        if paths:
+            await self._link_document_in_graph(*paths)
+
+    async def _record_live_files(self, paths: list[str]) -> None:
+        """Index entity vectors for files live ingest just wrote and stamp
+        them in the corpus manifest (otherwise every boot re-ingested every
+        file written since the last build, and new entities had no vectors
+        until then). Never fails the ingest."""
+        try:
+            from app.services.graph.factory import get_semantica_knowledge
+            from app.services.graph_rebuild import make_reconciler
+
+            try:
+                sk = get_semantica_knowledge()
+            except Exception:
+                sk = None
+            reconciler = make_reconciler(kg=self._graph, sk=sk)
+            if reconciler is not None:
+                await reconciler.record_live_files(paths)
+        except Exception as e:
+            logger.warning("[INGEST] Manifest record failed for %s: %s", paths, e)
+
+    # Profiles regenerated per meeting are bounded: each is one model call
+    # carrying the meeting transcript.
+    MAX_PROFILES_PER_MEETING = 12
+    PROFILE_CONCURRENCY = 3
+
     async def _phase_enrich_profiles(
         self, observation, meeting_signals, bot_id: str
     ) -> dict[str, int]:
-        """Phase ENRICH_PROFILES: generate grounded entity narratives + stats.
+        """Phase ENRICH_PROFILES: grounded entity narratives for the entities
+        this meeting touched.
 
-        The ingest pipeline otherwise leaves every entity with a stub body
-        ("# Name\\n\\nEntity ID: ...") and no signal grounding. This phase reuses
-        the SAME chain the live-meeting path uses:
+          1. Save MeetingSignals to the canonical signal_store.
+          2. For each resolved entity (observation.entity_ids) whose type has a
+             rich profile template: merge this meeting's signals naming it
+             into its "## Recent Signals" section (the prompt's grounded
+             attribution source), then regenerate the profile with the meeting
+             as trigger file — the same DomainAwareEntityProcessor chain the
+             webhook path uses. Graph-owned frontmatter (aliases, merged_ids,
+             name, ...) is preserved.
+          3. Commit the rewritten files and re-link them into the graph.
 
-          1. Save MeetingSignals to the canonical signal_store (ingest only
-             wrote git JSON before, so the enricher's signal lookup found
-             nothing). Keyed by bot_id.
-          2. EntityMeetingEnricher.update_entity_files_with_meeting writes each
-             entity's "## Recent Signals" section, persists typed relationships,
-             generates grounded rich profiles, and rebuilds the graph (which
-             also refreshes the in-memory edges the profile endpoint reads).
-
-        Independent of GIT_REPO_URL. Best-effort: any failure is logged and the
-        ingest job still completes.
+        Best-effort per entity: a failure is logged with the entity id and the
+        others still run; the ingest job completes either way.
         """
+        from app.services.domain_aware_entity_processor import DomainAwareEntityProcessor
+        from app.services.signal_store import signal_store
+
+        from ...core.domain_config.domain_config_service import get_domain_config_service
+
         result = {"rich_profiles_generated": 0}
-        entities_mentioned = getattr(observation, "entities_mentioned", None) or {}
-        if not entities_mentioned:
-            logger.info("[INGEST] ENRICH_PROFILES: no entities_mentioned; skipping")
+
+        if meeting_signals and getattr(meeting_signals, "signal_count", 0) > 0:
+            try:
+                signal_store.save(meeting_signals)
+            except Exception as e:
+                logger.warning("[INGEST] ENRICH_PROFILES: signal_store.save failed: %s", e)
+
+        entity_ids = list(getattr(observation, "entity_ids", None) or [])
+        if not entity_ids or not self._claude:
+            logger.info("[INGEST] ENRICH_PROFILES: nothing to enrich")
             return result
 
         try:
-            # 1. Persist signals to the canonical store so the enricher's
-            #    signal_store.load(bot_id) resolves.
-            if meeting_signals and getattr(meeting_signals, "signal_count", 0) > 0:
-                from app.services.signal_store import signal_store
-
-                signal_store.save(meeting_signals)
-                logger.info(
-                    "[INGEST] ENRICH_PROFILES: saved %d signals to signal_store (%s)",
-                    meeting_signals.signal_count,
-                    bot_id,
-                )
-
-            # 2. Run the shared enrichment chain.
-            from app.domain.entities.services import (
-                EntityService,
-                get_entity_repository,
-            )
-            from app.services.entity_meeting_enricher import EntityMeetingEnricher
-
-            enricher = EntityMeetingEnricher(EntityService(), get_entity_repository())
-            transcript = (
-                getattr(observation, "raw_content", None)
-                or getattr(observation, "content", None)
-                or ""
-            )
-            # relationships intentionally empty: the ENRICH_GRAPH phase already
-            # inferred and persisted typed entity-to-entity edges to Neo4j (via
-            # _write_relationship_edges), so relationship_count / top_relationships
-            # are populated from the graph. The enricher's _persist_meeting_
-            # relationships expects a different shape ({entity1, entity2} names vs
-            # our {source, target} ids), so re-passing them here would need an
-            # id->name translation layer. Deferred: surfacing typed relationships
-            # into entity-file frontmatter for the profile's "Key Relationships"
-            # narrative section (follow-up).
-            meeting_data = {
-                "meeting_id": bot_id,
-                "bot_id": bot_id,
-                "entities": entities_mentioned,
-                "transcript_excerpt": transcript[:5000],
-                "relationships": [],
+            domain = get_domain_config_service().get_active_domain()
+            processor = DomainAwareEntityProcessor(self._claude)
+            processor.resolve_ref = self._profile_ref_resolver()
+            templated = {
+                t for t in (domain.entities or {}) if processor._get_domain_prompt_template(t, domain)
             }
-            enrich_result = await enricher.update_entity_files_with_meeting(meeting_data)
-            if isinstance(enrich_result, dict):
-                result["rich_profiles_generated"] = enrich_result.get(
-                    "rich_profiles_generated", 0
-                )
-            logger.info(
-                "[INGEST] ENRICH_PROFILES: generated %d rich profiles",
-                result["rich_profiles_generated"],
-            )
         except Exception as e:
-            logger.warning(
-                "[INGEST] ENRICH_PROFILES failed (non-fatal): %s", e, exc_info=True
-            )
+            logger.warning("[INGEST] ENRICH_PROFILES skipped, setup failed: %s", e)
+            return result
+        targets = [e for e in entity_ids if e.split("-", 1)[0] in templated]
+        skipped = len(targets) - self.MAX_PROFILES_PER_MEETING
+        targets = targets[: self.MAX_PROFILES_PER_MEETING]
+        if skipped > 0:
+            logger.info("[INGEST] ENRICH_PROFILES: capped, %d entities not refreshed", skipped)
+
+        meeting_path = f"meetings/meeting-{bot_id}.md"
+        title = getattr(observation, "title", None) or bot_id
+        occurred = getattr(observation, "occurred_at", None)
+        when = occurred.date().isoformat() if occurred else ""
+        signals = list(getattr(meeting_signals, "signals", None) or [])
+        semaphore = asyncio.Semaphore(self.PROFILE_CONCURRENCY)
+
+        async def enrich(entity_id: str) -> str:
+            entity_type = entity_id.split("-", 1)[0]
+            lines = []
+            for sig in signals:
+                owner = bool(sig.owner and sig.owner.id == entity_id)
+                if owner or any(ref.id == entity_id for ref in sig.entities):
+                    lines.append(
+                        f"- [{sig.type}{', owner' if owner else ''}] {sig.content} "
+                        f"({title}{', ' + when if when else ''})"
+                    )
+            await processor.upsert_recent_signals(entity_type, entity_id, lines, domain)
+            async with semaphore:
+                await processor.update_entity_profile(entity_type, entity_id, [meeting_path], domain)
+            path = processor._get_entity_storage_path(entity_type, entity_id, domain)
+            return os.path.relpath(path, processor.git_ops.repo_path)
+
+        outcomes = await asyncio.gather(*(enrich(e) for e in targets), return_exceptions=True)
+        changed = []
+        for entity_id, outcome in zip(targets, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                logger.warning("[INGEST] ENRICH_PROFILES failed for %s: %s", entity_id, outcome)
+            else:
+                changed.append(outcome)
+        result["rich_profiles_generated"] = len(changed)
+
+        if changed:
+            try:
+                await processor.git_ops.commit_and_push(
+                    changed, f"[ingest] Refresh {len(changed)} entity profiles from {title}"
+                )
+            except Exception as e:
+                logger.warning("[INGEST] ENRICH_PROFILES commit failed: %s", e)
+            if self._graph and hasattr(self._graph, "ingest_files"):
+                try:
+                    await self._graph.ingest_files(changed)
+                    await self._record_live_files(changed)
+                except Exception as e:
+                    logger.warning("[INGEST] ENRICH_PROFILES graph refresh failed: %s", e)
+
+        logger.info("[INGEST] ENRICH_PROFILES: generated %d rich profiles", len(changed))
         return result
 
     # ------------------------------------------------------------------

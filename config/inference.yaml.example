@@ -131,7 +131,7 @@ aliases:
 # operations (extraction/classification/digests). Operations that pass tools=
 # (e.g. chat_agent, central_agent) must NOT be pinned to a DO endpoint — they
 # fail closed. Known tool-free operation labels include: metadata_extraction,
-# entity_extraction, salient_entity_extraction, signal_extraction,
+# entity_extraction, salient_entity_extraction, semantica_ner, signal_extraction,
 # ingest_classify, weak_signal_detection, decision_extraction,
 # commitment_extraction, insight_generation, statement_comparison.
 operations:

@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.services.entity_utils import slugify
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -62,7 +64,6 @@ _LEGAL_SUFFIXES = {
 
 _PUNCT_RE = re.compile(r"[^\w\s]")
 _WS_RE = re.compile(r"\s+")
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 # Fuzzy thresholds per entity type. Projects are legitimately similar to each
 # other ("Q3 migration" vs "Q4 migration"), so they get the strictest bar.
@@ -145,7 +146,7 @@ def make_slug(entity_type: str, name: str) -> str:
     "Acme Corp" and "Acme" produce the same id (matches the historical
     add_node slug regex otherwise)."""
     normalized = normalize_entity_name(name, entity_type)
-    slug = _SLUG_RE.sub("-", normalized).strip("-")
+    slug = slugify(normalized)
     return f"{entity_type}-{slug}" if slug else ""
 
 
@@ -207,9 +208,9 @@ def resolve_against(
     name = (name or "").strip()
     slug = make_slug(entity_type, name)
 
-    # Tier 1: slug identity
+    # Tier 1: slug identity (incl. ids of entities merged into the candidate)
     for c in candidates:
-        if c.get("id") == slug:
+        if c.get("id") == slug or slug in (c.get("merged_ids") or ()):
             return ResolvedEntity(
                 id=c["id"], canonical_name=c.get("name", name), matched_via="exact"
             )
@@ -267,6 +268,11 @@ TIEBREAK_OPERATION = "entity_resolution_tiebreak"
 # TIEBREAK_SPLIT_MIN_PROBABILITY. The digit-token veto still runs first,
 # removing candidates before the model ever sees them.
 TIEBREAK_MIN_PROBABILITY = 0.85
+# People share first names constantly, and on the Littlebird calls the model
+# merged namesakes at 0.85-0.96 (Nathan -> Nate, Nate Alvar -> Nate, an FMG CEO
+# "Dave" -> Dave Link) while the one true person merge scored 0.99. A person
+# merge needs more; entity_link still verifies every link downstream.
+TIEBREAK_MIN_PROBABILITY_PERSON = 0.95
 TIEBREAK_SPLIT_MIN_PROBABILITY = 0.60
 # Candidates enter the fuzzy zone at this SequenceMatcher ratio (well below
 # every per-type merge threshold), or via an acronym / shared distinctive word.
@@ -316,10 +322,56 @@ def _distinctive_tokens(normalized: str) -> set[str]:
     return {w for w in normalized.split() if len(w) >= 4 and w not in _GENERIC_WORDS}
 
 
+_SOUNDEX_CODES = {
+    **dict.fromkeys("bfpv", "1"), **dict.fromkeys("cgjkqsxz", "2"), **dict.fromkeys("dt", "3"),
+    "l": "4", **dict.fromkeys("mn", "5"), "r": "6",
+}
+
+
+def _soundex(word: str) -> str:
+    word = "".join(c for c in word.lower() if c.isalpha())
+    if not word:
+        return ""
+    out, last = word[0].upper(), _SOUNDEX_CODES.get(word[0], "")
+    for c in word[1:]:
+        code = _SOUNDEX_CODES.get(c, "")
+        if code and code != last:
+            out += code
+        if c not in "hw":
+            last = code
+    return (out + "000")[:4]
+
+
+def _sounds_alike(a_norm: str, b_norm: str) -> bool:
+    """Same Soundex key token by token ("fully" ~ "foley"): speech-to-text
+    turns names into sound-alikes, which string similarity misses."""
+    a, b = a_norm.split(), b_norm.split()
+    return bool(a) and len(a) == len(b) and a_norm != b_norm and all(
+        _soundex(x) == _soundex(y) for x, y in zip(a, b, strict=True)
+    )
+
+
+def _partial_initials(a_norm: str, b_norm: str) -> bool:
+    """Letter-spelled short forms whose letters are an ordered subset of the
+    other name's initials ("f g" from "F and G" ~ "faulkner media group")."""
+    tokens = a_norm.split()
+    letters = "".join(tokens)
+    if not 2 <= len(letters) <= 4:
+        return False
+    if len(tokens) > 1 and not all(len(t) <= 2 for t in tokens):
+        return False
+    initials = _initials(b_norm)
+    if len(initials) < len(letters):
+        return False
+    it = iter(initials)
+    return all(ch in it for ch in letters)
+
+
 def fuzzy_zone(entity_type: str, name: str, candidates: list[dict]) -> list[tuple[float, dict]]:
     """Candidates too close for string similarity alone to rule out, best
-    first: ratio >= FUZZY_ZONE_FLOOR, an acronym, a clipped form, or a shared
-    distinctive word. The digit-token veto still applies — 'Q3 Migration'
+    first: ratio >= FUZZY_ZONE_FLOOR, an acronym, a clipped form, a shared
+    distinctive word, a sound-alike (speech-to-text: "Fully" ~ "Foley") or
+    partial initials ("F and G" ~ "Faulkner Media Group"). The digit-token veto still applies — 'Q3 Migration'
     never reaches the model as a candidate for 'Q4 Migration'."""
     normalized = normalize_entity_name(name, entity_type)
     if not normalized:
@@ -338,6 +390,8 @@ def fuzzy_zone(entity_type: str, name: str, candidates: list[dict]) -> list[tupl
                 or _acronym_of(normalized, s_norm)
                 or _clipped_form(normalized, s_norm)
                 or _distinctive_tokens(normalized) & _distinctive_tokens(s_norm)
+                or _sounds_alike(normalized, s_norm)
+                or _partial_initials(normalized, s_norm)
             ):
                 related = True
         if related:
@@ -391,8 +445,13 @@ def build_tiebreak_state(mention: dict, options: dict[str, dict]) -> dict:
     for key in ("aliases_heard", "role", "evidence"):
         if mention.get(key):
             m[key] = mention[key]
+    state: dict = {"mention": m}
+    if mention.get("meeting"):
+        # The meeting the mention was heard in (title, participants): who was
+        # in the room is often what separates two people sharing a first name.
+        state["heard_in_meeting"] = mention["meeting"]
     return {
-        "mention": m,
+        **state,
         "candidates": {
             key: {
                 "name": c.get("name", ""),
@@ -450,6 +509,25 @@ def _default_decision_client():
 _UNSET: Any = object()
 
 
+def participant_for_first_name(name: str, participants: list[str]) -> str | None:
+    """The one participant a bare first name ("Dan") refers to, if unambiguous.
+
+    Signal and salient extraction often shorten people to first names. Across
+    the whole graph "Dan" is ambiguous, but within a single meeting whose
+    attendee list contains exactly one Dan it is not. Returns None for
+    multi-word names, no match, or more than one matching participant.
+    """
+    tokens = normalize_entity_name(name, "person").split()
+    if len(tokens) != 1:
+        return None
+    matches = []
+    for p in participants or []:
+        p_tokens = normalize_entity_name(p, "person").split()
+        if len(p_tokens) > 1 and p_tokens[0] == tokens[0] and p not in matches:
+            matches.append(p)
+    return matches[0] if len(matches) == 1 else None
+
+
 class EntityResolver:
     """Graph-backed resolver. Builds same-type candidate lists from the
     knowledge graph's in-memory node cache (id, name, type, metadata.aliases).
@@ -462,9 +540,36 @@ class EntityResolver:
         self._kg = knowledge_graph
         self._decisions = _default_decision_client() if decisions is _UNSET else decisions
         self._decided: dict[tuple[str, str], ResolvedEntity] = {}
+        # Mentions already put to the decision model. One resolver serves a
+        # whole ingest, so a mention is judged ONCE, with the fullest context
+        # available the first time it is seen — a later, thinner re-ask
+        # (e.g. without the evidence quote) must not override it.
+        self._asked: set[tuple[str, str]] = set()
+        # Entities minted earlier in the same batch, not yet graph nodes.
+        self._pending: dict[str, dict[str, dict]] = {}
+
+    def register(self, entity_type: str, entity_id: str, name: str) -> None:
+        """Make a not-yet-persisted entity a resolution candidate.
+
+        Batch callers resolve many surface forms before any node is written;
+        without this, two forms of a brand-new entity in the same batch
+        ("Dan Kauppi" as a participant, "Dan" in a signal) never see each
+        other and both get minted."""
+        self._pending.setdefault(entity_type, {})[entity_id] = {
+            "id": entity_id, "name": name, "aliases": [], "context": {},
+        }
 
     def _candidates(self, entity_type: str) -> list[dict]:
-        if self._kg is None or not getattr(self._kg, "nodes", None):
+        candidates = self._graph_candidates(entity_type)
+        known = {c["id"] for c in candidates}
+        candidates.extend(
+            c for c in self._pending.get(entity_type, {}).values() if c["id"] not in known
+        )
+        return candidates
+
+    def _graph_candidates(self, entity_type: str) -> list[dict]:
+        nodes = getattr(self._kg, "nodes", None) if self._kg is not None else None
+        if not isinstance(nodes, dict) or not nodes:
             return []
         candidates = []
         for node in self._kg.nodes.values():
@@ -474,6 +579,9 @@ class EntityResolver:
             aliases = metadata.get("aliases") or []
             if isinstance(aliases, str):
                 aliases = [aliases]
+            merged_ids = metadata.get("merged_ids") or []
+            if isinstance(merged_ids, str):
+                merged_ids = [merged_ids]
             context = {
                 k: str(metadata[k])[:200]
                 for k in _CANDIDATE_CONTEXT_KEYS
@@ -484,24 +592,108 @@ class EntityResolver:
                     "id": node.id,
                     "name": getattr(node, "name", ""),
                     "aliases": aliases,
+                    "merged_ids": merged_ids,
                     "context": context,
                 }
             )
         return candidates
 
-    async def prefetch(self, mentions: list[dict]) -> int:
+    def _co_mentioned_names(self, entity_id: str, limit: int = 8) -> list[str]:
+        """Names of entities that share documents (meetings) with this one —
+        who it is usually talked about with. Lets the tiebreak tell 'Ankit
+        from the cohort calls' from an unrelated Ankit.
+
+        Decision-model context only, so it is computed in ``with_profile``
+        (candidates that reach a decision call), never on every ``resolve``:
+        it walks each of the entity's documents' entity sets."""
+        cache = self.__dict__.setdefault("_co_mention_cache", {})
+        if entity_id not in cache:
+            cache[entity_id] = self._compute_co_mentioned_names(entity_id, limit)
+        return cache[entity_id]
+
+    def _compute_co_mentioned_names(self, entity_id: str, limit: int) -> list[str]:
+        entity_documents = getattr(self._kg, "entity_documents", None) or {}
+        document_entities = getattr(self._kg, "document_entities", None) or {}
+        nodes = getattr(self._kg, "nodes", None) or {}
+        total_docs = len(document_entities)
+        counts: dict[str, int] = {}
+        for doc in entity_documents.get(entity_id, ()):
+            for other in document_entities.get(doc, ()):
+                if other == entity_id or other not in nodes:
+                    continue
+                # An entity present in most documents (the KB owner, who is in
+                # every one of their own meetings) links everyone to everyone
+                # and made unrelated namesakes look connected.
+                if total_docs >= 4 and len(entity_documents.get(other, ())) > total_docs / 2:
+                    continue
+                counts[other] = counts.get(other, 0) + 1
+        ranked = sorted(counts, key=lambda o: (-counts[o], o))[:limit]
+        return [getattr(nodes[o], "name", o) for o in ranked]
+
+    def profile_summary(self, entity_id: str) -> str | None:
+        """First prose of the entity's profile file (who they are), for the
+        decision model: a title alone ("null") could not tell the AI content
+        creator Nate from an SVP named Nate."""
+        cache = self.__dict__.setdefault("_profile_cache", {})
+        if entity_id in cache:
+            return cache[entity_id]
+        summary = None
+        try:
+            import os
+
+            node = (getattr(self._kg, "nodes", None) or {}).get(entity_id)
+            source_file = ((getattr(node, "metadata", None) or {}).get("source_file")) if node else None
+            repo = getattr(getattr(self._kg, "git_ops", None), "repo_path", None)
+            if source_file and repo:
+                with open(os.path.join(repo, source_file), encoding="utf-8") as f:
+                    text = f.read()
+                if text.startswith("---"):
+                    parts = text.split("---", 2)
+                    text = parts[2] if len(parts) >= 3 else ""
+                prose = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith("Entity ID:"):
+                        if prose:
+                            break
+                        continue
+                    prose.append(line.lstrip("-* "))
+                    if sum(len(p) for p in prose) > 300:
+                        break
+                summary = " ".join(prose)[:300] or None
+        except Exception:  # context is optional, never a failure
+            summary = None
+        cache[entity_id] = summary
+        return summary
+
+    def with_profile(self, candidate: dict) -> dict:
+        """``candidate`` plus the context only a decision call needs: its
+        profile summary and who it is usually mentioned with."""
+        entity_id = candidate.get("id", "")
+        extra: dict[str, Any] = {}
+        co_mentioned = self._co_mentioned_names(entity_id) if entity_id else []
+        if co_mentioned:
+            extra["co_mentioned_with"] = co_mentioned
+        summary = self.profile_summary(entity_id)
+        if summary:
+            extra["profile_summary"] = summary
+        if not extra:
+            return candidate
+        return {**candidate, "context": {**(candidate.get("context") or {}), **extra}}
+
+    async def prefetch(self, mentions: list[dict], meeting: dict | None = None) -> int:
         """Run the decision tiebreak for every mention that needs one.
 
         mentions: [{"type", "name", optional "evidence", "role",
         "aliases_heard"}]. Never raises; returns the number of decisions that
         will change what ``resolve`` returns (always 0 in shadow mode)."""
         try:
-            return await self._prefetch(mentions)
+            return await self._prefetch(mentions, meeting)
         except Exception:
             logger.exception("[RESOLVER] Tiebreak prefetch failed, keeping heuristic outcomes")
             return 0
 
-    async def _prefetch(self, mentions: list[dict]) -> int:
+    async def _prefetch(self, mentions: list[dict], meeting: dict | None) -> int:
         client = self._decisions
         if client is None:
             return 0
@@ -514,7 +706,7 @@ class EntityResolver:
         for m in mentions:
             etype, name = (m.get("type") or "").strip(), (m.get("name") or "").strip()
             key = (etype, name)
-            if not etype or not name or key in seen or key in self._decided:
+            if not etype or not name or key in seen or key in self._decided or key in self._asked:
                 continue
             seen.add(key)
             if etype not in by_type:
@@ -526,7 +718,12 @@ class EntityResolver:
             zone = fuzzy_zone(etype, name, candidates)
             if not zone:
                 continue
-            jobs.append(self._tiebreak(client, mode, {**m, "type": etype, "name": name}, heuristic, zone))
+            zone = [(score, self.with_profile(c)) for score, c in zone]
+            mention = {**m, "type": etype, "name": name}
+            if meeting:
+                mention["meeting"] = meeting
+            self._asked.add(key)
+            jobs.append(self._tiebreak(client, mode, mention, heuristic, zone))
         if not jobs:
             return 0
         changed = await asyncio.gather(*jobs)
@@ -544,7 +741,12 @@ class EntityResolver:
             result = await client.decide(state, {"match": question}, operation=TIEBREAK_OPERATION)
             answer = result.choice("match")
             probability = answer.probabilities.get(answer.choice, 0.0)
-            decided = apply_tiebreak(heuristic, options, answer.choice, probability, etype, name)
+            decided = apply_tiebreak(
+                heuristic, options, answer.choice, probability, etype, name,
+                min_probability=(
+                    TIEBREAK_MIN_PROBABILITY_PERSON if etype == "person" else TIEBREAK_MIN_PROBABILITY
+                ),
+            )
         except (DecisionUnavailable, ValueError) as e:
             logger.warning("[RESOLVER] Tiebreak failed for %s/%r, keeping heuristic: %s", etype, name, e)
             return False

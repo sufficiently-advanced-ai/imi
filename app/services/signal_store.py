@@ -19,6 +19,71 @@ VALID_SIGNAL_STATUSES = {"open", "in_progress", "done"}
 SIGNALS_DIR = Path("/app/repo/signals")
 
 
+def remap_entity_refs(
+    meeting_signals: MeetingSignals,
+    id_map: dict[str, str],
+    names: dict[str, str] | None = None,
+) -> bool:
+    """Rewrite entity references in a meeting's signals after resolution or a
+    merge: ids through ``id_map`` (entities, owner, client_id), display names
+    from ``names`` (keyed by the final id), duplicate refs collapsed.
+
+    Returns True if anything changed. Shared by ingest-time resolution and
+    Neo4jKnowledgeGraph.merge_nodes so signal files never keep pointing at a
+    merged-away id or a short surface form ("Paul" for person-paul-evers).
+    """
+    names = names or {}
+    changed = False
+
+    def _fix(ref) -> None:
+        nonlocal changed
+        new_id = id_map.get(ref.id, ref.id)
+        if new_id != ref.id:
+            ref.id = new_id
+            # ids are "<type>-<slug>"; a retype (team -> account) changes both
+            ref.type = new_id.split("-", 1)[0]
+            changed = True
+        new_name = names.get(ref.id)
+        if new_name and ref.name != new_name:
+            ref.name = new_name
+            changed = True
+
+    for sig in meeting_signals.signals:
+        kept, seen = [], set()
+        for ref in sig.entities:
+            _fix(ref)
+            if ref.id in seen:
+                changed = True
+                continue
+            seen.add(ref.id)
+            kept.append(ref)
+        sig.entities = kept
+        if sig.owner:
+            _fix(sig.owner)
+        if sig.client_id and sig.client_id in id_map:
+            sig.client_id = id_map[sig.client_id]
+            changed = True
+    return changed
+
+
+def drop_entity_refs(meeting_signals: MeetingSignals, ids: set[str]) -> bool:
+    """Remove references to entities that were rejected at admission: entity
+    refs dropped, a matching owner cleared, a matching client_id cleared."""
+    changed = False
+    for sig in meeting_signals.signals:
+        kept = [ref for ref in sig.entities if ref.id not in ids]
+        if len(kept) != len(sig.entities):
+            sig.entities = kept
+            changed = True
+        if sig.owner and sig.owner.id in ids:
+            sig.owner = None
+            changed = True
+        if sig.client_id and sig.client_id in ids:
+            sig.client_id = None
+            changed = True
+    return changed
+
+
 class SignalStore:
     """Read/write signal JSON files from the repo signals directory."""
 

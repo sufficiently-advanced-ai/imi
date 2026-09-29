@@ -64,6 +64,11 @@
        What the project aims to achieve and any changes to scope over time.
     
     IMPORTANT GUIDELINES:
+    - PRONOUNS: refer to people by name, or with they/them, unless the source
+      material explicitly states their pronouns. Never infer anyone's gender
+      from their name.
+    - OUTPUT FORMAT: return the markdown document itself, starting with the
+      --- frontmatter line. Do not wrap it (or any part of it) in code fences.
     - CORRECTIONS OVERRIDE EVERYTHING: if the &lt;grounded_facts&gt; block contains
       a "Corrections (authoritative …)" section, treat each correction as the
       final truth. It overrides the existing profile, the trigger files, and any

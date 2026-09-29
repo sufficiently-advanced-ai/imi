@@ -613,18 +613,8 @@ class WebhookOrchestrator(BaseOrchestrator):
                         file_path=file_path,
                     )
                     embedded_count += 1
-
-                    # Extract entities from content via Semantica NER
-                    entities = await sk.extract_entities(content)
-                    for entity in entities:
-                        await sk.add_entity(
-                            entity_id=entity["id"],
-                            entity_type=entity["type"],
-                            name=entity["name"],
-                            properties=entity.get("metadata", {}),
-                            file_path=file_path,
-                        )
-                        entity_count += 1
+                    # No raw NER -> Neo4j writes here: entities reach the graph
+                    # through the domain-validated pipeline (files first).
 
                 except Exception as e:
                     logger.warning(f"Semantica enrichment failed for {file_path}: {e}")

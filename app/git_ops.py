@@ -396,6 +396,9 @@ class GitOperations:
     ) -> None:
         """Commit and push changes with optimized git operations."""
         operation = "commit_and_push"
+        # The files changed on disk before this commit; a cached corpus read
+        # would hand the next rebuild their old content.
+        self.invalidate_markdown_files_cache()
 
         try:
             # Start performance tracking

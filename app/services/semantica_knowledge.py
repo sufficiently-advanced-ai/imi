@@ -31,7 +31,6 @@ from app.services.semantica_config import (
     entity_type_to_label,
     get_entity_schema,
     get_entity_types,
-    make_entity_id,
     relationship_type_to_neo4j,
 )
 from app.services.semantica_decisions import SemanticaDecisions
@@ -125,36 +124,36 @@ class SemanticaKnowledge:
     # ──────────────────────────────────────────────────────────────
 
     async def ingest_file(self, file_path: str, content: str) -> bool:
-        """Ingest one markdown document (entity profile) into graph + vectors.
+        """Index the entity profile ``file_path`` into the vector store.
 
-        Shared by the full build and the startup reconcile path. Returns True
-        when the file described an entity that was upserted, False when the
-        file is intentionally skipped (no frontmatter, unknown type, archived),
-        and RAISES when the upsert failed — callers that track retries must be
-        able to tell a skip from a failure.
+        The legacy graph owns every Neo4j write (the reconcile runs
+        ``kg.ingest_files`` first); this only embeds the node(s) it wrote for
+        the file, so ids, names and properties are the graph's own. Returns
+        True when a node was indexed, False when the file is intentionally
+        skipped (no frontmatter, unknown type, archived), and RAISES when the
+        node is missing or indexing failed — callers that track retries must
+        be able to tell a skip from a failure.
         """
         metadata = self._extract_metadata(content)
         if not metadata:
             return False
-        entity_type = self._resolve_entity_type(file_path, metadata)
-        if not entity_type:
+        if not self._resolve_entity_type(file_path, metadata):
             return False
         if metadata.get("is_archived"):
             return False
-        name = metadata.get("name", Path(file_path).stem.replace("-", " ").title())
-        entity_id = make_entity_id(entity_type, name)
-        ok = await self.add_entity(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            name=name,
-            properties=metadata,
-            file_path=file_path,
+        rows = self._extract_records(
+            await self._query(
+                "MATCH (n:Entity) WHERE NOT n:Signal AND (n.source_file = $p OR n.file_path = $p) "
+                "RETURN n",
+                {"p": file_path},
+            )
         )
-        if not ok:
-            # add_entity converts graph/vector errors into False; surface that
-            # as a failure so the reconcile keeps the file for retry.
-            raise RuntimeError(f"add_entity failed for {entity_id} ({file_path})")
-        await self._process_relationships(entity_id, entity_type, metadata)
+        if not rows:
+            raise RuntimeError(f"no graph node for {file_path}; nothing to index")
+        for row in rows:
+            node = row.get("n", {}) or {}
+            if not await self._index_node(node):
+                raise RuntimeError(f"vector indexing failed for {node.get('id')} ({file_path})")
         return True
 
     async def remove_entities_for_file(self, file_path: str) -> int:
@@ -190,7 +189,6 @@ class SemanticaKnowledge:
         rows = self._extract_records(
             await self._query("MATCH (n:Entity) WHERE NOT n:Signal RETURN n")
         )
-        skip = {"id", "name", "entity_type", "canonical_name", "file_path"}
         try:
             from app.config import settings
 
@@ -205,18 +203,41 @@ class SemanticaKnowledge:
                 continue
             if throttle:
                 await asyncio.sleep(throttle)
-            attributes = {k: v for k, v in node.items() if k not in skip and v is not None}
-            vector_id = await self.search.index_entity(
-                entity_id=entity_id,
-                name=node.get("name", ""),
-                entity_type=node.get("entity_type", ""),
-                attributes=attributes,
-                file_path=node.get("file_path", "") or "",
-            )
-            if vector_id:
+            if await self._index_node(node):
                 indexed += 1
         logger.info("[SEMANTICA] reindexed %d/%d entities from graph", indexed, len(rows))
         return indexed
+
+    async def _index_node(self, node: dict[str, Any]) -> bool:
+        """Embed one graph node into the entity vector index."""
+        entity_id = node.get("id")
+        if not entity_id:
+            return False
+        skip = {"id", "name", "entity_type", "canonical_name", "file_path", "source_file"}
+        attributes = {k: v for k, v in node.items() if k not in skip and v is not None}
+        vector_id = await self.search.index_entity(
+            entity_id=entity_id,
+            name=node.get("name", ""),
+            entity_type=node.get("entity_type", ""),
+            attributes=attributes,
+            file_path=node.get("source_file") or node.get("file_path") or "",
+        )
+        return bool(vector_id)
+
+    async def _purge_legacy_signal_vectors(self) -> int:
+        """Drop the ``signal-<uuid>`` entity vectors older builds wrote (each
+        signal was also indexed as an entity, so entity search returned
+        signals). Signals have their own ``signal`` content type."""
+        try:
+            from app.services.signal_store import SignalStore
+
+            ids = [s.id for ms in SignalStore().load_all() for s in ms.signals]
+        except Exception as e:
+            logger.warning("[SEMANTICA] legacy signal vector purge skipped: %s", e)
+            return 0
+        for sid in ids:
+            await self.search.delete_entity_vector(f"signal-{sid}")
+        return len(ids)
 
     async def build_graph(
         self,
@@ -224,18 +245,23 @@ class SemanticaKnowledge:
         clean: bool = False,
         sources: list[Path] | None = None,
     ) -> dict[str, Any]:
-        """Build/rebuild the knowledge graph from repository content.
+        """Rebuild the entity vector index from the legacy graph.
 
-        Scans markdown files, extracts entities and relationships,
-        stores in Neo4j via Semantica GraphStore.
+        The legacy graph (``Neo4jKnowledgeGraph``) and the signal pipeline own
+        every Neo4j node and edge. This layer used to write its own copies —
+        entity nodes keyed by ``make_entity_id(type, name)`` (so a renamed
+        entity came back under its new-name id), ``type-type-x`` stubs, and a
+        second ``signal-<uuid>`` node per signal — which a rebuild then had
+        to reconcile with the real graph. Now it only embeds what the graph
+        holds.
 
         Args:
-            force_rebuild: Force full rebuild even if already built.
-            clean: Clear all existing data first.
-            sources: Optional specific source paths (default: scan repo).
+            force_rebuild: Rebuild even if already built.
+            clean: Drop every entity vector first (never touches Neo4j).
+            sources: Unused; kept for call compatibility.
 
         Returns:
-            Build summary with node/edge counts.
+            Build summary with the indexed node count.
         """
         if not force_rebuild and self.last_build and not clean:
             return {
@@ -246,79 +272,29 @@ class SemanticaKnowledge:
             }
 
         start = datetime.utcnow()
-        logger.info("Building knowledge graph...")
-
-        if clean:
-            await self.clear_all_data()
-
+        logger.info("Rebuilding entity vectors from the graph...")
         try:
-            # Read markdown files from repo
-            files = await self.git_ops.read_markdown_files()
-
-            node_count = 0
-            edge_count = 0
-
-            for file_info in files:
-                try:
-                    metadata = self._extract_metadata(file_info.content)
-                    if not metadata:
-                        continue
-
-                    entity_type = self._resolve_entity_type(file_info.path, metadata)
-                    if not entity_type:
-                        continue
-
-                    # Check archived flag
-                    if metadata.get("is_archived"):
-                        continue
-
-                    name = metadata.get("name", Path(file_info.path).stem.replace("-", " ").title())
-                    entity_id = make_entity_id(entity_type, name)
-
-                    # Upsert node (graph write + embedding both run off-loop)
-                    await self.add_entity(
-                        entity_id=entity_id,
-                        entity_type=entity_type,
-                        name=name,
-                        properties=metadata,
-                        file_path=file_info.path,
-                    )
-                    node_count += 1
-
-                    # Extract and create relationships from metadata
-                    rels_created = await self._process_relationships(
-                        entity_id, entity_type, metadata
-                    )
-                    edge_count += rels_created
-
-                except Exception as e:
-                    logger.warning(f"Failed to process {file_info.path}: {e}")
-                    continue
-
-            # Re-ingest signals from disk
-            signal_edges = await self._ingest_signals()
-            edge_count += signal_edges
-
-            # Sync to in-memory caches for backward compatibility
+            if clean:
+                await self.search.clear_entity_vectors()
+            purged = await self._purge_legacy_signal_vectors()
+            node_count = await self.reindex_entities_from_graph()
             await self._sync_caches()
 
             self.last_build = datetime.utcnow()
             duration = (self.last_build - start).total_seconds()
-
             summary = {
                 "status": "built",
                 "nodes": node_count,
-                "edges": edge_count,
+                "edges": 0,
+                "legacy_signal_vectors_purged": purged,
                 "duration_seconds": duration,
                 "last_build": self.last_build.isoformat(),
             }
-            logger.info(
-                f"Graph built: {node_count} nodes, {edge_count} edges in {duration:.1f}s"
-            )
+            logger.info(f"Entity vectors rebuilt: {node_count} nodes in {duration:.1f}s")
             return summary
 
         except Exception as e:
-            logger.error(f"Graph build failed: {e}")
+            logger.error(f"Vector build failed: {e}")
             return {"status": "error", "error": str(e)}
 
     async def clear_all_data(self) -> dict[str, Any]:
@@ -1036,16 +1012,22 @@ class SemanticaKnowledge:
         Queries document-entity relationships and modification history
         to build a timeline of how the entity was created and updated.
         """
-        # Match document edges (MENTIONS, EXTRACTED_FROM) and signal edges (REFERENCES_*)
+        # Documents the entity appears in (MENTIONED_IN, written by the graph
+        # build) and signals about it (SignalGraphWriter's edges).
         cypher = (
-            "MATCH (n:Entity {id: $id})<-[r]-(d) "
-            "WHERE type(r) IN ['MENTIONS', 'EXTRACTED_FROM', 'REFERENCES'] "
-            "   OR type(r) STARTS WITH 'REFERENCES_' "
-            "RETURN coalesce(d.path, d.file_path, d.name, d.id) AS source, "
+            "CALL { "
+            "  MATCH (n:Entity {id: $id})-[r:MENTIONED_IN]->(d:Document) "
+            "  RETURN d, r "
+            "  UNION "
+            "  MATCH (n:Entity {id: $id})<-[r]-(d) "
+            "  WHERE type(r) IN ['MENTIONS', 'ASSIGNED_TO', 'FOR_CLIENT', 'EXTRACTED_FROM'] "
+            "  RETURN d, r "
+            "} "
+            "RETURN coalesce(d.path, d.file_path, d.source_meeting_id, d.name, d.id) AS source, "
             "type(r) AS action, "
-            "coalesce(r.timestamp, d.created_at) AS timestamp, "
+            "coalesce(r.timestamp, d.created_at, d.date) AS timestamp, "
             "r.actor AS actor "
-            "ORDER BY coalesce(r.timestamp, d.created_at) ASC"
+            "ORDER BY timestamp ASC"
         )
         results = self._extract_records(
             await self._query(cypher, {"id": entity_id})
@@ -1201,16 +1183,21 @@ class SemanticaKnowledge:
         file_path: str,
         metadata: dict[str, Any],
     ) -> str | None:
-        """Determine entity type from file path and metadata."""
-        # Check metadata first
-        if "type" in metadata:
-            return metadata["type"]
-        if "entity_type" in metadata:
-            return metadata["entity_type"]
+        """Determine entity type from file path and metadata.
 
-        # Infer from directory path
+        Only configured domain entity types count: the graph writes any other
+        file as a Document, so indexing it as an entity would find no Entity
+        node and fail (and be retried) on every boot."""
         if not self.domain or not self.domain.entities:
             return None
+        known = set(self.domain.entities)
+
+        for key in ("type", "entity_type"):
+            if metadata.get(key) in known:
+                return metadata[key]
+        entity_id = metadata.get("id")
+        if isinstance(entity_id, str) and "-" in entity_id and entity_id.split("-")[0] in known:
+            return entity_id.split("-")[0]
 
         parts = Path(file_path).parts
         for entity_type, entity_def in self.domain.entities.items():
@@ -1219,125 +1206,6 @@ class SemanticaKnowledge:
                 return entity_type
 
         return None
-
-    async def _process_relationships(
-        self,
-        entity_id: str,
-        entity_type: str,
-        metadata: dict[str, Any],
-    ) -> int:
-        """Process relationship metadata and create edges. Returns count created.
-
-        Raises RuntimeError when a required stub or relationship write fails —
-        ``add_entity``/``add_relationship`` swallow their own errors into
-        ``False``, and a half-written profile must not be reported as ingested
-        (the reconcile would stamp it and never retry).
-        """
-        if not self.domain or not self.domain.entities:
-            return 0
-
-        entity_def = self.domain.entities.get(entity_type)
-        if not entity_def or not entity_def.relationships:
-            return 0
-
-        count = 0
-        for rel_def in entity_def.relationships:
-            rel_type = rel_def.type
-            targets = self._extract_relationship_targets(metadata, rel_type)
-
-            for target_name in targets:
-                target_id = make_entity_id(rel_def.target, target_name)
-
-                # Create stub node for target if it doesn't exist
-                existing = await self.get_entity(target_id)
-                if not existing:
-                    if not await self.add_entity(
-                        entity_id=target_id,
-                        entity_type=rel_def.target,
-                        name=target_name,
-                        properties={"name": target_name, "stub": True},
-                    ):
-                        raise RuntimeError(
-                            f"stub write failed for {target_id} ({rel_type} of {entity_id})"
-                        )
-
-                if not await self.add_relationship(entity_id, target_id, rel_type):
-                    raise RuntimeError(f"relationship write failed: {entity_id} -{rel_type}-> {target_id}")
-                count += 1
-
-                # Create inverse relationship if defined
-                if hasattr(rel_def, "inverse_name") and rel_def.inverse_name:
-                    if not await self.add_relationship(target_id, entity_id, rel_def.inverse_name):
-                        raise RuntimeError(
-                            f"inverse relationship write failed: {target_id} -{rel_def.inverse_name}-> {entity_id}"
-                        )
-                    count += 1
-
-        return count
-
-    def _extract_relationship_targets(
-        self,
-        metadata: dict[str, Any],
-        rel_type: str,
-    ) -> list[str]:
-        """Extract target entity names from metadata for a relationship type."""
-        value = metadata.get(rel_type)
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if v]
-        if isinstance(value, str):
-            return [v.strip() for v in value.split(",") if v.strip()]
-        return [str(value)]
-
-    async def _ingest_signals(self) -> int:
-        """Re-ingest persisted signals into the graph. Returns edge count."""
-        try:
-            from app.services.signal_store import SignalStore
-
-            store = SignalStore()
-            all_signals = store.load_all()
-            edge_count = 0
-
-            for meeting_signals in all_signals:
-                for signal in meeting_signals.signals:
-                    # Create signal node
-                    signal_id = f"signal-{signal.id}"
-                    signal_time = signal.source_timestamp or signal.created_at
-                    await self.add_entity(
-                        entity_id=signal_id,
-                        entity_type="signal",
-                        name=signal.content[:100],
-                        properties={
-                            "name": signal.content[:100],
-                            "signal_type": signal.type,
-                            "content": signal.content,
-                            "confidence": signal.confidence,
-                            "status": signal.status or "",
-                            "source_meeting_id": signal.source_meeting_id,
-                            "created_at": signal.created_at,
-                            "valid_from": signal_time,
-                        },
-                    )
-
-                    # Link signal to entities
-                    for entity_ref in signal.entities:
-                        await self.add_relationship(
-                            signal_id,
-                            entity_ref.id,
-                            f"REFERENCES_{signal.type.upper()}",
-                            {
-                                "confidence": signal.confidence,
-                                "valid_from": signal_time,
-                            },
-                        )
-                        edge_count += 1
-
-            return edge_count
-
-        except Exception as e:
-            logger.warning(f"Signal ingestion failed (non-fatal): {e}")
-            return 0
 
     async def _sync_caches(self) -> None:
         """Sync Neo4j data to in-memory caches for backward compat."""

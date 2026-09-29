@@ -27,6 +27,7 @@ from typing import Any
 import yaml
 
 from app.domain.entities.services.entity_repository import EntityRepository
+from app.services.entity_utils import slugify
 
 logger = logging.getLogger(__name__)  # root handler/level: app.core.logging_setup
 
@@ -851,7 +852,7 @@ class EntityService:
                 name = re.sub(pattern, "", name, flags=re.IGNORECASE)
 
         # Normalize to lowercase and replace non-alphanumeric with hyphens
-        normalized = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        normalized = slugify(name)
 
         # Ensure it's not empty after normalization
         if not normalized:

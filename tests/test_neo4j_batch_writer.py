@@ -230,3 +230,50 @@ async def test_batch_is_task_scoped_not_instance_scoped():
     assert any(q.startswith("MERGE (n:Entity:Person") for q in direct), "request write must not be buffered"
     await ingest
     assert kg._batch is None
+
+
+@pytest.mark.asyncio
+async def test_relationship_to_an_id_of_another_type_is_skipped():
+    # has_projects: [person-bob] must not MERGE a Project stub with a person's
+    # id: that violates the Entity.id constraint and aborts the whole batch.
+    client = _client()
+    kg, git = _graph(client)
+    md = "---\nid: person-alice\ntype: person\nname: Alice\nhas_projects:\n  - person-bob\n  - project-apollo\n---\nbody\n"
+    git.read_markdown_files = AsyncMock(return_value=[File(path="entities/person/alice.md", content=md)])
+    kg._record_type_usage = AsyncMock()
+    kg._sync_from_neo4j = AsyncMock()
+
+    await kg.ingest_files(["entities/person/alice.md"])
+
+    rows = [
+        r
+        for c in client.execute_write.await_args_list
+        if c.args[0].startswith("UNWIND") and ":Project" in c.args[0]
+        for r in c.args[1]["rows"]
+    ]
+    ids = {r.get("id") for r in rows}
+    assert "project-apollo" in ids and "person-bob" not in ids
+
+
+@pytest.mark.asyncio
+async def test_referenced_stub_takes_the_label_its_id_names():
+    # A plural field holding another type's id (projects: [person-bob]) must
+    # stub person-bob as a Person, never as a Project.
+    client = _client()
+    kg, git = _graph(client)
+    md = "---\ntitle: Notes\nprojects:\n  - person-bob\n  - project-apollo\n---\nnotes\n"
+    git.read_markdown_files = AsyncMock(return_value=[File(path="meetings/notes.md", content=md)])
+    kg._record_type_usage = AsyncMock()
+    kg._sync_from_neo4j = AsyncMock()
+
+    await kg.ingest_files(["meetings/notes.md"])
+
+    def stub_ids(label):
+        return {
+            r.get("id")
+            for c in client.execute_write.await_args_list
+            if c.args[0].startswith("UNWIND") and f"MERGE (n:Entity:{label} " in c.args[0]
+            for r in c.args[1]["rows"]
+        }
+    assert "person-bob" in stub_ids("Person") and "person-bob" not in stub_ids("Project")
+    assert "project-apollo" in stub_ids("Project")

@@ -75,6 +75,15 @@ class DomainAwareEntityProcessor:
         return "\n".join(result)
 
     @staticmethod
+    def _strip_code_fences(content: str) -> str:
+        """Drop markdown code-fence lines (``` / ```markdown) that models
+        sometimes wrap a generated document in; a profile never contains
+        fenced code, and a stray fence renders the whole body as code."""
+        return "\n".join(
+            line for line in content.split("\n") if not line.strip().startswith("```")
+        )
+
+    @staticmethod
     def _ensure_required_frontmatter(
         content: str, entity_type: str, entity_id: str
     ) -> str:
@@ -112,6 +121,208 @@ class DomainAwareEntityProcessor:
 
         new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
         return f"---\n{new_frontmatter}---{parts[2]}"
+
+    # Frontmatter keys owned by the graph/file layer, not by the profile
+    # writer: a regenerated profile must never drop or rename them (losing
+    # aliases/merged_ids would undo merges; a new name would fork identity).
+    _PRESERVED_KEYS = (
+        "id", "name", "canonical_name", "entity_type", "type", "aliases", "merged_ids",
+        "source", "created_at", "is_archived", "archived_at", "manual_corrections",
+    )
+    RECENT_SIGNALS_HEADER = "## Recent Signals"
+    MAX_RECENT_SIGNALS = 25
+
+    @classmethod
+    def _preserve_bookkeeping(
+        cls,
+        profile_content: str,
+        existing_attrs: dict[str, Any],
+        existing_body: str,
+        relationship_keys: tuple[str, ...] = (),
+    ) -> str:
+        """Restore graph-owned frontmatter keys and the Recent Signals section
+        from the previous version of the file if the model dropped them.
+
+        ``relationship_keys`` (the entity type's domain relationship types,
+        ``managed_by``...) are graph-owned too: only the verified relationship
+        path writes them, so the profile writer can neither drop a verified
+        edge nor add an unverified one."""
+        if not profile_content.startswith("---"):
+            return profile_content
+        parts = profile_content.split("---", 2)
+        if len(parts) < 3:
+            return profile_content
+        try:
+            frontmatter = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            return profile_content
+        if not isinstance(frontmatter, dict):
+            frontmatter = {}
+        for key in cls._PRESERVED_KEYS:
+            if key not in (existing_attrs or {}):
+                continue
+            if key == "aliases":
+                merged = list(existing_attrs.get("aliases") or [])
+                for alias in frontmatter.get("aliases") or []:
+                    if alias not in merged:
+                        merged.append(alias)
+                frontmatter["aliases"] = merged
+            else:
+                frontmatter[key] = existing_attrs[key]
+        for key in relationship_keys:
+            if (existing_attrs or {}).get(key):
+                frontmatter[key] = existing_attrs[key]
+            else:
+                frontmatter.pop(key, None)
+        body = parts[2]
+        old_section = cls._extract_section(existing_body or "", cls.RECENT_SIGNALS_HEADER)
+        if old_section and cls.RECENT_SIGNALS_HEADER not in body:
+            body = body.rstrip() + "\n\n" + old_section + "\n"
+        new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        return f"---\n{new_frontmatter}---{body}"
+
+    def _drop_unknown_entity_ids(
+        self, profile_content: str, entity_id: str, domain_config: DomainConfiguration
+    ) -> str:
+        """Remove entity ids the model invented in frontmatter lists
+        (``projects: [project-brightspring-health-engagement]``). The graph
+        builder turns every referenced id into a stub node, so an id with no
+        entity file behind it becomes a junk stub named after its slug."""
+        if not profile_content.startswith("---"):
+            return profile_content
+        parts = profile_content.split("---", 2)
+        if len(parts) < 3:
+            return profile_content
+        try:
+            frontmatter = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            return profile_content
+        if not isinstance(frontmatter, dict):
+            return profile_content
+        from app.services.entity_utils import slugify
+
+        types = sorted(domain_config.entities, key=len, reverse=True)
+        # Keys whose values are references to entities of one type (the
+        # plural "projects", or "has_projects"): an unprefixed value there
+        # ("claude-partner-network") is still an id and still becomes a stub.
+        key_types: dict[str, str] = {}
+        for t, ent in domain_config.entities.items():
+            plural = getattr(ent, "plural", None) or f"{t}s"
+            key_types[plural] = t
+            key_types[f"has_{plural}"] = t
+        key_types.setdefault("people", "person")
+
+        resolve_ref = getattr(self, "resolve_ref", None)
+
+        def check(value, key: str = ""):
+            """(keep, replacement): replacement is the canonical id when a
+            stale or name-form reference resolves to an existing entity."""
+            if not isinstance(value, str):
+                return True, value
+            etype = next((t for t in types if value.startswith(f"{t}-")), None)
+            # An id filed under another type's list (``projects: [account-foley]``)
+            # is a mistyped relationship, not a reference to keep.
+            if etype is not None and key in key_types and etype != key_types[key]:
+                return False, value
+            candidate = value
+            if etype is None and key in key_types:
+                etype = key_types[key]
+                candidate = f"{etype}-{slugify(value)}"
+            if etype is None or candidate == entity_id:
+                return True, value  # not an entity id (free text, dates, ...)
+            try:
+                if os.path.exists(self._get_entity_storage_path(etype, candidate, domain_config)):
+                    return True, value
+            except ValueError:
+                return False, value
+            # A real entity under a stale id (renamed/merged: person-ankit-patel
+            # is now person-ankit) — ask the resolver before dropping it.
+            if resolve_ref is not None:
+                try:
+                    resolved = resolve_ref(etype, candidate)
+                except Exception:
+                    resolved = None
+                if resolved and resolved != entity_id:
+                    return True, resolved
+            return False, value
+
+        dropped, remapped = [], {}
+        for key, value in list(frontmatter.items()):
+            if key in ("id", "aliases", "merged_ids"):
+                continue
+            if isinstance(value, list):
+                kept = []
+                for v in value:
+                    ok, new = check(v, key)
+                    if not ok:
+                        dropped.append(v)
+                    elif new not in kept:
+                        if new != v:
+                            remapped[v] = new
+                        kept.append(new)
+                if kept != value:
+                    frontmatter[key] = kept
+            elif isinstance(value, str):
+                ok, new = check(value, key)
+                if not ok:
+                    dropped.append(value)
+                    frontmatter[key] = None
+                elif new != value:
+                    remapped[value] = new
+                    frontmatter[key] = new
+        if not dropped and not remapped:
+            return profile_content
+        if remapped:
+            logger.info("[PROFILE] %s: resolved stale entity refs %s", entity_id, remapped)
+        if dropped:
+            logger.info("[PROFILE] %s: dropped unknown entity ids %s", entity_id, dropped)
+        new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        return f"---\n{new_frontmatter}---{parts[2]}"
+
+    @staticmethod
+    def _extract_section(body: str, header: str) -> str:
+        idx = body.find(header)
+        if idx == -1:
+            return ""
+        section = body[idx:]
+        nxt = section.find("\n## ", len(header))
+        return (section[:nxt] if nxt != -1 else section).strip()
+
+    async def upsert_recent_signals(
+        self,
+        entity_type: str,
+        entity_id: str,
+        lines: list[str],
+        domain_config: DomainConfiguration,
+    ) -> bool:
+        """Merge signal lines into the entity file's "## Recent Signals"
+        section (newest first, deduped, capped). This section is the grounded
+        attribution source the profile prompt reads (_build_grounded_facts)."""
+        if not lines:
+            return False
+        path = self._get_entity_storage_path(entity_type, entity_id, domain_config)
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) < 3:
+                return False
+            head, body = f"---{parts[1]}---", parts[2]
+        else:
+            head, body = "", raw
+        old = self._extract_section(body, self.RECENT_SIGNALS_HEADER)
+        existing = [ln for ln in old.splitlines()[1:] if ln.startswith("- ")]
+        merged = []
+        for ln in [*lines, *existing]:
+            if ln not in merged:
+                merged.append(ln)
+        section = self.RECENT_SIGNALS_HEADER + "\n" + "\n".join(merged[: self.MAX_RECENT_SIGNALS])
+        body = body.replace(old, section) if old else body.rstrip() + "\n\n" + section + "\n"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(head + body)
+        return True
 
     # Default storage path mappings for common entity types
     DEFAULT_STORAGE_PATHS = {
@@ -486,6 +697,7 @@ Return the complete updated profile."""
 
         # Sanitize frontmatter — Claude may generate closing --- glued to
         # the last YAML value, or add preamble text before the opening ---.
+        profile_content = self._strip_code_fences(profile_content)
         profile_content = self._sanitize_frontmatter(profile_content)
 
         # Ensure id and entity_type are in frontmatter so the graph builder
@@ -493,6 +705,12 @@ Return the complete updated profile."""
         profile_content = self._ensure_required_frontmatter(
             profile_content, entity_type, entity_id
         )
+        entity_def = (getattr(domain_config, "entities", None) or {}).get(entity_type)
+        profile_content = self._preserve_bookkeeping(
+            profile_content, context.get("attributes") or {}, context.get("content") or "",
+            relationship_keys=tuple(r.type for r in (getattr(entity_def, "relationships", None) or [])),
+        )
+        profile_content = self._drop_unknown_entity_ids(profile_content, entity_id, domain_config)
 
         # Save updated profile
         storage_path = self._get_entity_storage_path(
