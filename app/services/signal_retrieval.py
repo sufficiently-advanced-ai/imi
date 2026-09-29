@@ -152,6 +152,8 @@ def index_signal(vector_store, embedder, signal: Signal) -> str | None:
             "tenant_id": signal.tenant_id,
             # ADR-003: store-side lane filter; recall re-hydrates it from the record.
             "lane": getattr(signal, "lane", "record"),
+            # Signal dedup: shown under another signal, so kept out of search.
+            "duplicate_of": (signal.metadata or {}).get("duplicate_of"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
@@ -278,6 +280,8 @@ def _passes_governance(meta: dict, authority: str, include_rejected: bool) -> bo
             return False
         if meta.get("provenance_status") in _EXCLUDED_PROVENANCE:
             return False
+        if meta.get("duplicate_of"):
+            return False  # shown under the signal it restates (signal_dedup)
     if authority == "instruction":
         return bool(meta.get("can_use_as_instruction"))
     # default: evidence-grade or better

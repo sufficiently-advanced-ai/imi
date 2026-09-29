@@ -1,0 +1,319 @@
+"""Signal dedup at ingest — keep the richest statement of a fact, link the rest.
+
+Meetings on an active engagement keep retelling the same facts, each time with
+a little more (or different) detail: a team size, what a product does, who
+gets which access. Verbatim repeats are rare; what piles up is the same fact
+at several levels of completeness, which crowds the feed and recall.
+
+Candidates are cheap and local: for each new signal, the nearest standing
+signals of the same type (vector index) at or above ``MIN_SIMILARITY`` whose
+meetings fall within ``WINDOW_DAYS``, plus earlier signals of the same batch.
+Embeddings cannot tell "same fact, more detail" from "same topic, different
+claim" (both land around 0.8), so each pair is put to the decision model
+(TypeSafe Jev, operation ``signal_duplicate``) as one Choice between EARLIER
+and LATER:
+
+  same            — same information; hide LATER behind EARLIER
+  earlier_richer  — same fact, EARLIER says more; hide LATER behind EARLIER
+  later_richer    — same fact, LATER says more; hide EARLIER behind LATER
+  overlap         — partly the same, each adds something; keep both, link them
+  different       — nothing to do
+
+Nothing is deleted. The hidden signal keeps its place in its meeting's file
+with ``metadata.duplicate_of`` naming the kept one, so provenance, uuid5 IDs
+and idempotent re-ingest are untouched; clearing the key undoes it. An EARLIER
+signal is only hidden while unreviewed and not instruction-grade — a confirmed
+record is never retired in favour of a fresh extraction (the new one is hidden
+behind it instead). Overlaps are recorded as ``metadata.related_signals`` on
+the new signal. Read paths hide duplicates by default and report corroborating
+meetings on the kept signal (``resolve_hidden`` / ``corroborations``).
+
+Same contract as the other decision operations: batched, never raises,
+``off``/``shadow``/``on``. Shadow records each verdict under
+``metadata.duplicate_check`` on the new signal and changes nothing else.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+DEDUP_OPERATION = "signal_duplicate"
+MIN_SIMILARITY = 0.78
+HIDE_MIN_PROBABILITY = 0.50  # p(chosen label) to hide one side of a same-fact pair
+LINK_MIN_PROBABILITY = 0.50  # p(overlap) to record a related link
+WINDOW_DAYS = 30
+MAX_CANDIDATES = 3
+_HIDE_LATER = ("same", "earlier_richer")
+_HIDE_EARLIER = ("later_richer",)
+
+# (text, signal_type) -> [(signal_id, cosine similarity)], best first
+SimilarFn = Callable[[str, str], list[tuple[str, float]]]
+
+
+@dataclass(frozen=True)
+class DuplicateCandidate:
+    new: Any
+    old: Any
+    similarity: float
+
+
+@dataclass
+class DedupOutcome:
+    hidden_new: int = 0
+    linked: int = 0
+    # EARLIER signals newly hidden behind a richer new one. The caller persists
+    # the standing ones; batch-internal ones ride along with the batch.
+    hidden_old: list[Any] = field(default_factory=list)
+
+
+def _parse(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _within_window(a: Any, b: Any, days: int) -> bool:
+    ta, tb = _parse(a.source_timestamp), _parse(b.source_timestamp)
+    if ta is None or tb is None:
+        return True  # undated: similarity and the model decide
+    if (ta.tzinfo is None) != (tb.tzinfo is None):
+        ta, tb = ta.replace(tzinfo=None), tb.replace(tzinfo=None)
+    return abs((ta - tb).total_seconds()) <= days * 86400
+
+
+def _eligible_original(sig: Any) -> bool:
+    return not (
+        (sig.metadata or {}).get("duplicate_of")
+        or sig.provenance_status in ("superseded", "disputed")
+        or sig.review_status == "rejected"
+    )
+
+
+def _may_hide(sig: Any) -> bool:
+    """A standing signal may only be hidden while nobody has vouched for it."""
+    return sig.review_status == "pending" and not sig.can_use_as_instruction
+
+
+def find_duplicate_candidates(
+    new_signals: list[Any],
+    similar: SimilarFn,
+    standing_by_id: dict[str, Any],
+    *,
+    min_similarity: float = MIN_SIMILARITY,
+    window_days: int = WINDOW_DAYS,
+    max_candidates: int = MAX_CANDIDATES,
+    batch_similarity: Callable[[Any, Any], float] | None = None,
+) -> list[DuplicateCandidate]:
+    """Pairs worth asking about, best first per new signal.
+
+    ``similar`` searches the standing index; ``batch_similarity`` (optional)
+    scores two signals from the new batch, which are not indexed yet — an
+    earlier position in the batch counts as EARLIER.
+    """
+    out: list[DuplicateCandidate] = []
+    new_ids = {s.id for s in new_signals}
+    for i, new in enumerate(new_signals):
+        if not new.content or not new.content.strip():
+            continue
+        found: list[DuplicateCandidate] = []
+        for old_id, score in similar(new.content, new.type):
+            old = standing_by_id.get(old_id)
+            if (old is None or old_id in new_ids or score < min_similarity
+                    or old.type != new.type or not _eligible_original(old)
+                    or not _within_window(new, old, window_days)):
+                continue
+            found.append(DuplicateCandidate(new, old, round(float(score), 4)))
+        if batch_similarity is not None:
+            for old in new_signals[:i]:
+                if old.type != new.type or not old.content:
+                    continue
+                score = batch_similarity(new, old)
+                if score >= min_similarity:
+                    found.append(DuplicateCandidate(new, old, round(float(score), 4)))
+        found.sort(key=lambda c: c.similarity, reverse=True)
+        out.extend(found[:max_candidates])
+    return out
+
+
+def build_duplicate_question():
+    from app.services.inference.decisions import Choice
+
+    return Choice(
+        instructions=(
+            "Two statements extracted from meeting notes, EARLIER and LATER. Compare the "
+            "information each one carries."
+        ),
+        criteria={
+            "same": "They carry the same information (reworded or restated); neither adds "
+                    "anything material.",
+            "later_richer": "Same fact, decision, or commitment, and the LATER statement contains "
+                            "everything in the EARLIER one plus more detail.",
+            "earlier_richer": "Same fact, decision, or commitment, and the EARLIER statement "
+                              "contains everything in the LATER one plus more detail.",
+            "overlap": "Same topic and partly the same claims, but each says something the "
+                       "other does not.",
+            "different": "Different facts, tasks, or claims, even if the topic or people are "
+                         "the same.",
+        },
+    )
+
+
+def _side(sig: Any) -> dict:
+    return {
+        "type": sig.type,
+        "statement": sig.content,
+        "meeting": sig.source_meeting_title or sig.source_meeting_id,
+        "date": (sig.source_timestamp or "")[:10],
+    }
+
+
+def build_duplicate_state(candidate: DuplicateCandidate) -> dict:
+    return {"earlier": _side(candidate.old), "later": _side(candidate.new)}
+
+
+def decide_action(relation: str, p: float, old: Any) -> str:
+    """hide_new | hide_old | link | none for one judged pair."""
+    if relation in _HIDE_LATER and p >= HIDE_MIN_PROBABILITY:
+        return "hide_new"
+    if relation in _HIDE_EARLIER and p >= HIDE_MIN_PROBABILITY:
+        # Never retire a reviewed/confirmed record behind a fresh extraction.
+        return "hide_old" if _may_hide(old) else "hide_new"
+    if relation == "overlap" and p >= LINK_MIN_PROBABILITY:
+        return "link"
+    return "none"
+
+
+def _default_client():
+    try:
+        from app.services.inference.decisions import get_decision_client
+
+        client = get_decision_client()
+        return client if client.mode(DEDUP_OPERATION) != "off" else None
+    except Exception as e:  # config errors must never break ingest
+        logger.warning("[DEDUP] Decision model unavailable: %s", e)
+        return None
+
+
+_ACTION_RANK = {"hide_new": 3, "hide_old": 2, "link": 1, "none": 0}
+
+
+async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = None) -> DedupOutcome:
+    """Judge each pair and annotate signals in place.
+
+    Per new signal, at most one hide (the strongest: hiding the new signal
+    wins over hiding an old one, then higher p) is applied; every ``overlap``
+    becomes a link. Standing signals hidden behind a new one are returned in
+    ``hidden_old`` for the caller to persist.
+    """
+    outcome = DedupOutcome()
+    if client is None:
+        client = _default_client()
+    if client is None or not candidates:
+        return outcome
+    mode = client.mode(DEDUP_OPERATION)
+    if mode == "off":
+        return outcome
+
+    from app.services.inference.decisions import DecisionUnavailable
+
+    question = build_duplicate_question()
+
+    async def one(c: DuplicateCandidate) -> tuple[DuplicateCandidate, str, float] | None:
+        try:
+            result = await client.decide(
+                build_duplicate_state(c), {"relation": question}, operation=DEDUP_OPERATION
+            )
+            answer = result.choice("relation")
+            return c, answer.choice, float(answer.probabilities.get(answer.choice, 0.0))
+        except (DecisionUnavailable, ValueError, KeyError, TypeError) as e:
+            logger.warning("[DEDUP] Judgment failed for %s -> %s: %s", c.new.id, c.old.id, e)
+            return None
+
+    judged = [j for j in await asyncio.gather(*(one(c) for c in candidates)) if j]
+
+    by_new: dict[str, list[tuple[DuplicateCandidate, str, float, str]]] = {}
+    for c, relation, p in judged:
+        action = decide_action(relation, p, c.old)
+        by_new.setdefault(c.new.id, []).append((c, relation, p, action))
+        logger.info(
+            "[DEDUP] %s %s %s -> %s: sim=%.2f %s p=%.2f -> %s",
+            mode, c.new.type, c.new.id[:8], c.old.id[:8], c.similarity, relation, p, action,
+        )
+
+    hidden_old_ids: set[str] = set()
+    for rows in by_new.values():
+        new = rows[0][0].new
+        new.metadata["duplicate_check"] = [
+            {"of": c.old.id, "relation": r, "p": round(p, 3), "similarity": c.similarity,
+             "action": a, "mode": mode}
+            for c, r, p, a in rows
+        ]
+        if mode != "on":
+            continue
+        links = [{"id": c.old.id, "relation": "overlap", "p": round(p, 3)}
+                 for c, _, p, a in rows if a == "link"]
+        if links:
+            new.metadata["related_signals"] = links
+            outcome.linked += len(links)
+        hides = [row for row in rows if row[3] in ("hide_new", "hide_old")]
+        if not hides:
+            continue
+        c, relation, p, action = max(hides, key=lambda row: (_ACTION_RANK[row[3]], row[2]))
+        if action == "hide_new" and not new.metadata.get("duplicate_of"):
+            new.metadata["duplicate_of"] = c.old.id
+            new.metadata["duplicate_relation"] = relation
+            outcome.hidden_new += 1
+        elif action == "hide_old" and c.old.id not in hidden_old_ids:
+            c.old.metadata["duplicate_of"] = new.id
+            c.old.metadata["duplicate_relation"] = relation
+            hidden_old_ids.add(c.old.id)
+            outcome.hidden_old.append(c.old)
+    return outcome
+
+
+def resolve_hidden(signals: list[Any]) -> dict[str, str]:
+    """hidden signal id -> id of the signal it is shown under.
+
+    Follows chains (A hidden behind B hidden behind C -> C). A pointer to a
+    signal that does not exist, or a loop, hides nothing — a dangling
+    ``duplicate_of`` must never make a signal disappear.
+    """
+    ids = {s.id for s in signals}
+    pointer = {s.id: (s.metadata or {}).get("duplicate_of") for s in signals}
+
+    def root(sid: str) -> str | None:
+        seen = {sid}
+        cur = pointer.get(sid)
+        while cur in ids and cur not in seen:
+            seen.add(cur)
+            nxt = pointer.get(cur)
+            if nxt not in ids:
+                return cur
+            cur = nxt
+        return None
+
+    return {sid: r for sid in ids if (r := root(sid)) is not None}
+
+
+def corroborations(signals: list[Any], hidden: dict[str, str] | None = None) -> dict[str, list[dict]]:
+    """kept signal id -> the hidden signals shown under it (meeting provenance)."""
+    hidden = resolve_hidden(signals) if hidden is None else hidden
+    by_id = {s.id: s for s in signals}
+    out: dict[str, list[dict]] = {}
+    for sid, kept in hidden.items():
+        s = by_id[sid]
+        out.setdefault(kept, []).append({
+            "signal_id": s.id, "content": s.content, "meeting_id": s.source_meeting_id,
+            "meeting_title": s.source_meeting_title, "timestamp": s.source_timestamp,
+        })
+    return out
