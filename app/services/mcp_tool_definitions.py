@@ -1023,6 +1023,8 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "point in time. Starts at the entity and follows relationships outward up to "
             "max_depth steps, keeping only what had been stated or mentioned by then. "
             "Returns nodes (same shape as get_entity_at_time) and edges. "
+            "At most 200 entities are evaluated; truncated=true means the result was cut "
+            "off there (use a smaller max_depth or include_co_mentions=false). "
             "Returns empty lists when nothing was known about the entity at that time."
         ),
         "inputSchema": {

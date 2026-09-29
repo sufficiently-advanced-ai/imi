@@ -66,7 +66,7 @@ def _entity(root, folder, eid, **frontmatter):
 def _signals(root, bot, extracted_at):
     path = root / "signals" / f"meeting-{bot}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"bot_id": bot, "extracted_at": extracted_at, "signals": []}))
+    path.write_text(json.dumps({"bot_id": bot, "extracted_at": extracted_at, "signals": []}), encoding="utf-8")
 
 
 def _frontmatter(path):
@@ -85,7 +85,7 @@ def corpus(tmp_path):
     _entity(tmp_path, "people", "person-alice",
             has_projects=["project-atlas", "project-ghost"])
     _entity(tmp_path, "projects", "project-atlas")
-    (tmp_path / "README.md").write_text("---\ntitle: x\n---\n")
+    (tmp_path / "README.md").write_text("---\ntitle: x\n---\n", encoding="utf-8")
     return tmp_path
 
 
@@ -114,7 +114,7 @@ def test_audit_flags_fallback_and_undated_observations(tmp_path):
     _meeting(tmp_path, "fb", "2026-09-28T10:00:00+00:00", ["person-alice"],
              extra="time_source: fallback_now")
     bad = tmp_path / "meetings" / "meeting-bad.md"
-    bad.write_text("---\nmeeting_id: m\nbot_id: bad\nupdated_at: whenever\n---\nbody\n")
+    bad.write_text("---\nmeeting_id: m\nbot_id: bad\nupdated_at: whenever\n---\nbody\n", encoding="utf-8")
     counts, examples = script.audit(_load(tmp_path), tmp_path)
     assert counts["observation_fallback_now"] == 1
     assert counts["observation_without_time"] == 1
@@ -124,10 +124,10 @@ def test_audit_flags_fallback_and_undated_observations(tmp_path):
 def test_audit_reports_captures(tmp_path):
     caps = tmp_path / "memory" / "captures" / "2026-03"
     caps.mkdir(parents=True)
-    (caps / "a.json").write_text(json.dumps({"id": "a", "source_date": "2026-03-04T10:00:00+00:00"}))
-    (caps / "b.json").write_text(json.dumps({"id": "b", "source_date": "2026-03-04T10:00:00"}))
-    (caps / "c.json").write_text(json.dumps({"id": "c", "source_date": None}))
-    (caps / "broken.json").write_text("{not json")
+    (caps / "a.json").write_text(json.dumps({"id": "a", "source_date": "2026-03-04T10:00:00+00:00"}), encoding="utf-8")
+    (caps / "b.json").write_text(json.dumps({"id": "b", "source_date": "2026-03-04T10:00:00"}), encoding="utf-8")
+    (caps / "c.json").write_text(json.dumps({"id": "c", "source_date": None}), encoding="utf-8")
+    (caps / "broken.json").write_text("{not json", encoding="utf-8")
     counts, _ = script.audit(_load(tmp_path), tmp_path)
     assert counts["captures"] == 3
     assert counts["capture_naive_date"] == 1
@@ -183,7 +183,7 @@ def test_relationship_is_dated_from_the_earliest_shared_document(corpus):
         }
     ]
     # The profile body is preserved.
-    assert (corpus / "people" / "alice.md").read_text().endswith("# Profile\n\nProse.\n")
+    assert (corpus / "people" / "alice.md").read_text(encoding="utf-8").endswith("# Profile\n\nProse.\n")
 
 
 def test_relationship_with_no_supporting_document_stays_unattributed(corpus, capsys):
@@ -253,7 +253,8 @@ def test_undated_document_cannot_date_a_relationship(tmp_path):
     bad.parent.mkdir(parents=True)
     bad.write_text(
         "---\nmeeting_id: m\nbot_id: bad\nupdated_at: whenever\n"
-        'entity_ids:\n  - "person-alice"\n  - "project-atlas"\n---\nbody\n'
+        'entity_ids:\n  - "person-alice"\n  - "project-atlas"\n---\nbody\n',
+        encoding="utf-8",
     )
     _entity(tmp_path, "people", "person-alice", has_projects=["project-atlas"])
     done, _ = script.migrate(_load(tmp_path), tmp_path, apply=False)

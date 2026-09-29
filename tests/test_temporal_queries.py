@@ -217,8 +217,8 @@ def _changes_graph():
             {"id": "s1", "type": "decision", "content": "Use Postgres",
              "valid_to": "2026-04-02T15:00:01+00:00", "superseded_by": "s2"}],
         _RELATIONSHIPS_IN_WINDOW=lambda p: [
-            {"rel_type": "REPORTS_TO", "other_id": "person-bob", "other_name": "Bob",
-             "first": "2026-03-15T00:00:00+00:00", "sources": ["doc:c", ""]}],
+            {"rel_type": "REPORTS_TO", "direction": "incoming", "other_id": "person-bob",
+             "other_name": "Bob", "first": "2026-03-15T00:00:00+00:00", "sources": ["doc:c", ""]}],
         _CO_MENTIONED_IN_WINDOW=lambda p: [
             {"other_id": "account-acme", "other_name": "Acme", "other_type": "account",
              "first": "2026-03-20T00:00:00+00:00"}],
@@ -246,6 +246,7 @@ async def test_changes_are_listed_in_event_order():
     assert result["end"] == "2026-05-01T00:00:00+00:00"
     relationship = result["changes"][0]
     assert relationship["relationship_type"] == "reports_to"
+    assert relationship["direction"] == "incoming"
     assert relationship["sources"] == ["doc:c"]
     assert result["changes"][-1]["superseded_by"] == "s2"
 
@@ -441,3 +442,41 @@ def test_no_query_reads_a_validity_window_from_an_entity_or_edge():
             continue
         for var in re.findall(r"\b([a-z])\.valid_(?:from|to)\b", value):
             assert var == "s", f"{name} reads a validity window from '{var}'"
+
+
+def test_changes_include_relationships_where_the_entity_is_the_target():
+    """A relationship stated in the window with this entity as its target is a
+    change to it too; not every type has a stored inverse."""
+    q = tq._RELATIONSHIPS_IN_WINDOW
+    assert "-[r]-(b:Entity)" in q and "-[r]->" not in q
+    assert "startNode(r) = a" in q and "direction" in q
+
+
+@pytest.mark.asyncio
+async def test_traversal_stops_at_the_node_cap():
+    hub = {"person-hub": {"name": "Hub"}}
+    spokes = {f"person-s{i}": {"name": f"S{i}"} for i in range(30)}
+    graph = FakeGraph(
+        {**hub, **spokes},
+        _DOCUMENT_EVIDENCE=lambda p: _span(1, JAN, JAN),
+        _CO_MENTIONED=lambda p: [_co(s, JAN) for s in spokes] if p["id"] == "person-hub" else [],
+    )
+    svc = TemporalQueryService(graph)
+
+    full = await svc.graph_as_of("person-hub", T_MARCH, depth=1)
+    assert len(full["nodes"]) == 31 and full["truncated"] is False
+
+    graph.calls.clear()
+    capped_nodes, _edges, _depths, _when, truncated = await svc._traverse(
+        "person-hub", T_MARCH, max_depth=1, include_co_mentions=True, max_nodes=10)
+    assert truncated is True
+    assert len(capped_nodes) == 10
+    # Entities past the cap are never evaluated: bounded reads.
+    evaluated = {p["lookup"] for q, p in graph.calls if q == tq._RESOLVE}
+    assert len(evaluated) <= 11
+
+
+@pytest.mark.asyncio
+async def test_blast_radius_reports_truncation():
+    result = await TemporalQueryService(_world()).temporal_blast_radius("person-alice", T_MARCH)
+    assert result["truncated"] is False

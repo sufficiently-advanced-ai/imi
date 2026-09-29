@@ -137,13 +137,16 @@ _SIGNALS_CLOSED_IN_WINDOW = (
     "ORDER BY valid_to ASC"
 )
 
+# Both directions: a relationship first stated with this entity as its target
+# is a change to it too (not every type declares a stored inverse).
 _RELATIONSHIPS_IN_WINDOW = (
-    "MATCH (a:Entity {id: $id})-[r]->(b:Entity) "
+    "MATCH (a:Entity {id: $id})-[r]-(b:Entity) "
     "WHERE NOT b:Signal AND type(r) <> $derived AND r.occurred_at <= $end "
-    "WITH type(r) AS rel_type, b, min(r.occurred_at) AS first, "
-    "collect(DISTINCT r.source_id) AS sources "
+    "WITH type(r) AS rel_type, b, "
+    "CASE WHEN startNode(r) = a THEN 'outgoing' ELSE 'incoming' END AS direction, "
+    "min(r.occurred_at) AS first, collect(DISTINCT r.source_id) AS sources "
     "WHERE first > $start "
-    "RETURN rel_type, b.id AS other_id, b.name AS other_name, first, sources "
+    "RETURN rel_type, direction, b.id AS other_id, b.name AS other_name, first, sources "
     "ORDER BY first ASC"
 )
 
@@ -190,6 +193,10 @@ _CONTRADICTION_SIGNALS = (
     "coalesce(s.signal_type, s.type) AS type "
     "ORDER BY timestamp ASC"
 )
+
+# Most entities a point-in-time traversal will evaluate. Each costs a handful
+# of reads, and a heavily co-mentioned entity can reach hundreds at depth 2.
+MAX_TRAVERSAL_NODES = 200
 
 _IDENTITY_KEYS = {"id", "name", "entity_type", "canonical_name", "updated_at", "stub"}
 
@@ -363,6 +370,7 @@ class TemporalQueryService:
                     "kind": "relationship",
                     "at": row["first"],
                     "relationship_type": (row["rel_type"] or "").lower(),
+                    "direction": row.get("direction") or "outgoing",
                     "other_id": row["other_id"],
                     "other_name": row["other_name"],
                     "sources": [s for s in row.get("sources") or [] if s],
@@ -392,12 +400,20 @@ class TemporalQueryService:
     # ------------------------------------------------------------------
 
     async def _traverse(
-        self, entity_id: str, at: Any, max_depth: int, include_co_mentions: bool
-    ) -> tuple[list[dict], list[dict], dict[str, int], datetime]:
+        self,
+        entity_id: str,
+        at: Any,
+        max_depth: int,
+        include_co_mentions: bool,
+        max_nodes: int = MAX_TRAVERSAL_NODES,
+    ) -> tuple[list[dict], list[dict], dict[str, int], datetime, bool]:
+        """Breadth-first over evidence dated by ``at``. Stops evaluating new
+        entities after ``max_nodes`` and reports ``truncated``."""
         when = _require_time(at, "timestamp")
         root = await self.entity_at(entity_id, when)
         if root is None:
-            return [], [], {}, when
+            return [], [], {}, when, False
+        truncated = False
 
         root_id = root["id"]
         nodes = [root]
@@ -414,6 +430,9 @@ class TemporalQueryService:
             for rel in await self.relationships_at(current, when, include_co_mentions):
                 other = rel["other_id"]
                 if other not in known:
+                    if len(known) >= max_nodes:
+                        truncated = True
+                        continue
                     known[other] = await self.entity_at(other, when, max_results=5)
                 state = known[other]
                 if state is None:
@@ -444,7 +463,7 @@ class TemporalQueryService:
                 depth_map[other] = depth + 1
                 nodes.append(state)
                 queue.append((other, depth + 1))
-        return nodes, edges, depth_map, when
+        return nodes, edges, depth_map, when, truncated
 
     async def graph_as_of(
         self,
@@ -454,10 +473,16 @@ class TemporalQueryService:
         include_co_mentions: bool = True,
     ) -> dict[str, Any]:
         """The subgraph around an entity as evidence supported it at ``timestamp``."""
-        nodes, edges, _, when = await self._traverse(
+        nodes, edges, _, when, truncated = await self._traverse(
             entity_id, timestamp, depth, include_co_mentions
         )
-        return {"nodes": nodes, "edges": edges, "timestamp": when.isoformat(), "depth": depth}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "timestamp": when.isoformat(),
+            "depth": depth,
+            "truncated": truncated,
+        }
 
     async def temporal_blast_radius(
         self, entity_id: str, at_time: Any, max_depth: int = 3
@@ -466,7 +491,7 @@ class TemporalQueryService:
         were asserted by ``at_time``, with their hop distance. Co-mentions are
         not followed: they say two entities appeared together, not that one
         affects the other."""
-        nodes, edges, depth_map, when = await self._traverse(
+        nodes, edges, depth_map, when, truncated = await self._traverse(
             entity_id, at_time, max_depth, include_co_mentions=False
         )
         if not nodes:
@@ -477,6 +502,7 @@ class TemporalQueryService:
             "depth_map": depth_map,
             "at_time": when.isoformat(),
             "max_depth": max_depth,
+            "truncated": truncated,
         }
 
     # ------------------------------------------------------------------

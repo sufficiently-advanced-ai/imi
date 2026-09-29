@@ -2119,10 +2119,16 @@ class IngestOrchestrator(BaseOrchestrator):
                 logger.info(
                     f"[INGEST] Persisted {meeting_signals.signal_count} signals to {signals_path}"
                 )
-                self._persist_reversed_supersessions()
 
         except Exception as e:
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
+        else:
+            # Only once the signals the candidates name are stored.
+            if meeting_signals and meeting_signals.signal_count > 0:
+                self._persist_reversed_supersessions()
+        finally:
+            # Never carry a failed ingest's candidates into the next one.
+            self._reversed_supersessions = []
 
     def _persist_reversed_supersessions(self, store=None) -> int:
         """Attach reversed candidates to the standing signals they belong to.

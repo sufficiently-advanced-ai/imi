@@ -273,3 +273,34 @@ async def test_persist_phase_writes_reversed_candidates_after_the_signals():
         "signals/meeting-ingest-abc.json",
         "reversed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_failed_signal_commit_drops_reversed_candidates():
+    """If the signals file cannot be committed, nothing is attached and the
+    pending list does not leak into a later ingest."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    from app.models.observation import Observation
+
+    git = MagicMock()
+
+    async def commit_file(path, _content, _message):
+        if path.startswith("signals/"):
+            raise RuntimeError("git commit failed")
+
+    git.commit_file = commit_file
+    orch = IngestOrchestrator(
+        classifier=None, claude_client=None, graph=None, signal_writer=None, git_ops=git, tools={}
+    )
+    orch._link_document_in_graph = AsyncMock()
+    orch._persist_reversed_supersessions = MagicMock()
+    orch._reversed_supersessions = [("march", {"old_signal_id": "january"})]
+    obs = Observation(
+        observation_id="m1", external_id="ingest-abc",
+        observed_at=datetime(2026, 1, 12, tzinfo=UTC), content="b", entities_mentioned={},
+    )
+    await orch._phase_persist(obs, _batch("ingest-abc", JANUARY.model_copy(deep=True)), "ingest-abc")
+    orch._persist_reversed_supersessions.assert_not_called()
+    assert orch._reversed_supersessions == []
