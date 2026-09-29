@@ -274,6 +274,34 @@ def library_stale_after(durable: float | None, now: datetime | None = None) -> s
     return (now + timedelta(days=days)).isoformat()
 
 
+
+def library_claim_fields(
+    signal: Any, *, attributed_to: str | None, as_of: str | None, stale_after: str
+) -> dict[str, Any]:
+    """ADR-003 §3: the field values that make a library-lane signal a claim —
+    attributed to its source and dated, never our decision or action item.
+
+    Shared by live ingest and the migration backfill (scripts/stamp_lanes.py)
+    so both produce the same record. Pure: returns the fields, sets nothing.
+    """
+    metadata = dict(signal.metadata or {})
+    if signal.type != "claim":
+        metadata.setdefault("extracted_type", signal.type)
+    if attributed_to:
+        metadata.setdefault("attributed_to", attributed_to)
+    if as_of:
+        metadata.setdefault("as_of", as_of)
+    return {
+        "type": "claim",
+        "lane": "library",
+        "stale_after": signal.stale_after or stale_after,
+        "status": None,
+        "owner": None,
+        "due_date": None,
+        "metadata": metadata,
+    }
+
+
 def apply_lane(
     default: str,
     p_memory: float,

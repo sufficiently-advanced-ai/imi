@@ -43,7 +43,8 @@ Consequences observed:
   imposed export controls…"), stored as *our* decisions.
 - 378 first-person notes (ICP definition, essay frameworks, coaching calls) sit inside the
   openbrain import alongside ~2,800 article summaries, and rank against them in recall.
-- Default recall ranks 73% library against 27% memory; no weighting fixes a ratio that size.
+- Across captures and signals together, default recall ranks 73% library against 23% memory
+  (4% junk); no weighting fixes a ratio that size.
 
 Format and entry point are the wrong axes. The property that determines how content should be
 treated is **stance**: were we party to it?
@@ -152,7 +153,7 @@ as it already does for governance fields.
 - **Separate library system or store.** Rejected. Overlap is the valuable part: citing, pinning,
   and linking to known entities all need one corpus and one graph.
 - **Recall weighting only.** Rejected. It leaves the graph pollution and fake decisions in place,
-  and a 73/27 ratio swamps any reasonable weight.
+  and a 73/23 ratio swamps any reasonable weight.
 - **A separate "world" entity layer for library mentions.** Rejected for now as heavier than
   needed. Link-only captures the useful joins without creating nodes, and can be revisited if
   library-side entity analysis is ever wanted.

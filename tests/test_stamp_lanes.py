@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.models.signal import MeetingSignals, Signal
+from app.models.signal import EntityRef, MeetingSignals, Signal
 from app.services.memory_capture import capture_memory
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "stamp_lanes.py"
@@ -20,7 +20,8 @@ def _corpus(tmp_path):
     for c in (mine, article, junk):
         (caps / f"{c.id}.json").write_text(c.model_dump_json(indent=2))
     sig = Signal(id="s1", type="decision", content="OpenAI shipped X", source_meeting_id="b1",
-                 source_timestamp="2026-09-01T00:00:00+00:00")
+                 source_meeting_title="Tech Digest", source_timestamp="2026-09-01T00:00:00+00:00",
+                 owner=EntityRef(id="person-sam", type="person", name="Sam"), due_date="2026-10-01")
     (tmp_path / "signals").mkdir()
     ms = MeetingSignals(meeting_id="m1", bot_id="b1", extracted_at="2026-09-01T00:00:00+00:00",
                         signal_count=1, signals=[sig])
@@ -75,6 +76,11 @@ def test_apply_stamps_lanes_and_rejects_through_audit_then_is_idempotent(tmp_pat
 
     sig = json.loads((tmp_path / "signals" / "meeting-b1.json").read_text())["signals"][0]
     assert sig["lane"] == "library" and sig["stale_after"]
+    # A third-party "decision" is an attributed claim, exactly as live ingest writes it
+    assert sig["type"] == "claim" and sig["owner"] is None and sig["due_date"] is None
+    assert sig["metadata"]["extracted_type"] == "decision"
+    assert sig["metadata"]["attributed_to"] == "Tech Digest"
+    assert sig["metadata"]["as_of"] == "2026-09-01T00:00:00+00:00"
 
     rerun = _run(tmp_path, vpath, "--reject-junk")
     assert "capture:" not in rerun and "signal:" not in rerun

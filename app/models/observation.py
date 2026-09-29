@@ -11,7 +11,9 @@ on-disk document format — and every existing knowledge repo — stays unchange
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.models.lane import validate_lane
 
 
 def _yaml_escape(value: str) -> str:
@@ -77,6 +79,14 @@ class Observation(BaseModel):
     is_finalized: bool = True
     update_count: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("lane", mode="before")
+    @classmethod
+    def _validate_lane(cls, value: str) -> str:
+        # Frontmatter is hand-editable; "Library" must not read as not-library.
+        if isinstance(value, str):
+            value = value.strip().lower()
+        return validate_lane(value)
 
     def to_markdown(self) -> str:
         """Serialize to the legacy meeting-document format (see module note)."""

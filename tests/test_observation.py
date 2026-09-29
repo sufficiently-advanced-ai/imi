@@ -160,3 +160,12 @@ class TestMeetingStateAdapter:
         assert obs.key_points == ["hi"]
         assert obs.is_finalized is True
         assert obs.status == "completed"
+
+
+def test_lane_from_frontmatter_is_validated_and_normalized():
+    """A hand-edited ``lane: Library`` must read as library, and an unknown lane
+    must fail loudly rather than silently read as not-library."""
+    md = make_observation(lane="library").to_markdown()
+    assert Observation.from_markdown(md.replace("lane: library", "lane: Library")).lane == "library"
+    with pytest.raises(ValueError):
+        Observation.from_markdown(md.replace("lane: library", "lane: libary"))

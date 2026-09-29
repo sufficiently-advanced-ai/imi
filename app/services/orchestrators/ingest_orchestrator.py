@@ -804,7 +804,7 @@ class IngestOrchestrator(BaseOrchestrator):
         lane = getattr(observation, "lane", "record") or "record"
         if lane != "library":
             return
-        from app.services.lane_admission import library_stale_after
+        from app.services.lane_admission import library_claim_fields, library_stale_after
 
         attributed_to = (
             ", ".join(getattr(observation, "authors", None) or [])
@@ -813,20 +813,11 @@ class IngestOrchestrator(BaseOrchestrator):
         as_of = observation.occurred_at.isoformat() if getattr(observation, "occurred_at", None) else None
         stale_after = library_stale_after(None)
         for sig in meeting_signals.signals:
-            metadata = dict(sig.metadata or {})
-            if sig.type != "claim":
-                metadata.setdefault("extracted_type", sig.type)
-            if attributed_to:
-                metadata.setdefault("attributed_to", attributed_to)
-            if as_of:
-                metadata.setdefault("as_of", as_of)
-            sig.type = "claim"
-            sig.lane = "library"
-            sig.stale_after = sig.stale_after or stale_after
-            sig.status = None
-            sig.owner = None
-            sig.due_date = None
-            sig.metadata = metadata
+            fields = library_claim_fields(
+                sig, attributed_to=attributed_to, as_of=as_of, stale_after=stale_after
+            )
+            for name, value in fields.items():
+                setattr(sig, name, value)
 
     async def _phase_enrich_graph(
         self, meeting_signals, content: str, observation

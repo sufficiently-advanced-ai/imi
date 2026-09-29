@@ -7,7 +7,10 @@ Reads ``verdicts.jsonl`` from ``scripts/classify_memories.py`` and, per record:
                 library gets stale_after from the durability judgment, counted
                 from the capture's created_at
   signal        lane from its source document's kind (conversation / own_note
-                -> record, third_party -> library)
+                -> record, third_party -> library); library signals become
+                attributed claims (type claim, original type in
+                metadata.extracted_type, no owner/status/due date), as live
+                ingest writes them
   agent memory  record
   meeting file  documents judged third_party / junk get ``lane: library`` in
                 their frontmatter and ``participants`` renamed to ``authors``,
@@ -49,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.models.agent_memory import AgentMemory  # noqa: E402
 from app.models.captured_memory import CapturedMemory  # noqa: E402
 from app.models.signal import MeetingSignals  # noqa: E402
-from app.services.lane_admission import library_stale_after  # noqa: E402
+from app.services.lane_admission import library_claim_fields, library_stale_after  # noqa: E402
 from app.services.memory_capture import parse_instant  # noqa: E402
 from app.services.memory_governance import capture_audit_store  # noqa: E402
 from app.services.signal_audit import SignalAuditStore, review_with_audit  # noqa: E402
@@ -155,13 +158,22 @@ def stamp_signals(corpus: Path, verdicts: dict[str, dict], plan: Plan, reject_ju
                 continue
             lane = DOC_KIND_TO_LANE[kind]
             update: dict = {}
-            if sig.lane != lane:
+            if lane == "library":
+                # Same conversion live ingest applies: a third-party decision or
+                # action item is an attributed claim, not ours, and has no owner.
+                fields = library_claim_fields(
+                    sig,
+                    attributed_to=sig.source_meeting_title,
+                    as_of=sig.source_timestamp,
+                    stale_after=library_stale_after(None, _created(sig.created_at)),
+                )
+                update = {k: v for k, v in fields.items() if getattr(sig, k) != v}
+            elif sig.lane != lane:
                 update["lane"] = lane
-            if lane == "library" and not sig.stale_after:
-                update["stale_after"] = library_stale_after(None, _created(sig.created_at))
             new = sig.model_copy(update=update) if update else sig
             if update:
-                plan.note(f"signal: lane -> {lane}", sig.content)
+                what = "claim" if "type" in update else f"lane -> {lane}"
+                plan.note(f"signal: {what}", sig.content)
 
             if reject_junk and new.review_status != "rejected" and not new.superseded_by:
                 if kind == "junk":

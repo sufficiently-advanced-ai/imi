@@ -342,6 +342,9 @@ class Writer:
     def __init__(self, path: Path):
         self.path = path
         self.done: set[str] = set()
+        # Signals judged without their document's kind (the document judgment
+        # failed); redone once the document kind is known.
+        self.kindless: set[str] = set()
         if path.exists():
             for line in path.open():
                 try:
@@ -350,6 +353,10 @@ class Writer:
                     continue
                 if r.get("status") != "error":
                     self.done.add(r["key"])
+                    if r.get("kind") == "signal" and r.get("doc_kind") is None:
+                        self.kindless.add(r["key"])
+                    elif r.get("kind") == "signal":
+                        self.kindless.discard(r["key"])
         self.f = path.open("a")
         self.cost = 0.0
         self.n = 0
@@ -467,11 +474,13 @@ async def classify(corpus: str, out: Path, limit: int | None, seed: int, rpm: in
                                     "n_signals": len(sf["signals"]), "snippet": clean(doc["body"], 160)},
                                    doc_state(doc), DOC_QUESTIONS, "memory_lane_document",
                                    lambda r: {"kind_verdict": _choice(r, "kind")})
-            kind = rec["kind_verdict"]["choice"] if rec else None
+            if rec is None:
+                return  # judge the signals on a later run, once the document kind is known
+            kind = rec["kind_verdict"]["choice"]
 
         async def one_signal(sig):
             skey = f"signal:{sig['id']}"
-            if skey in w.done:
+            if skey in w.done and not (doc is not None and kind and skey in w.kindless):
                 return
             async with sem:
                 await _judge(client, w, skey,
