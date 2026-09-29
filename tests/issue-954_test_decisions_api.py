@@ -12,14 +12,16 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-NOW = datetime(2026, 6, 11, tzinfo=UTC)
+# The routes compute decision state against the wall clock, so fixture
+# timestamps are relative to it (fixed dates age into "stale").
+NOW = datetime.now(UTC)
 
 # ---------------------------------------------------------------------------
 # Shared fixture data (mirrors issue-954_test_decision_view.py)
@@ -30,8 +32,8 @@ DECISION_ID_2 = "aaaaaaaa-0002-0002-0002-000000000002"
 DECISION_ID_3 = "aaaaaaaa-0003-0003-0003-000000000003"
 ACTION_ITEM_ID = "aaaaaaaa-0004-0004-0004-000000000004"
 
-RECENT_TS = "2026-06-06T12:00:00+00:00"
-OLD_TS = "2026-02-11T12:00:00+00:00"
+RECENT_TS = (NOW - timedelta(days=5)).isoformat()
+OLD_TS = (NOW - timedelta(days=120)).isoformat()
 
 
 def _build_store(tmp_path):
