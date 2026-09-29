@@ -613,6 +613,20 @@ class IngestOrchestrator(BaseOrchestrator):
                 return 0
 
             resolver = EntityResolver(knowledge_graph=self._graph)
+            # Decision-model tiebreak for near-miss names, batched before the
+            # synchronous promotion pass so it reads cached outcomes.
+            await resolver.prefetch(
+                [
+                    {
+                        "type": e["type"],
+                        "name": e["canonical_name"],
+                        "evidence": e.get("evidence"),
+                        "role": e.get("role"),
+                        "aliases_heard": e.get("aliases_heard"),
+                    }
+                    for e in labeled
+                ]
+            )
             promoted = filter_salient_entities(labeled, resolver)
             mentioned = to_entities_mentioned(promoted)
 
@@ -716,7 +730,7 @@ class IngestOrchestrator(BaseOrchestrator):
             # existing node instead of minting a duplicate slug. The id map
             # is pushed back into the signal EntityRefs so MENTIONS edges
             # land on the resolved nodes.
-            entities, id_map = self._resolve_collected_entities(entities)
+            entities, id_map = await self._resolve_collected_entities(entities)
             if id_map and meeting_signals:
                 self._remap_signal_entity_ids(meeting_signals, id_map)
 
@@ -788,7 +802,7 @@ class IngestOrchestrator(BaseOrchestrator):
 
         return result
 
-    def _resolve_collected_entities(
+    async def _resolve_collected_entities(
         self, entities: list[dict]
     ) -> tuple[list[dict], dict[str, str]]:
         """Resolve each (type, name) against existing graph entities.
@@ -803,6 +817,7 @@ class IngestOrchestrator(BaseOrchestrator):
             return entities, {}
 
         resolver = EntityResolver(knowledge_graph=self._graph)
+        await resolver.prefetch(entities)
         id_map: dict[str, str] = {}
         resolved_entities: list[dict] = []
         seen_ids: set[str] = set()

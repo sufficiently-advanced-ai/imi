@@ -24,6 +24,8 @@ Config lives under a ``decisions:`` key in ``config/inference.yaml`` (ignored by
           pricing: { input: 0.042 }     # USD per 1M input tokens; output is free
       operations:
         entity_resolution_tiebreak: do-jev
+      modes:                            # per operation: off | shadow | on
+        entity_resolution_tiebreak: shadow
       default: do-jev
 
 Design rules, mirroring the registry:
@@ -72,6 +74,7 @@ _DEFAULT_MODELS = {
 # TypeSafe's published state budget is 32k tokens; ~4 chars/token, with
 # headroom for the questions block.
 _DEFAULT_MAX_STATE_CHARS = 100_000
+_MODES = ("off", "shadow", "on")
 _RETRYABLE = {408, 409, 429, 500, 502, 503, 504, 529}
 # Longest Retry-After honored between attempts. Decisions sit on the request
 # path (ingest phases); a longer server-requested wait fails the call instead.
@@ -357,6 +360,10 @@ class DecisionClient:
                 f"decisions config references unknown endpoint(s): {sorted(unknown)}; "
                 f"defined: {sorted(self._endpoints)}"
             )
+        self._modes: dict[str, str] = config.get("modes") or {}
+        bad = {op: m for op, m in self._modes.items() if m not in _MODES}
+        if bad:
+            raise InferenceConfigError(f"decisions modes must be one of {_MODES}, got {bad}")
         self._semaphores = {n: asyncio.Semaphore(e.max_concurrency) for n, e in self._endpoints.items()}
         self._http = httpx.AsyncClient(transport=transport, timeout=None)
         self._max_attempts = max(1, max_attempts)
@@ -376,6 +383,18 @@ class DecisionClient:
                 f"no decisions endpoint for operation {operation!r} and no default configured"
             )
         return self._endpoints[name]
+
+    def mode(self, operation: str) -> str:
+        """How a caller should use this operation's answers: ``off`` (don't
+        call), ``shadow`` (call and log, but keep the heuristic outcome) or
+        ``on`` (act on the answer). An operation with no explicit mode is
+        ``shadow`` when an endpoint serves it and ``off`` otherwise, so wiring
+        a new operation never changes behavior until someone opts in."""
+        try:
+            self.resolve(operation)
+        except InferenceConfigError:
+            return "off"
+        return self._modes.get(operation, "shadow")
 
     async def aclose(self) -> None:
         await self._http.aclose()
