@@ -76,17 +76,33 @@ def test_candidates_include_earlier_signals_of_the_same_batch():
 
 
 def test_decide_action_rules():
-    pending = _sig("o", "x")
-    confirmed = _sig("o", "x", review_status="confirmed", provenance_status="user_confirmed",
-                     can_use_as_instruction=True)
-    assert decide_action("same", 0.8, pending) == "hide_new"
-    assert decide_action("earlier_richer", 0.6, pending) == "hide_new"
-    assert decide_action("later_richer", 0.6, pending) == "hide_old"
+    old = _sig("o", "x", ts="2026-03-01T10:00:00Z")
+    confirmed = _sig("o", "x", ts="2026-03-01T10:00:00Z", review_status="confirmed",
+                     provenance_status="user_confirmed", can_use_as_instruction=True)
+    new = _sig("n", "y", meeting="m2", ts="2026-03-10T10:00:00Z")
+    c = DuplicateCandidate(new, old, 0.9)
+    assert decide_action("same", 0.8, c) == "hide_new"
+    assert decide_action("earlier_richer", 0.6, c) == "hide_new"
+    assert decide_action("later_richer", 0.6, c) == "hide_old"
     # A confirmed record is never retired behind a fresh extraction.
-    assert decide_action("later_richer", 0.9, confirmed) == "hide_new"
-    assert decide_action("later_richer", 0.4, pending) == "none"
-    assert decide_action("overlap", 0.7, pending) == "link"
-    assert decide_action("different", 0.99, pending) == "none"
+    assert decide_action("later_richer", 0.9, DuplicateCandidate(new, confirmed, 0.9)) == "hide_new"
+    assert decide_action("later_richer", 0.4, c) == "none"
+    assert decide_action("overlap", 0.7, c) == "link"
+    assert decide_action("different", 0.99, c) == "none"
+
+
+def test_backfilled_older_signal_is_earlier_in_event_time():
+    """ADR-004: an ingested signal that happened before a standing one is EARLIER."""
+    standing = _sig("s", "Team of 12 (8 onshore, 4 offshore)", ts="2026-03-10T10:00:00Z")
+    backfill = _sig("b", "Team of 12", meeting="m0", ts="2026-01-05T10:00:00Z")
+    c = DuplicateCandidate(backfill, standing, 0.9)
+    assert not c.new_is_later
+    state = signal_dedup.build_duplicate_state(c)
+    assert state["earlier"]["statement"] == backfill.content
+    # LATER (the standing one) is richer: hide the incoming, earlier one.
+    assert decide_action("later_richer", 0.8, c) == "hide_new"
+    # EARLIER (the incoming one) richer: hide the standing one if unreviewed.
+    assert decide_action("earlier_richer", 0.8, c) == "hide_old"
 
 
 # --- judgment ---------------------------------------------------------------

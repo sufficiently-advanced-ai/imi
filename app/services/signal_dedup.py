@@ -39,8 +39,9 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
+
+from app.utils.event_time import signal_event_time
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,6 @@ HIDE_MIN_PROBABILITY = 0.50  # p(chosen label) to hide one side of a same-fact p
 LINK_MIN_PROBABILITY = 0.50  # p(overlap) to record a related link
 WINDOW_DAYS = 30
 MAX_CANDIDATES = 3
-_HIDE_LATER = ("same", "earlier_richer")
-_HIDE_EARLIER = ("later_richer",)
 
 # (text, signal_type) -> [(signal_id, cosine similarity)], best first
 SimilarFn = Callable[[str, str], list[tuple[str, float]]]
@@ -59,9 +58,30 @@ SimilarFn = Callable[[str, str], list[tuple[str, float]]]
 
 @dataclass(frozen=True)
 class DuplicateCandidate:
-    new: Any
-    old: Any
+    new: Any  # the signal being ingested
+    old: Any  # a standing signal, or an earlier one of the same batch
     similarity: float
+
+    @property
+    def new_is_later(self) -> bool:
+        """Whether the ingested signal is the LATER one in event time (ADR-004).
+
+        Backfilled content can be older than what is already standing, so
+        EARLIER/LATER follow ``signal_event_time``, not ingest order. Unknown
+        or equal times fall back to ingest order.
+        """
+        t_new, t_old = signal_event_time(self.new), signal_event_time(self.old)
+        if t_new is None or t_old is None or t_new == t_old:
+            return True
+        return t_new > t_old
+
+    @property
+    def earlier(self) -> Any:
+        return self.old if self.new_is_later else self.new
+
+    @property
+    def later(self) -> Any:
+        return self.new if self.new_is_later else self.old
 
 
 @dataclass
@@ -73,21 +93,10 @@ class DedupOutcome:
     hidden_old: list[Any] = field(default_factory=list)
 
 
-def _parse(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 def _within_window(a: Any, b: Any, days: int) -> bool:
-    ta, tb = _parse(a.source_timestamp), _parse(b.source_timestamp)
+    ta, tb = signal_event_time(a), signal_event_time(b)
     if ta is None or tb is None:
         return True  # undated: similarity and the model decide
-    if (ta.tzinfo is None) != (tb.tzinfo is None):
-        ta, tb = ta.replace(tzinfo=None), tb.replace(tzinfo=None)
     return abs((ta - tb).total_seconds()) <= days * 86400
 
 
@@ -178,16 +187,25 @@ def _side(sig: Any) -> dict:
 
 
 def build_duplicate_state(candidate: DuplicateCandidate) -> dict:
-    return {"earlier": _side(candidate.old), "later": _side(candidate.new)}
+    return {"earlier": _side(candidate.earlier), "later": _side(candidate.later)}
 
 
-def decide_action(relation: str, p: float, old: Any) -> str:
-    """hide_new | hide_old | link | none for one judged pair."""
-    if relation in _HIDE_LATER and p >= HIDE_MIN_PROBABILITY:
+def decide_action(relation: str, p: float, candidate: DuplicateCandidate) -> str:
+    """hide_new | hide_old | link | none for one judged pair.
+
+    ``same`` always hides the incoming signal. Otherwise the less complete
+    side (by event time) is hidden — unless that is a standing signal someone
+    has reviewed or confirmed, which is never retired behind a fresh
+    extraction; the incoming one is hidden behind it instead.
+    """
+    if p >= HIDE_MIN_PROBABILITY and relation == "same":
         return "hide_new"
-    if relation in _HIDE_EARLIER and p >= HIDE_MIN_PROBABILITY:
-        # Never retire a reviewed/confirmed record behind a fresh extraction.
-        return "hide_old" if _may_hide(old) else "hide_new"
+    if p >= HIDE_MIN_PROBABILITY and relation in ("earlier_richer", "later_richer"):
+        hide_later = relation == "earlier_richer"
+        hide_new = hide_later == candidate.new_is_later
+        if hide_new or not _may_hide(candidate.old):
+            return "hide_new"
+        return "hide_old"
     if relation == "overlap" and p >= LINK_MIN_PROBABILITY:
         return "link"
     return "none"
@@ -243,7 +261,7 @@ async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = N
 
     by_new: dict[str, list[tuple[DuplicateCandidate, str, float, str]]] = {}
     for c, relation, p in judged:
-        action = decide_action(relation, p, c.old)
+        action = decide_action(relation, p, c)
         by_new.setdefault(c.new.id, []).append((c, relation, p, action))
         logger.info(
             "[DEDUP] %s %s %s -> %s: sim=%.2f %s p=%.2f -> %s",
