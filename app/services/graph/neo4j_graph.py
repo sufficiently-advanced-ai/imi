@@ -3529,6 +3529,15 @@ class Neo4jKnowledgeGraph:
             full = os.path.join(repo, d, filename)
             if os.path.isfile(full):
                 return full
+        # A file whose name doesn't match its id (people/jane.md holding
+        # person-jane-doe) is still found through the node's recorded
+        # source_file, so a merge archives it and a rebuild can't resurrect it.
+        node = self.nodes.get(entity_id)
+        source_file = ((getattr(node, "metadata", None) or {}).get("source_file")) if node else None
+        if source_file:
+            full = os.path.normpath(os.path.join(repo, source_file))
+            if full.startswith(os.path.normpath(repo) + os.sep) and os.path.isfile(full):
+                return full
         return None
 
     async def _persist_relationship_to_file(

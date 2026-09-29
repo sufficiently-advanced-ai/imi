@@ -321,7 +321,35 @@ async def test_resolving_a_fuller_name_upgrades_the_entity(monkeypatch):
     resolved, id_map = await orch._resolve_collected_entities(
         [{"id": "person-ankit-patel", "name": "Ankit Patel", "type": "person"}]
     )
-    assert upgrades == [("person-ankit", "Ankit Patel")]
+    # The stored entity is renamed only after link verification keeps the link
+    assert upgrades == []
     assert resolved == [{"id": "person-ankit", "name": "Ankit Patel", "type": "person",
-                         "surface": "Ankit Patel"}]
+                         "surface": "Ankit Patel", "upgrade_name_of": "person-ankit"}]
     assert id_map == {"person-ankit-patel": "person-ankit"}
+
+    kept = await orch._apply_name_upgrades(resolved)
+    assert upgrades == [("person-ankit", "Ankit Patel")]
+    assert kept == [{"id": "person-ankit", "name": "Ankit Patel", "type": "person",
+                     "surface": "Ankit Patel"}]
+
+
+@pytest.mark.asyncio
+async def test_a_split_link_never_renames_the_existing_entity():
+    """Verification moved "Brian Vigilani" off person-brian: Brian keeps his name."""
+    from app.services.orchestrators.ingest_orchestrator import IngestOrchestrator
+
+    upgrades = []
+
+    async def upgrade(eid, name):
+        upgrades.append((eid, name))
+        return True
+
+    orch = IngestOrchestrator.__new__(IngestOrchestrator)
+    orch._graph = _Graph(existing=[("person-brian", "Brian", "person")])
+    orch._graph.upgrade_entity_name = upgrade
+    split = {"id": "person-brian-vigilani", "name": "Brian Vigilani", "type": "person",
+             "upgrade_name_of": "person-brian"}
+    assert await orch._apply_name_upgrades([split]) == [
+        {"id": "person-brian-vigilani", "name": "Brian Vigilani", "type": "person"}
+    ]
+    assert upgrades == []

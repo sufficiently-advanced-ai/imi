@@ -251,6 +251,7 @@ async def test_library_resolution_never_adopts_a_fuller_name(monkeypatch, link_o
 
     assert [e["id"] for e in entities] == ["person-ankit"]
     assert id_map == {"person-ankit-patel": "person-ankit"}
+    await orch._apply_name_upgrades(entities)  # after link verification
     assert graph.upgrade_entity_name.await_count == (1 if upgraded else 0)
 
 

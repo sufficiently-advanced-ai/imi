@@ -833,3 +833,18 @@ async def test_upgrade_entity_name_updates_node_cache_and_file(graph, mock_neo4j
     assert graph.nodes["person-ankit"].name == "Ankit Patel"
     text = (tmp_path / "people" / "ankit.md").read_text()
     assert "name: Ankit Patel" in text and "- Ankit\n" in text
+
+
+def test_find_entity_file_falls_back_to_recorded_source_file(graph, tmp_path):
+    """A file named apart from its id is still found (merge archives it)."""
+    (tmp_path / "people").mkdir()
+    (tmp_path / "people" / "jane.md").write_text("---\nid: person-jane-doe\nname: Jane Doe\n---\n")
+    graph._git_ops.repo_path = str(tmp_path)
+    graph.nodes["person-jane-doe"] = GraphNode(
+        id="person-jane-doe", name="Jane Doe", type="person",
+        metadata={"source_file": "people/jane.md"},
+    )
+    assert graph._find_entity_file("person-jane-doe") == str(tmp_path / "people" / "jane.md")
+    # A source_file outside the repo is never followed
+    graph.nodes["person-jane-doe"].metadata["source_file"] = "../../etc/passwd"
+    assert graph._find_entity_file("person-jane-doe") is None
