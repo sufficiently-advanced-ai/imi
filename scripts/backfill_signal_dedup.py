@@ -15,6 +15,10 @@ SignalStore (which re-indexes it). Run inside the app container:
     docker exec -w /app imi-app python scripts/backfill_signal_dedup.py --apply
 
 Signals already hidden stay hidden and are not re-judged as originals.
+Outside the app process ``--apply`` cannot re-index, so afterwards refresh the
+vector metadata (search reads ``duplicate_of`` from it) in-process:
+
+    docker exec imi-app curl -s -X POST localhost:8000/api/admin/backfill-signal-index
 """
 
 from __future__ import annotations
@@ -60,13 +64,18 @@ async def main() -> int:
         print("no signals")
         return 0
 
+    # Outside the app process the live stack is not registered; build the same
+    # embedder the app uses (FastEmbed, semantica_init.EMBEDDING_MODEL).
     sk = _get_semantica()
-    if sk is None:
-        print("vector stack unavailable", file=sys.stderr)
-        return 1
+    if sk is not None:
+        embedder = sk.embedder
+    else:
+        from app.services.semantica_init import create_embedding_generator
+
+        embedder = create_embedding_generator()
 
     def embed(text: str) -> np.ndarray:
-        vec = np.asarray(sk.embedder.generate_embeddings(text, data_type="text"), dtype=float)
+        vec = np.asarray(embedder.generate_embeddings(text, data_type="text"), dtype=float)
         vec = vec[0] if vec.ndim > 1 else vec
         norm = np.linalg.norm(vec)
         return vec / norm if norm else vec
@@ -124,7 +133,7 @@ async def main() -> int:
     touched = {container_of[sid].bot_id: container_of[sid] for sid in changed}
     for container in touched.values():
         store.save(container)
-    print(f"\napplied: saved {len(touched)} meeting file(s)")
+    print(f"\napplied: saved {len(touched)} meeting file(s); now POST /api/admin/backfill-signal-index")
     return 0
 
 
