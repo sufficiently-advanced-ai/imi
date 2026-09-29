@@ -6,7 +6,12 @@ import pytest
 
 from app.models.signal import MeetingSignals, Signal
 from app.services import signal_dedup
-from app.services.inference.decisions import ChoiceAnswer, DecisionResult, DecisionUnavailable
+from app.services.inference.decisions import (
+    ChoiceAnswer,
+    DecisionResult,
+    DecisionUnavailable,
+    NoulAnswer,
+)
 from app.services.signal_dedup import (
     DuplicateCandidate,
     corroborations,
@@ -37,8 +42,10 @@ class _Fake:
         self.calls.append(key)
         if key in self.fail:
             raise DecisionUnavailable("upstream 500")
-        relation, p = self.script[key]
-        return DecisionResult({"relation": ChoiceAnswer(relation, {relation: p}, p)},
+        relation, p, *rest = self.script[key]
+        p_omits = rest[0] if rest else 0.1
+        return DecisionResult({"relation": ChoiceAnswer(relation, {relation: p}, p),
+                               "later_omits": NoulAnswer(p_omits), "earlier_omits": NoulAnswer(p_omits)},
                               "jev", "fake", 0, 0, 0.0, 0, {})
 
 
@@ -89,6 +96,22 @@ def test_decide_action_rules():
     assert decide_action("later_richer", 0.4, c) == "none"
     assert decide_action("overlap", 0.7, c) == "link"
     assert decide_action("different", 0.99, c) == "none"
+    # "Richer" but the kept side drops a claim of the other: link, never hide.
+    assert decide_action("later_richer", 0.93, c, p_kept_omits=0.69) == "link"
+    assert decide_action("earlier_richer", 0.93, c, p_kept_omits=0.5) == "link"
+    assert decide_action("same", 0.9, c, p_kept_omits=0.9) == "hide_new"
+
+
+@pytest.mark.asyncio
+async def test_richer_that_drops_a_claim_is_linked_with_its_relation():
+    old = _sig("o", "Dana built and maintains Atlas")
+    new = _sig("n", "Dana built and open-sourced Atlas on Neo4j", meeting="m2")
+    fake = _Fake({(old.content, new.content): ("later_richer", 0.93, 0.88)})
+    out = await judge_duplicates([DuplicateCandidate(new, old, 0.91)], client=fake)
+    assert (out.hidden_new, out.hidden_old, out.linked) == (0, [], 1)
+    assert "duplicate_of" not in old.metadata
+    assert new.metadata["related_signals"] == [{"id": "o", "relation": "later_richer", "p": 0.93}]
+    assert new.metadata["duplicate_check"][0]["p_kept_omits"] == 0.88
 
 
 def test_backfilled_older_signal_is_earlier_in_event_time():
@@ -235,3 +258,26 @@ def test_decision_views_and_search_skip_duplicates(tmp_path):
     assert len(load_decision_signals(store, include_duplicates=True)) == 2
     assert _passes_governance({"duplicate_of": "d1"}, "evidence", False) is False
     assert _passes_governance({"duplicate_of": "d1"}, "evidence", True) is True
+
+
+def test_search_hides_a_signal_when_any_of_its_vectors_says_so():
+    """FAISS keeps pre-hide vectors after re-index; the stale one must not leak."""
+    from app.services.signal_retrieval import search_signals_semantic
+
+    class _Store:
+        def search_vectors(self, embedding, k=10, **kwargs):
+            base = {"content_type": "signal", "can_use_as_evidence": True}
+            return [
+                {"score": 0.9, "metadata": {**base, "id": "s1"}},  # stale, pre-hide
+                {"score": 0.8, "metadata": {**base, "id": "s1", "duplicate_of": "s2"}},
+                {"score": 0.7, "metadata": {**base, "id": "s2"}},
+            ]
+
+    class _Embedder:
+        def generate_embeddings(self, text, data_type="text"):
+            return [0.1, 0.2]
+
+    ids = [r["id"] for r in search_signals_semantic(_Store(), _Embedder(), "q")]
+    assert ids == ["s2"]
+    everything = search_signals_semantic(_Store(), _Embedder(), "q", include_rejected=True)
+    assert {r["id"] for r in everything} == {"s1", "s2"}

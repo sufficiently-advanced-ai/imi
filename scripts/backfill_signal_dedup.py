@@ -37,6 +37,8 @@ from app.services.inference.decisions import get_decision_client  # noqa: E402
 from app.services.signal_indexing import _get_semantica  # noqa: E402
 from app.services.signal_store import SignalStore  # noqa: E402
 
+_DEDUP_KEYS = ("duplicate_of", "duplicate_relation", "related_signals", "duplicate_check")
+
 
 class _ForceOn:
     """Judge as in ``on`` mode whatever the configured mode; writes are the script's call."""
@@ -130,10 +132,32 @@ async def main() -> int:
     if not args.apply:
         print("\ndry run: nothing written (re-run with --apply)")
         return 0
-    touched = {container_of[sid].bot_id: container_of[sid] for sid in changed}
-    for container in touched.values():
-        store.save(container)
-    print(f"\napplied: saved {len(touched)} meeting file(s); now POST /api/admin/backfill-signal-index")
+    # The replay above can take minutes (one model call per pair). Re-read each
+    # file just before writing and merge only the dedup keys, so edits made
+    # meanwhile (status, content, review, new signals) are never overwritten.
+    # SignalStore has no cross-process lock; this narrows the window to the
+    # read-merge-write of one file.
+    by_meeting: dict[str, set[str]] = {}
+    for sid in changed:
+        by_meeting.setdefault(container_of[sid].bot_id, set()).add(sid)
+    saved = 0
+    for bot_id, ids in by_meeting.items():
+        current = store.load(bot_id)
+        if current is None:
+            print(f"skip {bot_id}: file vanished")
+            continue
+        merged = False
+        for sig in current.signals:
+            if sig.id not in ids:
+                continue
+            for key in _DEDUP_KEYS:
+                if key in by_id[sig.id].metadata:
+                    sig.metadata[key] = by_id[sig.id].metadata[key]
+                    merged = True
+        if merged:
+            store.save(current)
+            saved += 1
+    print(f"\napplied: saved {saved} meeting file(s); now POST /api/admin/backfill-signal-index")
     return 0
 
 

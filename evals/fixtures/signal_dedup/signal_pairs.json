@@ -2,10 +2,10 @@
   "description": "Same-type signal pairs close enough in embedding space (cosine >= 0.78) to reach the signal_duplicate decision. gold is the relation of LATER to EARLIER (same | earlier_richer | later_richer | overlap | different); also_ok lists defensible alternatives. The damaging error is hiding a signal whose gold is overlap or different (information disappears from the feed and recall); a missed hide only leaves a redundant signal visible. Used by scripts/eval_signal_dedup.py.",
   "provenance": "Synthetic. Patterns taken from a replay of a production KB (2026-09-29): biographical facts retold with more detail across interviews, the same access request from two meetings, and same-topic statements that differ. Names and details invented. Labels authored with the dedup implementation and not independently reviewed; treat as a smoke test.",
   "cases": [
-    {"id": "lr01_tool_description", "type": "key_point",
+    {"id": "o05_tool_description_drops_maintains", "type": "key_point",
      "earlier": {"date": "2026-03-10", "text": "Dana built and maintains Atlas, an open-source system that turns transcripts into a knowledge graph agents can reason over."},
      "later": {"date": "2026-03-12", "text": "Dana built and open-sourced Atlas, which ingests call transcripts, chat and email into a Neo4j knowledge graph with a YAML-configured ontology, exposed to agents over MCP."},
-     "gold": "later_richer", "also_ok": ["overlap"]},
+     "gold": "overlap"},
     {"id": "lr02_access_request", "type": "action_item",
      "earlier": {"date": "2026-03-02", "text": "The data team will give Dana access to a test warehouse instance, role, and database."},
      "later": {"date": "2026-03-05", "text": "Set up Dana with a warehouse login and grant the analytics role and AI-functions role on the test database."},

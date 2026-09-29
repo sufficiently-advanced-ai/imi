@@ -31,9 +31,11 @@ from app.services.inference.decisions import DecisionClient  # noqa: E402
 from app.services.signal_dedup import (  # noqa: E402
     DEDUP_OPERATION,
     HIDE_MIN_PROBABILITY,
+    OMIT_MAX_PROBABILITY,
     DuplicateCandidate,
     build_duplicate_question,
     build_duplicate_state,
+    build_omission_questions,
 )
 
 FIXTURE = (Path(__file__).resolve().parent.parent / "evals" / "fixtures"
@@ -49,19 +51,22 @@ def _signal(case: dict, which: str) -> SimpleNamespace:
                            source_timestamp=side["date"])
 
 
-def _action(relation: str, p: float, bar: float) -> str:
+def _action(relation: str, p: float, bar: float, p_omits: float = 0.0) -> str:
+    if relation in ("earlier_richer", "later_richer") and p_omits >= OMIT_MAX_PROBABILITY:
+        return "keep"  # linked, not hidden (signal_dedup.decide_action)
     return _HIDE[relation] if relation in _HIDE and p >= bar else "keep"
 
 
 async def _run_once(client: DecisionClient, cases: list[dict]) -> list[dict]:
-    question = build_duplicate_question()
+    questions = {"relation": build_duplicate_question(), **build_omission_questions()}
 
     async def one(case: dict) -> dict:
         c = DuplicateCandidate(_signal(case, "later"), _signal(case, "earlier"), 0.0)
-        r = await client.decide(build_duplicate_state(c), {"relation": question}, operation=DEDUP_OPERATION)
+        r = await client.decide(build_duplicate_state(c), questions, operation=DEDUP_OPERATION)
         a = r.choice("relation")
+        kept = "earlier_omits" if a.choice == "earlier_richer" else "later_omits"
         return {"id": case["id"], "gold": case["gold"], "ok": {case["gold"], *case.get("also_ok", [])},
-                "pred": a.choice, "p": a.probabilities.get(a.choice, 0.0),
+                "pred": a.choice, "p": a.probabilities.get(a.choice, 0.0), "omits": r.noul(kept),
                 "cost": r.cost_usd, "ms": r.latency_ms}
 
     return list(await asyncio.gather(*(one(c) for c in cases)))
@@ -70,7 +75,7 @@ async def _run_once(client: DecisionClient, cases: list[dict]) -> list[dict]:
 def _score(rows: list[dict], bar: float) -> dict:
     wrong, missed, wrong_side = [], [], []
     for r in rows:
-        pred, gold = _action(r["pred"], r["p"], bar), _action(r["gold"], 1.0, 0.0)
+        pred, gold = _action(r["pred"], r["p"], bar, r["omits"]), _action(r["gold"], 1.0, 0.0)
         acceptable = {_action(g, 1.0, 0.0) for g in r["ok"]}
         if pred == "keep" and gold != "keep" and "keep" not in acceptable:
             missed.append(r["id"])
@@ -88,8 +93,8 @@ def _report(rows: list[dict], run: int) -> dict:
     print(f"\n=== run {run}: {n} pairs ===")
     for r in sorted(rows, key=lambda r: r["id"]):
         mark = "ok " if r["pred"] in r["ok"] else "BAD"
-        print(f"  {mark} {r['id']:<36} gold={r['gold']:<15} pred={r['pred']:<15} p={r['p']:.2f}")
-    print(f"relation accuracy: {correct}/{n} ({correct / n:.0%})")
+        print(f"  {mark} {r['id']:<36} gold={r['gold']:<15} pred={r['pred']:<15} p={r['p']:.2f} omits={r['omits']:.2f}")
+    print(f"relation accuracy: {correct}/{n} ({correct / n:.0%}) (labels only; hides below apply the omission gate)")
     print(f"hide bar {HIDE_MIN_PROBABILITY}: wrong hides {s['wrong_hides']}, missed {s['missed_hides']}, "
           f"wrong side {s['wrong_side']}")
     print("bar sweep (wrong/missed/side):  " + "  ".join(

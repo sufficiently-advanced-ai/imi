@@ -49,6 +49,13 @@ DEDUP_OPERATION = "signal_duplicate"
 MIN_SIMILARITY = 0.78
 HIDE_MIN_PROBABILITY = 0.50  # p(chosen label) to hide one side of a same-fact pair
 LINK_MIN_PROBABILITY = 0.50  # p(overlap) to record a related link
+# A "richer" verdict hides the other side only if the kept statement omits no
+# claim of it. Jev reads "richer" loosely (a fuller description that drops a
+# qualifier still scores later_richer ~0.8), so the omission is asked in the
+# same request: truly richer fixture pairs scored 0.06-0.38, a fuller
+# description that drops "maintains" 0.57-0.69, real near-duplicates 0.88+
+# (eval_signal_dedup.py, 3 runs, 2026-09-29).
+OMIT_MAX_PROBABILITY = 0.50
 WINDOW_DAYS = 30
 MAX_CANDIDATES = 3
 
@@ -165,16 +172,34 @@ def build_duplicate_question():
         criteria={
             "same": "They carry the same information (reworded or restated); neither adds "
                     "anything material.",
-            "later_richer": "Same fact, decision, or commitment, and the LATER statement contains "
-                            "everything in the EARLIER one plus more detail.",
+            "later_richer": "Same fact, decision, or commitment, and the LATER statement keeps "
+                            "every claim of the EARLIER one (each role, status, number, owner "
+                            "and qualifier) and adds more. If the LATER one leaves out any "
+                            "claim of the EARLIER one, this is overlap.",
             "earlier_richer": "Same fact, decision, or commitment, and the EARLIER statement "
-                              "contains everything in the LATER one plus more detail.",
+                              "keeps every claim of the LATER one (each role, status, number, "
+                              "owner and qualifier) and adds more. If the EARLIER one leaves "
+                              "out any claim of the LATER one, this is overlap.",
             "overlap": "Same topic and partly the same claims, but each says something the "
-                       "other does not.",
+                       "other does not, including when one merely omits a claim the other "
+                       "makes.",
             "different": "Different facts, tasks, or claims, even if the topic or people are "
                          "the same.",
         },
     )
+
+
+def build_omission_questions() -> dict:
+    from app.services.inference.decisions import Noul
+
+    def omits(kept: str, other: str):
+        return Noul(instructions=(
+            f"Does the {kept} statement leave out any claim made in the {other} statement "
+            "(a role, status, number, owner, qualifier, or fact)? Answer yes if at least one "
+            f"claim of the {other} statement is missing from the {kept} one."
+        ))
+
+    return {"later_omits": omits("LATER", "EARLIER"), "earlier_omits": omits("EARLIER", "LATER")}
 
 
 def _side(sig: Any) -> dict:
@@ -190,17 +215,22 @@ def build_duplicate_state(candidate: DuplicateCandidate) -> dict:
     return {"earlier": _side(candidate.earlier), "later": _side(candidate.later)}
 
 
-def decide_action(relation: str, p: float, candidate: DuplicateCandidate) -> str:
+def decide_action(
+    relation: str, p: float, candidate: DuplicateCandidate, p_kept_omits: float = 0.0
+) -> str:
     """hide_new | hide_old | link | none for one judged pair.
 
-    ``same`` always hides the incoming signal. Otherwise the less complete
-    side (by event time) is hidden — unless that is a standing signal someone
-    has reviewed or confirmed, which is never retired behind a fresh
-    extraction; the incoming one is hidden behind it instead.
+    ``same`` always hides the incoming signal. A "richer" verdict hides the
+    less complete side (by event time) only when the kept side omits none of
+    its claims (``p_kept_omits`` < OMIT_MAX_PROBABILITY); otherwise the pair
+    is linked. A standing signal someone reviewed or confirmed is never
+    retired behind a fresh extraction; the incoming one is hidden instead.
     """
     if p >= HIDE_MIN_PROBABILITY and relation == "same":
         return "hide_new"
     if p >= HIDE_MIN_PROBABILITY and relation in ("earlier_richer", "later_richer"):
+        if p_kept_omits >= OMIT_MAX_PROBABILITY:
+            return "link"
         hide_later = relation == "earlier_richer"
         hide_new = hide_later == candidate.new_is_later
         if hide_new or not _may_hide(candidate.old):
@@ -244,15 +274,18 @@ async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = N
 
     from app.services.inference.decisions import DecisionUnavailable
 
-    question = build_duplicate_question()
+    questions = {"relation": build_duplicate_question(), **build_omission_questions()}
 
-    async def one(c: DuplicateCandidate) -> tuple[DuplicateCandidate, str, float] | None:
+    async def one(c: DuplicateCandidate) -> tuple[DuplicateCandidate, str, float, float] | None:
         try:
             result = await client.decide(
-                build_duplicate_state(c), {"relation": question}, operation=DEDUP_OPERATION
+                build_duplicate_state(c), questions, operation=DEDUP_OPERATION
             )
             answer = result.choice("relation")
-            return c, answer.choice, float(answer.probabilities.get(answer.choice, 0.0))
+            # The kept side of a "richer" verdict is the richer one.
+            kept = "earlier_omits" if answer.choice == "earlier_richer" else "later_omits"
+            return (c, answer.choice, float(answer.probabilities.get(answer.choice, 0.0)),
+                    float(result.noul(kept)))
         except (DecisionUnavailable, ValueError, KeyError, TypeError) as e:
             logger.warning("[DEDUP] Judgment failed for %s -> %s: %s", c.new.id, c.old.id, e)
             return None
@@ -260,26 +293,30 @@ async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = N
     judged = [j for j in await asyncio.gather(*(one(c) for c in candidates)) if j]
 
     by_new: dict[str, list[tuple[DuplicateCandidate, str, float, str]]] = {}
-    for c, relation, p in judged:
-        action = decide_action(relation, p, c)
+    omits: dict[tuple[str, str], float] = {}
+    for c, relation, p, p_omits in judged:
+        action = decide_action(relation, p, c, p_omits)
         by_new.setdefault(c.new.id, []).append((c, relation, p, action))
+        omits[(c.new.id, c.old.id)] = p_omits
         logger.info(
-            "[DEDUP] %s %s %s -> %s: sim=%.2f %s p=%.2f -> %s",
-            mode, c.new.type, c.new.id[:8], c.old.id[:8], c.similarity, relation, p, action,
+            "[DEDUP] %s %s %s -> %s: sim=%.2f %s p=%.2f omits=%.2f -> %s",
+            mode, c.new.type, c.new.id[:8], c.old.id[:8], c.similarity, relation, p, p_omits,
+            action,
         )
 
     hidden_old_ids: set[str] = set()
     for rows in by_new.values():
         new = rows[0][0].new
         new.metadata["duplicate_check"] = [
-            {"of": c.old.id, "relation": r, "p": round(p, 3), "similarity": c.similarity,
-             "action": a, "mode": mode}
+            {"of": c.old.id, "relation": r, "p": round(p, 3),
+             "p_kept_omits": round(omits[(c.new.id, c.old.id)], 3),
+             "similarity": c.similarity, "action": a, "mode": mode}
             for c, r, p, a in rows
         ]
         if mode != "on":
             continue
-        links = [{"id": c.old.id, "relation": "overlap", "p": round(p, 3)}
-                 for c, _, p, a in rows if a == "link"]
+        links = [{"id": c.old.id, "relation": r, "p": round(p, 3)}
+                 for c, r, p, a in rows if a == "link"]
         if links:
             new.metadata["related_signals"] = links
             outcome.linked += len(links)

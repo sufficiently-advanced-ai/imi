@@ -339,6 +339,15 @@ def search_signals_semantic(
 
     results = vector_store.search_vectors(embedding, k=limit * 2, **search_kwargs)
 
+    # Stores without upsert (FAISS) keep a signal's older vectors after it is
+    # re-indexed, so a vector from before the signal was hidden (signal_dedup)
+    # lacks ``duplicate_of``. Hiding is additive: any vector saying so wins.
+    hidden_ids = {
+        (r.get("metadata") or {}).get("id")
+        for r in results or []
+        if (r.get("metadata") or {}).get("duplicate_of")
+    }
+
     scored: list[dict[str, Any]] = []
     for result in results or []:
         meta = result.get("metadata", {}) or {}
@@ -347,6 +356,8 @@ def search_signals_semantic(
         if not tenant_matches(meta.get("tenant_id"), tenant_id):
             continue
         if not _passes_governance(meta, authority, include_rejected):
+            continue
+        if not include_rejected and meta.get("id") in hidden_ids:
             continue
 
         similarity = float(result.get("score", 0.0))
