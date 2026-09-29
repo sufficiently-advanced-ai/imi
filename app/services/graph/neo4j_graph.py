@@ -90,6 +90,11 @@ class Neo4jKnowledgeGraph:
         self._build_lock = asyncio.Lock()
         self._build_in_progress = False
 
+        # duplicate id -> primary id, from the primaries' ``merged_ids``
+        # frontmatter. File ingest redirects references through it so a
+        # rebuild reproduces merges (see _refresh_merged_into).
+        self._merged_into: dict[str, str] = {}
+
         # Per-entity locks for write-through file operations
         self._file_locks: dict[str, asyncio.Lock] = {}
         # Batch collection is task-scoped (see ``_active_batch`` below), not
@@ -273,6 +278,10 @@ class Neo4jKnowledgeGraph:
         # doubling corpus I/O and log volume on every startup.
         documents: list[tuple[str, str | None]] = []
         try:
+            # A build is the "files are the source of truth" path: read disk,
+            # never the 60s corpus cache (a merge's write-through just
+            # changed files it holds).
+            self.git_ops.invalidate_markdown_files_cache()
             files_obj = await self.git_ops.read_markdown_files()
             documents = [(f.path, f.content) for f in files_obj]
         except Exception:
@@ -365,6 +374,7 @@ class Neo4jKnowledgeGraph:
         file is read on demand. The write helpers see ``self._batch`` and
         buffer; a single ``flush()`` at the end issues the UNWIND statements.
         """
+        self._refresh_merged_into(documents)
         batch = Neo4jBatchWriter(self.neo4j, chunk_size=self._batch_chunk_size())
         token = _active_batch.set(batch)
         processed = 0
@@ -385,6 +395,47 @@ class Neo4jKnowledgeGraph:
         finally:
             _active_batch.reset(token)
         return processed
+
+    def _refresh_merged_into(self, documents: list[tuple[str, str | None]]) -> None:
+        """Index ``merged_ids`` (duplicate -> primary) before ingesting files.
+
+        A merge archives the duplicate's file and records its id on the
+        primary, but meeting ``entity_ids`` and other profiles' relationship
+        lists still name the duplicate. Without this redirect a rebuild drops
+        those edges (the archived id gets no node) or, for a duplicate that
+        never had a file, re-creates its stub. Sources: the in-memory mirror
+        (covers primaries outside an incremental batch) and the documents
+        being ingested (authoritative for a full rebuild)."""
+        merged: dict[str, str] = {}
+
+        def add(primary_id: Any, merged_ids: Any) -> None:
+            if not isinstance(primary_id, str) or not primary_id:
+                return
+            if isinstance(merged_ids, str):
+                merged_ids = [merged_ids]
+            for mid in merged_ids if isinstance(merged_ids, list) else ():
+                if isinstance(mid, str) and mid and mid != primary_id:
+                    merged[mid] = primary_id
+
+        for node in list(self.nodes.values()):
+            add(getattr(node, "id", None), (getattr(node, "metadata", None) or {}).get("merged_ids"))
+        for _path, content in documents:
+            if not content or "merged_ids" not in content:
+                continue
+            metadata = self._extract_metadata(content)
+            if isinstance(metadata, dict) and not self._is_archived_metadata(metadata):
+                add(metadata.get("id"), metadata.get("merged_ids"))
+        self._merged_into = merged
+
+    def _canonical_id(self, entity_id: str) -> str:
+        """Follow merge redirects to the surviving id (cycle-safe)."""
+        seen = {entity_id}
+        while entity_id in self._merged_into:
+            entity_id = self._merged_into[entity_id]
+            if entity_id in seen:
+                break
+            seen.add(entity_id)
+        return entity_id
 
     async def has_entities(self) -> bool:
         """True when Neo4j already holds entity nodes (ignoring signals)."""
@@ -534,7 +585,9 @@ class Neo4jKnowledgeGraph:
             for rel_def in entity_def.relationships:
                 targets = extract_relationship_targets(metadata, rel_def.type)
                 for target_id in targets:
-                    normalized = self._normalize_target_id(target_id, rel_def.target)
+                    normalized = self._canonical_id(self._normalize_target_id(target_id, rel_def.target))
+                    if normalized == eid:
+                        continue  # a merged-away duplicate pointing back at itself
                     # The id's prefix names its type. A profile listing an
                     # account under ``projects`` would otherwise MERGE a
                     # Project stub with the account's id, which violates the
@@ -575,7 +628,7 @@ class Neo4jKnowledgeGraph:
 
         # Extract entity references from metadata fields (people, projects, etc.)
         ref_entities = await self._extract_entity_references(file_path, metadata)
-        document_entities.update(ref_entities)
+        document_entities.update(self._canonical_id(r) for r in ref_entities)
 
         # Store document-entity associations in Neo4j
         for eid in document_entities:
@@ -912,6 +965,12 @@ class Neo4jKnowledgeGraph:
         Skips stub creation when the entity has an archived file on disk
         to prevent resurrecting soft-deleted entities via cross-file references.
         """
+        # A merged-away id is never stubbed: its references resolve to the
+        # primary, which has (or gets) its own node.
+        if entity_id in self._merged_into:
+            entity_id = self._canonical_id(entity_id)
+            entity_type = self._id_entity_type(entity_id) or entity_type
+
         # Check if entity file is archived — if so, don't create a stub
         if self._is_entity_archived(entity_id):
             logger.debug("Skipping stub for archived entity: %s", entity_id)
@@ -3089,6 +3148,8 @@ class Neo4jKnowledgeGraph:
         # Files are the source of truth: bring them in line with the graph so
         # a rebuild reproduces the merge instead of resurrecting the duplicate.
         duplicate_file_archived = await self._archive_entity_file(duplicate_id)
+        if duplicate_file_archived:
+            await self._drop_profile_document(duplicate_id)
         await self._update_entity_frontmatter(
             primary_id, {"aliases": new_aliases, "merged_ids": new_merged_ids}
         )
@@ -3679,6 +3740,22 @@ class Neo4jKnowledgeGraph:
             return bool(archived)
         except Exception:
             return False
+
+    async def _drop_profile_document(self, entity_id: str) -> None:
+        """Remove the Document node of an entity's (now archived) profile file.
+
+        Rebuilds skip archived files, so no Document exists for them there;
+        without this the live graph kept ``doc:<profile>`` plus the MENTIONED_IN
+        edges the merge had just moved onto the primary."""
+        full_path = self._find_entity_file(entity_id)
+        if not full_path:
+            return
+        rel_path = os.path.relpath(full_path, self.git_ops.repo_path)
+        await self.neo4j.execute_write(
+            "MATCH (d:Document {id: $id}) DETACH DELETE d", {"id": f"doc:{rel_path}"}
+        )
+        for eid in self.document_entities.pop(rel_path, set()):
+            self.entity_documents.get(eid, set()).discard(rel_path)
 
     async def _archive_entity_file(self, entity_id: str) -> bool:
         """Write-through: soft-delete an entity by setting is_archived: true.

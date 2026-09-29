@@ -89,13 +89,22 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
     seen: list[str] = []
     started = time.monotonic()
     while True:
-        s = _request(client, "GET", f"/api/ingest/{job_id}/status").json()
+        r = _request(client, "GET", f"/api/ingest/{job_id}/status")
+        if r.status_code == 404:
+            # The job store is in memory: a server restart forgets the job.
+            print(f"    ? job {job_id} unknown to the server (restarted?) — moving on")
+            return {"job_id": job_id, "status": "lost"}
+        if r.status_code != 200:
+            s = {}
+            print(f"    ! status HTTP {r.status_code}; polling again")
+        else:
+            s = r.json()
         for phase in s.get("phases_completed", []):
             if phase not in seen:
                 seen.append(phase)
                 print(f"    ✓ {phase:<20} +{time.monotonic() - started:6.1f}s")
         # "dropped": lane admission (ADR-003) rejected the item as junk.
-        if s["status"] in ("completed", "failed", "dropped"):
+        if s.get("status") in ("completed", "failed", "dropped"):
             break
         if time.monotonic() - started > poll_timeout:
             print(f"    … still {s.get('current_phase')} after {poll_timeout:.0f}s — moving on")

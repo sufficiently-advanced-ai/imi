@@ -222,7 +222,8 @@ def test_resolver_candidates_list_co_mentioned_entities():
         document_entities={"doc:m1": {"person-ankit", "person-ann", "person-scott-jennings"},
                            "doc:m2": {"person-ankit", "person-scott-jennings"}},
     )
-    ankit = next(c for c in EntityResolver(kg, decisions=None)._candidates("person") if c["id"] == "person-ankit")
+    r = EntityResolver(kg, decisions=None)
+    ankit = r.with_profile(next(c for c in r._candidates("person") if c["id"] == "person-ankit"))
     assert ankit["context"]["co_mentioned_with"] == ["Scott Jennings", "Ann"]
 
 
@@ -285,7 +286,8 @@ def test_ubiquitous_entities_are_not_co_mention_evidence():
         for e in ents:
             ent_docs.setdefault(e, set()).add(d)
     kg = SimpleNamespace(nodes=nodes, entity_documents=ent_docs, document_entities=docs)
-    brian = next(c for c in EntityResolver(kg, decisions=None)._candidates("person") if c["id"] == "person-brian")
+    r = EntityResolver(kg, decisions=None)
+    brian = r.with_profile(next(c for c in r._candidates("person") if c["id"] == "person-brian"))
     # Scott is in all 5 meetings -> not evidence; Ann shares a meeting -> is.
     assert brian["context"]["co_mentioned_with"] == ["Ann"]
 

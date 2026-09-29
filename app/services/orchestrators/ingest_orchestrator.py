@@ -1242,6 +1242,12 @@ class IngestOrchestrator(BaseOrchestrator):
         helper = EntityResolver(knowledge_graph=self._graph, decisions=None)
         candidates_by_type: dict[str, dict[str, dict]] = {}
 
+        def candidates_of(etype: str) -> dict[str, dict]:
+            # Built once per type: each _candidates call walks every graph node.
+            if etype not in candidates_by_type:
+                candidates_by_type[etype] = {c["id"]: c for c in helper._candidates(etype)}
+            return candidates_by_type[etype]
+
         links = []
         for e in entities:
             name = (e.get("name") or "").strip()
@@ -1269,9 +1275,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 link["heard_as"] = surface
             if e.get("type") == "person":
                 try:
-                    by_id = candidates_by_type.setdefault(
-                        "person", {c["id"]: c for c in helper._candidates("person")}
-                    )
+                    by_id = candidates_of("person")
                     first = self._first_token(surface or name)
                     link["namesakes"] = [
                         helper.with_profile(c)
@@ -1281,9 +1285,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 except Exception as ex:  # context only — never fail the ingest
                     logger.warning("[INGEST] Namesake lookup failed for %s: %s", e["id"], ex)
             if e["id"] in known:
-                by_id = candidates_by_type.setdefault(
-                    e.get("type"), {c["id"]: c for c in helper._candidates(e.get("type"))}
-                )
+                by_id = candidates_of(e.get("type"))
                 candidate = by_id.get(e["id"])
                 if candidate:
                     link["candidate"] = helper.with_profile(candidate)

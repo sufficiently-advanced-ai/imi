@@ -1183,16 +1183,21 @@ class SemanticaKnowledge:
         file_path: str,
         metadata: dict[str, Any],
     ) -> str | None:
-        """Determine entity type from file path and metadata."""
-        # Check metadata first
-        if "type" in metadata:
-            return metadata["type"]
-        if "entity_type" in metadata:
-            return metadata["entity_type"]
+        """Determine entity type from file path and metadata.
 
-        # Infer from directory path
+        Only configured domain entity types count: the graph writes any other
+        file as a Document, so indexing it as an entity would find no Entity
+        node and fail (and be retried) on every boot."""
         if not self.domain or not self.domain.entities:
             return None
+        known = set(self.domain.entities)
+
+        for key in ("type", "entity_type"):
+            if metadata.get(key) in known:
+                return metadata[key]
+        entity_id = metadata.get("id")
+        if isinstance(entity_id, str) and "-" in entity_id and entity_id.split("-")[0] in known:
+            return entity_id.split("-")[0]
 
         parts = Path(file_path).parts
         for entity_type, entity_def in self.domain.entities.items():
