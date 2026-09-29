@@ -168,4 +168,7 @@ decisions:
   operations:
     entity_resolution_tiebreak: do-jev
     signal_promotion_triage: do-jev
+    signal_relation: do-jev               # judges supersession candidates (app/services/signal_relation.py)
+  # modes:                                # per operation: off | shadow | on (default: shadow when served)
+  #   signal_relation: on                 # on = only confident `supersedes` pairs reach the review queue
   default: do-jev
