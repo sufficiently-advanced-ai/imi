@@ -115,6 +115,20 @@ def generate_schema_from_domain(domain_config: DomainConfiguration) -> list[str]
         "FOR (s:Signal) ON (s.status)"
     )
 
+    # --- Event time on evidence (ADR-004): range indexes on DATETIME ---
+    statements.append(
+        "CREATE INDEX document_occurred_at IF NOT EXISTS "
+        "FOR (d:Document) ON (d.occurred_at)"
+    )
+    statements.append(
+        "CREATE INDEX signal_valid_from IF NOT EXISTS "
+        "FOR (s:Signal) ON (s.valid_from)"
+    )
+    statements.append(
+        "CREATE INDEX signal_occurred_at IF NOT EXISTS "
+        "FOR (s:Signal) ON (s.occurred_at)"
+    )
+
     logger.info(
         f"Generated {len(statements)} schema statements for domain '{domain_config.id}' "
         f"({len(domain_config.entities)} entity types: {list(domain_config.entities.keys())})"

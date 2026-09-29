@@ -196,7 +196,9 @@ async def test_write_signal_node_includes_valid_from_and_valid_to():
     _, params = upsert_calls[0]
     assert "valid_from" in params
     assert "valid_to" in params
-    assert params["valid_from"] == "2026-06-01T00:00:00+00:00"
+    # ADR-004: the graph stores validity as DATETIME (UTC); files keep strings.
+    assert params["valid_from"] == datetime(2026, 6, 1, tzinfo=UTC)
+    assert params["occurred_at"] == datetime(2026, 6, 1, tzinfo=UTC)
     assert params["valid_to"] is None
 
 
@@ -227,7 +229,7 @@ async def test_update_signal_properties_supports_valid_to():
     assert client.writes, "No write calls issued"
     _, params = client.writes[0]
     props = params.get("props", {})
-    assert props.get("valid_to") == "2026-06-11T10:00:00+00:00"
+    assert props.get("valid_to") == datetime(2026, 6, 11, 10, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

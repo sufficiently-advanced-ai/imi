@@ -112,6 +112,15 @@ class CapturedMemory(BaseModel):
         return value
 
     @model_validator(mode="after")
+    def _default_valid_from(self) -> "CapturedMemory":
+        """Default valid_from to source_date (ADR-004), as a signal defaults
+        it to source_timestamp: the window opens when the content was
+        published or sent, never when it was captured."""
+        if self.valid_from is None and self.source_date:
+            object.__setattr__(self, "valid_from", self.source_date)
+        return self
+
+    @model_validator(mode="after")
     def _enforce_authority_invariant(self) -> "CapturedMemory":
         """Instruction-grade requires confirmed/imported provenance (shared rule)."""
         if self.can_use_as_instruction and not instruction_grade_permitted(

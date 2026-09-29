@@ -928,6 +928,148 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "properties": {},
         },
     },
+    "get_entity_at_time": {
+        "name": "get_entity_at_time",
+        "description": (
+            "Get what was known about one entity at a past point in time. "
+            "Knowledge is dated by when things happened, not by when they were recorded: "
+            "a meeting from January that was added in March counts as January. "
+            "Returns first_seen and last_seen, how much evidence existed by then "
+            "(documents, signals, relationship statements), and the signals about the "
+            "entity that were current at that time. Profile attributes are the current "
+            "ones (attributes_are_current=true); past values are in the signals. "
+            "Returns an error when nothing dated at or before the timestamp mentions the entity. "
+            "Use find_changes for what was learned between two dates."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "The point in time, ISO-8601 (e.g. '2026-03-01T00:00:00Z'). A value without a timezone is read as UTC.",
+                },
+            },
+            "required": ["entity_id", "timestamp"],
+        },
+    },
+    "find_relationships_at_time": {
+        "name": "find_relationships_at_time",
+        "description": (
+            "Find the relationships of one entity that had been stated by a past point in time. "
+            "Each result names the other entity, the relationship type, the direction, how many "
+            "sources stated it (assertions), and when it was first and last stated. "
+            "Results with derived=true and type 'co_mentioned' mean the two entities were named "
+            "in the same document by then; they are not stated relationships. "
+            "Relationships with no known date are never returned here; use "
+            "find_related_entities for the current graph."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "The point in time, ISO-8601 (e.g. '2026-03-01T00:00:00Z'). A value without a timezone is read as UTC.",
+                },
+                "include_co_mentions": {
+                    "type": "boolean",
+                    "description": "Include entities named in the same documents (default true)",
+                    "default": True,
+                },
+            },
+            "required": ["entity_id", "timestamp"],
+        },
+    },
+    "find_changes": {
+        "name": "find_changes",
+        "description": (
+            "Find what was learned about one entity between two dates. "
+            "Returns, in date order: documents that mention it, new signals, signals that were "
+            "replaced, relationships stated for the first time, and entities first named "
+            "alongside it. Dates are when things happened. recorded_late separately lists "
+            "material about an earlier time that was only added during the window. "
+            "Omit date_to for everything since date_from."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Start of the window, exclusive. YYYY-MM-DD or ISO-8601",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "End of the window, inclusive. YYYY-MM-DD or ISO-8601. Default: now",
+                },
+            },
+            "required": ["entity_id", "date_from"],
+        },
+    },
+    "get_graph_at_time": {
+        "name": "get_graph_at_time",
+        "description": (
+            "Get the entities and relationships around one entity as they were known at a past "
+            "point in time. Starts at the entity and follows relationships outward up to "
+            "max_depth steps, keeping only what had been stated or mentioned by then. "
+            "Returns nodes (same shape as get_entity_at_time) and edges. "
+            "Returns empty lists when nothing was known about the entity at that time."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "The point in time, ISO-8601 (e.g. '2026-03-01T00:00:00Z'). A value without a timezone is read as UTC.",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "How many steps outward to follow (default 2, maximum 4)",
+                    "default": 2,
+                },
+                "include_co_mentions": {
+                    "type": "boolean",
+                    "description": "Also follow entities named in the same documents (default true)",
+                    "default": True,
+                },
+            },
+            "required": ["entity_id", "timestamp"],
+        },
+    },
+    "get_entity_provenance": {
+        "name": "get_entity_provenance",
+        "description": (
+            "Get every source that mentions one entity, in the order things happened: the "
+            "documents it appears in and the signals about it. Each entry gives when it "
+            "happened (timestamp), when it was recorded (recorded_at), and how the date was "
+            "obtained (time_source: explicit, content_header, inferred, fallback_now, or "
+            "unrecorded). fallback_now means no date was found and the recording time was used."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+            },
+            "required": ["entity_id"],
+        },
+    },
     "ask_kb": {
         "name": "ask_kb",
         "description": (

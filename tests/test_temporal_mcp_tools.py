@@ -84,14 +84,14 @@ class TestChatToolsWrappers:
     """Test the thin wrappers in chat_tools.py."""
 
     @pytest.mark.asyncio
-    async def test_entity_at_time_delegates_to_semantica(self):
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value={
+    async def test_entity_at_time_delegates_to_point_in_time_service(self):
+        mock_svc = MagicMock()
+        mock_svc.entity_at = AsyncMock(return_value={
             "id": "e1", "name": "Acme", "type": "Organization",
             "attributes": {"sector": "Tech"},
         })
 
-        with patch("app.services.chat_tools._get_semantica", return_value=mock_sk):
+        with patch("app.services.chat_tools._get_temporal_query_service", return_value=mock_svc):
             from app.services.chat_tools import entity_at_time
             result = await entity_at_time(
                 entity_id="e1",
@@ -99,11 +99,24 @@ class TestChatToolsWrappers:
             )
 
         assert result["name"] == "Acme"
-        mock_sk.get_state_at.assert_called_once()
+        mock_svc.entity_at.assert_called_once()
+        # The timestamp reaches the service as aware UTC (ADR-004).
+        at = mock_svc.entity_at.call_args[0][1]
+        assert at.tzinfo is not None and at.utcoffset().total_seconds() == 0
 
     @pytest.mark.asyncio
-    async def test_entity_at_time_returns_error_without_semantica(self):
-        with patch("app.services.chat_tools._get_semantica", return_value=None):
+    async def test_entity_at_time_reports_nothing_known(self):
+        mock_svc = MagicMock()
+        mock_svc.entity_at = AsyncMock(return_value=None)
+        with patch("app.services.chat_tools._get_temporal_query_service", return_value=mock_svc):
+            from app.services.chat_tools import entity_at_time
+            result = await entity_at_time(entity_id="e1", timestamp="2026-01-15T00:00:00Z")
+
+        assert "Nothing was known" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_entity_at_time_returns_error_without_graph(self):
+        with patch("app.services.chat_tools._get_temporal_query_service", return_value=None):
             from app.services.chat_tools import entity_at_time
             result = await entity_at_time(entity_id="e1", timestamp="2026-01-15T00:00:00Z")
 
@@ -111,12 +124,12 @@ class TestChatToolsWrappers:
 
     @pytest.mark.asyncio
     async def test_active_relationships_at_time_delegates(self):
-        mock_sk = MagicMock()
-        mock_sk.get_active_relationships = AsyncMock(return_value=[
-            {"relationship_type": "WORKS_FOR", "target_id": "e2", "target_name": "Acme"},
+        mock_svc = MagicMock()
+        mock_svc.relationships_at = AsyncMock(return_value=[
+            {"relationship_type": "works_for", "target_id": "e2", "other_name": "Acme"},
         ])
 
-        with patch("app.services.chat_tools._get_semantica", return_value=mock_sk):
+        with patch("app.services.chat_tools._get_temporal_query_service", return_value=mock_svc):
             from app.services.chat_tools import active_relationships_at_time
             result = await active_relationships_at_time(
                 entity_id="e1",
@@ -124,17 +137,17 @@ class TestChatToolsWrappers:
             )
 
         assert len(result) == 1
-        assert result[0]["relationship_type"] == "WORKS_FOR"
+        assert result[0]["relationship_type"] == "works_for"
 
     @pytest.mark.asyncio
     async def test_get_entity_provenance_delegates(self):
-        mock_sk = MagicMock()
-        mock_sk.get_provenance = AsyncMock(return_value={
+        mock_svc = MagicMock()
+        mock_svc.provenance = AsyncMock(return_value={
             "entity_id": "e1",
-            "history": [{"source": "doc.md", "action": "created"}],
+            "history": [{"source": "doc.md", "action": "MENTIONED_IN"}],
         })
 
-        with patch("app.services.chat_tools._get_semantica", return_value=mock_sk):
+        with patch("app.services.chat_tools._get_temporal_query_service", return_value=mock_svc):
             from app.services.chat_tools import get_entity_provenance
             result = await get_entity_provenance(entity_id="e1")
 

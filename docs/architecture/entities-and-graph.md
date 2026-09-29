@@ -106,11 +106,33 @@ startup and is idempotent.
 
 | Relationship | Direction | Meaning |
 |---|---|---|
-| domain types (`HAS_PROJECTS`, `WORKS_AT`, …) | Entity→Entity | from the domain YAML `relationships:` blocks |
+| domain types (`HAS_PROJECTS`, `WORKS_AT`, …) | Entity→Entity | from the domain YAML `relationships:` blocks; **one edge per assertion**, keyed on `source_id` |
 | `MENTIONED_IN` | Entity→Document | provenance |
-| `CO_OCCURRENCE` | Entity–Entity | entities sharing a document |
+| `CO_OCCURRENCE` | Entity–Entity | entities sharing a document; a current-state cache, never read by point-in-time queries |
 | `MENTIONS` / `ASSIGNED_TO` / `FOR_CLIENT` | Signal→Entity | signal attribution, ownership, client scoping |
 | `SUPERSEDES` / `CONFLICTS_WITH` | Signal→Signal | decision lineage (see [Signals & Governance](signals-and-governance.md)) |
+
+### Time belongs to evidence
+
+([ADR-004](../adr/ADR-004-event-time-on-evidence.md).) Entities carry no validity window. What
+has a time is the evidence that mentions them:
+
+| Carrier | Properties | From |
+|---|---|---|
+| `:Document` (meetings, conversations, library documents) | `occurred_at`, `recorded_at`, `time_source` | frontmatter `start_time`, `recorded_at`, `time_source` |
+| `:Signal` | `occurred_at`, `recorded_at`, `valid_from`, `valid_to` | the signal file |
+| domain relationship edge | `source_id`, `occurred_at`, `recorded_at`, `time_source` | the holder's `relationship_assertions` frontmatter |
+
+`occurred_at` is when it happened; `recorded_at` is when imi ingested it and is never used in
+its place, because content is routinely backfilled. All four time properties are stored as
+`DATETIME` in UTC and come back from the graph client as ISO-8601 strings.
+
+"The graph as of T" is the subgraph supported by evidence with `occurred_at <= T`, computed by
+`TemporalQueryService` (`app/services/temporal_queries.py`). An entity profile document has no
+event time and is evidence of nothing. A relationship with no assertion behind it has
+`source_id = ''` and no `occurred_at`: it is in the current graph and in no point-in-time
+answer. `scripts/event_time.py audit` lists those, along with documents whose event time is the
+ingest time (`time_source: fallback_now`).
 
 ### Graduated typing
 

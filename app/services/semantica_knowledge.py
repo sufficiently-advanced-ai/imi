@@ -6,8 +6,7 @@ This single class replaces ~16K LOC across 15+ files with a coherent API:
 - Search (replaces chat_tools search functions)
 - Entity extraction (replaces domain_aware_entity_extractor, entity_registry)
 - Decision intelligence (replaces signal_store decision parts, signal_promoter)
-- Temporal queries (NEW capability from Semantica)
-- Provenance tracking (NEW capability from Semantica)
+- Point-in-time queries and provenance (delegated to temporal_queries, ADR-004)
 - Visualization (replaces visualization_adapter)
 
 All methods are async for consistency with the existing FastAPI codebase.
@@ -440,17 +439,8 @@ class SemanticaKnowledge:
             if file_path:
                 props["file_path"] = file_path
 
-            # Set temporal validity from available metadata
-            if "valid_from" not in props:
-                for date_field in ("updated_at", "created_at", "last_seen"):
-                    if date_field in props and props[date_field]:
-                        props["valid_from"] = props[date_field]
-                        break
-                else:
-                    props["valid_from"] = datetime.now(
-                        tz=__import__("datetime").timezone.utc
-                    ).isoformat()
-            # valid_to left as-is (NULL = still active)
+            # Entities carry no validity window (ADR-004): time belongs to
+            # the evidence that mentions them.
 
             # MERGE to upsert
             cypher = (
@@ -540,7 +530,6 @@ class SemanticaKnowledge:
             props.setdefault("created_at", datetime.now(
                 tz=__import__("datetime").timezone.utc
             ).isoformat())
-            props.setdefault("valid_from", props["created_at"])
 
             cypher = (
                 f"MATCH (a:Entity {{id: $source}}), (b:Entity {{id: $target}}) "
@@ -895,158 +884,33 @@ class SemanticaKnowledge:
             return result
         return []
 
+    def _point_in_time(self):
+        """Point-in-time queries are computed from evidence over the async
+        graph client (ADR-004); kept here so existing callers keep working."""
+        from app.neo4j_client import get_neo4j_client
+        from app.services.temporal_queries import TemporalQueryService
+
+        return TemporalQueryService(get_neo4j_client())
+
     async def get_state_at(
         self,
         entity_id: str,
         at_time: datetime,
     ) -> dict[str, Any] | None:
-        """Get entity state at a specific point in time.
-
-        Uses temporal validity windows stored on entity nodes.
-        Accepts either an entity ID or entity name — tries ID first,
-        falls back to case-insensitive name match.
-        """
-        at_iso = at_time.isoformat()
-
-        cypher = (
-            "MATCH (n:Entity) "
-            "WHERE (n.id = $lookup OR toLower(n.name) = toLower($lookup)) "
-            "AND (n.valid_from IS NULL OR n.valid_from <= $at_time) "
-            "AND (n.valid_to IS NULL OR n.valid_to > $at_time) "
-            "RETURN n.id AS id, n.name AS name, n.entity_type AS entity_type, "
-            "properties(n) AS props, n.valid_from AS valid_from, n.valid_to AS valid_to "
-            "ORDER BY CASE WHEN n.id = $lookup THEN 0 ELSE 1 END "
-            "LIMIT 1"
-        )
-
-        results = self._extract_records(
-            await self._query(cypher, {"lookup": entity_id, "at_time": at_iso})
-        )
-
-        if not results:
-            return None
-
-        row = results[0]
-        props = row.get("props", {})
-        attributes = {
-            k: v for k, v in props.items()
-            if k not in ("id", "name", "entity_type", "valid_from", "valid_to")
-        }
-
-        return {
-            "id": row.get("id", entity_id),
-            "name": row.get("name", ""),
-            "type": row.get("entity_type", ""),
-            "attributes": attributes,
-            "valid_from": row.get("valid_from"),
-            "valid_to": row.get("valid_to"),
-            "as_of": at_iso,
-        }
+        """What was known about an entity at ``at_time`` (id or name)."""
+        return await self._point_in_time().entity_at(entity_id, at_time)
 
     async def get_active_relationships(
         self,
         entity_id: str,
         at_time: datetime,
     ) -> list[dict[str, Any]]:
-        """Get relationships that were active at a specific time.
-
-        Queries both outgoing and incoming relationships filtered by temporal validity.
-        """
-        at_iso = at_time.isoformat()
-        rels = []
-
-        # Outgoing relationships
-        out_cypher = (
-            "MATCH (a:Entity {id: $id})-[r]->(b:Entity) "
-            "WHERE (r.valid_from IS NULL OR r.valid_from <= $at_time) "
-            "AND (r.valid_to IS NULL OR r.valid_to > $at_time) "
-            "RETURN type(r) AS rel_type, b.id AS target_id, b.name AS target_name, "
-            "b.entity_type AS target_type, properties(r) AS props, "
-            "r.valid_from AS valid_from, r.valid_to AS valid_to"
-        )
-        out_results = self._extract_records(
-            await self._query(out_cypher, {"id": entity_id, "at_time": at_iso})
-        )
-        for r in out_results:
-            rels.append({
-                "relationship_type": r.get("rel_type", ""),
-                "target_id": r.get("target_id", ""),
-                "target_name": r.get("target_name", ""),
-                "target_type": r.get("target_type", ""),
-                "direction": "outgoing",
-                "properties": r.get("props", {}),
-                "valid_from": r.get("valid_from"),
-                "valid_to": r.get("valid_to"),
-            })
-
-        # Incoming relationships
-        in_cypher = (
-            "MATCH (a:Entity)-[r]->(b:Entity {id: $id}) "
-            "WHERE (r.valid_from IS NULL OR r.valid_from <= $at_time) "
-            "AND (r.valid_to IS NULL OR r.valid_to > $at_time) "
-            "RETURN type(r) AS rel_type, a.id AS source_id, a.name AS source_name, "
-            "a.entity_type AS source_type, properties(r) AS props, "
-            "r.valid_from AS valid_from, r.valid_to AS valid_to"
-        )
-        in_results = self._extract_records(
-            await self._query(in_cypher, {"id": entity_id, "at_time": at_iso})
-        )
-        for r in in_results:
-            rels.append({
-                "relationship_type": r.get("rel_type", ""),
-                "source_id": r.get("source_id", ""),
-                "source_name": r.get("source_name", ""),
-                "source_type": r.get("source_type", ""),
-                "target_id": entity_id,
-                "direction": "incoming",
-                "properties": r.get("props", {}),
-                "valid_from": r.get("valid_from"),
-                "valid_to": r.get("valid_to"),
-            })
-
-        return rels
+        """Relationships supported by evidence dated at or before ``at_time``."""
+        return await self._point_in_time().relationships_at(entity_id, at_time)
 
     async def get_provenance(self, entity_id: str) -> dict[str, Any]:
-        """Get provenance chain for an entity.
-
-        Queries document-entity relationships and modification history
-        to build a timeline of how the entity was created and updated.
-        """
-        # Documents the entity appears in (MENTIONED_IN, written by the graph
-        # build) and signals about it (SignalGraphWriter's edges).
-        cypher = (
-            "CALL { "
-            "  MATCH (n:Entity {id: $id})-[r:MENTIONED_IN]->(d:Document) "
-            "  RETURN d, r "
-            "  UNION "
-            "  MATCH (n:Entity {id: $id})<-[r]-(d) "
-            "  WHERE type(r) IN ['MENTIONS', 'ASSIGNED_TO', 'FOR_CLIENT', 'EXTRACTED_FROM'] "
-            "  RETURN d, r "
-            "} "
-            "RETURN coalesce(d.path, d.file_path, d.source_meeting_id, d.name, d.id) AS source, "
-            "type(r) AS action, "
-            "coalesce(r.timestamp, d.created_at, d.date) AS timestamp, "
-            "r.actor AS actor "
-            "ORDER BY timestamp ASC"
-        )
-        results = self._extract_records(
-            await self._query(cypher, {"id": entity_id})
-        )
-
-        history = [
-            {
-                "source": r.get("source", ""),
-                "action": r.get("action", "unknown"),
-                "timestamp": r.get("timestamp", ""),
-                "actor": r.get("actor", ""),
-            }
-            for r in results
-        ]
-
-        return {
-            "entity_id": entity_id,
-            "history": history,
-        }
+        """Every piece of evidence about an entity, in event order."""
+        return await self._point_in_time().provenance(entity_id)
 
     # ──────────────────────────────────────────────────────────────
     # Visualization

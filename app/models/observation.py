@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.models.lane import validate_lane
+from app.utils.event_time import TIME_SOURCE_UNRECORDED, validate_time_source
 
 
 def _yaml_escape(value: str) -> str:
@@ -60,6 +61,10 @@ class Observation(BaseModel):
     raw_content: str | None = None  # original full text (e.g. transcript)
     title: str | None = None
     occurred_at: datetime | None = None
+    # ADR-004: when imi ingested this (never a proxy for occurred_at) and
+    # how occurred_at was obtained. Server-assigned.
+    recorded_at: datetime | None = None
+    time_source: str = TIME_SOURCE_UNRECORDED
     participants: list[str] = Field(default_factory=list)
     # Resolved graph ids of every entity this observation was linked to at
     # ingest time. Authoritative for rebuilding MENTIONED_IN from the file:
@@ -79,6 +84,11 @@ class Observation(BaseModel):
     is_finalized: bool = True
     update_count: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("time_source", mode="before")
+    @classmethod
+    def _validate_time_source(cls, value: str) -> str:
+        return validate_time_source(value)
 
     @field_validator("lane", mode="before")
     @classmethod
@@ -103,6 +113,12 @@ class Observation(BaseModel):
             frontmatter.append(f"title: {_yaml_escape(self.title)}")
         if self.occurred_at:
             frontmatter.append(f"start_time: {self.occurred_at.isoformat()}")
+        # Only written when known: files from before ADR-004 stay
+        # byte-identical (absent time_source reads as unrecorded).
+        if self.recorded_at:
+            frontmatter.append(f"recorded_at: {self.recorded_at.isoformat()}")
+        if self.time_source != TIME_SOURCE_UNRECORDED:
+            frontmatter.append(f"time_source: {self.time_source}")
         # Only written for library: record files stay byte-identical to the
         # pre-lanes format (absent lane reads as record).
         if self.lane != "record":
@@ -177,6 +193,8 @@ class Observation(BaseModel):
             raw_content=raw_content,
             title=frontmatter.get("title"),
             occurred_at=_parse_dt(frontmatter.get("start_time")),
+            recorded_at=_parse_dt(frontmatter.get("recorded_at")),
+            time_source=frontmatter.get("time_source") or TIME_SOURCE_UNRECORDED,
             participants=frontmatter.get("participants") or [],
             entity_ids=frontmatter.get("entity_ids") or [],
             lane=frontmatter.get("lane") or "record",
