@@ -18,6 +18,7 @@ import {
 const PHASES = [
   "CLASSIFY",
   "BUILD_MEETING",
+  "SYNTHESIZE",
   "PROMOTE_SIGNALS",
   "DETECT_DUPLICATES",
   "DETECT_SUPERSESSION",
@@ -31,6 +32,7 @@ const PHASES = [
 const PHASE_LABELS: Record<string, string> = {
   CLASSIFY: "Classify",
   BUILD_MEETING: "Build observation",
+  SYNTHESIZE: "Summarize meeting",
   PROMOTE_SIGNALS: "Promote signals",
   DETECT_DUPLICATES: "Detect duplicates",
   DETECT_SUPERSESSION: "Detect supersessions",

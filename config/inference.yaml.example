@@ -133,7 +133,7 @@ aliases:
 # fail closed. Known tool-free operation labels include: metadata_extraction,
 # entity_extraction, salient_entity_extraction, semantica_ner, signal_extraction,
 # ingest_classify, weak_signal_detection, decision_extraction,
-# commitment_extraction, insight_generation, statement_comparison.
+# commitment_extraction, insight_generation, statement_comparison, meeting_summary.
 operations:
   metadata_extraction: do-gemma
   entity_extraction: do-gemma

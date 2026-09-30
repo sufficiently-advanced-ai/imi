@@ -84,6 +84,7 @@ PHASES = [
     "ADMIT",
     "CLASSIFY",
     "BUILD_MEETING",
+    "SYNTHESIZE",
     "EXTRACT_ENTITIES",
     "PROMOTE_SIGNALS",
     "DETECT_DUPLICATES",
@@ -248,6 +249,18 @@ class IngestOrchestrator(BaseOrchestrator):
                 bot_id,
                 content_type,
                 admission.lane,
+            )
+
+            # SYNTHESIZE — the meeting summary written into the document.
+            # Ingest-only: a rebuild replay keeps the summary its file has.
+            await self._run_phase(
+                job_store,
+                job_key,
+                "SYNTHESIZE",
+                self._phase_synthesize,
+                request,
+                observation,
+                content_type,
             )
 
             # Phases 3-9 — shared with process_observation() (rebuild replay)
@@ -686,24 +699,63 @@ class IngestOrchestrator(BaseOrchestrator):
         title: str, content: str, participants: list[str]
     ) -> str:
         """Build a markdown body that SignalPromoter can extract from."""
-        parts = [f"# {title}", ""]
+        from app.models.observation import build_observation_body
 
-        if participants:
-            parts.append("## Participants")
-            parts.append("")
-            for p in participants:
-                parts.append(f"- {p}")
-            parts.append("")
+        return build_observation_body(title, content, participants)
 
-        parts.extend(
-            [
-                "## Discussion",
-                "",
-                content,
-            ]
+    async def _phase_synthesize(self, request, observation, content_type: str) -> bool:
+        """Phase: write a structured summary onto a meeting observation.
+
+        Record-lane transcripts only. The summary becomes the document body
+        (the transcript is kept once, under Full Transcript); signals are
+        still promoted from the transcript body, so this never changes what
+        is extracted. Non-fatal: any failure leaves the meeting unsummarized.
+        """
+        from app.models.observation import build_observation_body
+        from app.services.meeting_synthesis import (
+            SYNTHESIS_CONTENT_TYPES,
+            synthesize_meeting,
         )
 
-        return "\n".join(parts)
+        if (
+            observation.lane != "record"
+            or content_type not in SYNTHESIS_CONTENT_TYPES
+            or not observation.raw_content
+        ):
+            return False
+        occurred = observation.occurred_at.date().isoformat() if observation.occurred_at else None
+        try:
+            synthesis = await synthesize_meeting(
+                self._claude,
+                observation.raw_content,
+                title=request.title,
+                participants=observation.participants,
+                occurred=occurred,
+            )
+        except Exception as e:
+            logger.warning("[INGEST] SYNTHESIZE failed (non-fatal): %s", e)
+            return False
+        if synthesis is None:
+            return False
+
+        observation.summary = synthesis.summary
+        observation.purpose = synthesis.purpose or None
+        observation.summary_prompt = synthesis.prompt
+        observation.key_points = synthesis.key_points
+        # A caller-supplied title always wins; the model's only replaces the
+        # "Ingested <type>" placeholder. The extraction body carries the title,
+        # so it is rebuilt to match what a parse of the file will produce.
+        if not request.title and synthesis.title:
+            observation.title = synthesis.title
+            observation.content = build_observation_body(
+                synthesis.title, observation.raw_content, observation.participants
+            )
+        logger.info(
+            "[INGEST] SYNTHESIZE: summary written (%d key points, %s)",
+            len(synthesis.key_points),
+            synthesis.prompt,
+        )
+        return True
 
     async def _phase_extract_entities(self, observation) -> int:
         """Phase: salience-aware entity extraction (extraction v2).
