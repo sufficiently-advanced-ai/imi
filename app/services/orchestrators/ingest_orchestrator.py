@@ -86,6 +86,7 @@ PHASES = [
     "BUILD_MEETING",
     "EXTRACT_ENTITIES",
     "PROMOTE_SIGNALS",
+    "DETECT_DUPLICATES",
     "DETECT_SUPERSESSION",
     "DETECT_CONFLICTS",
     "ENRICH_GRAPH",
@@ -94,6 +95,43 @@ PHASES = [
     "DELTA_REPORT",
     "COMPLETE",
 ]
+
+
+def _dedup_similarity_fns(new_signals):
+    """Vector-stack similarity functions for DETECT_DUPLICATES, or None.
+
+    Blocking (embeds on CPU) — call via ``asyncio.to_thread``. ``similar``
+    searches indexed standing signals of one type; ``batch_similarity`` scores
+    two not-yet-indexed signals of the new batch from embeddings made here.
+    """
+    import numpy as np
+
+    from app.services import signal_indexing, signal_retrieval
+
+    sk = signal_indexing._get_semantica()
+    if sk is None:
+        return None
+    store = signal_indexing.resolve_vector_store(sk.vector_store)
+
+    def embed(text):
+        vec = np.asarray(sk.embedder.generate_embeddings(text, data_type="text"), dtype=float)
+        vec = vec[0] if vec.ndim > 1 else vec
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm else vec
+
+    vectors = {s.id: embed(s.content) for s in new_signals if s.content and s.content.strip()}
+
+    def similar(text, signal_type):
+        hits = signal_retrieval.search_signals_semantic(
+            store, sk.embedder, text, signal_types=[signal_type], limit=10
+        )
+        return [(h["id"], h["similarity"]) for h in hits if h.get("id")]
+
+    def batch_similarity(a, b):
+        va, vb = vectors.get(a.id), vectors.get(b.id)
+        return float(va @ vb) if va is not None and vb is not None else 0.0
+
+    return similar, batch_similarity
 
 
 class IngestOrchestrator(BaseOrchestrator):
@@ -306,6 +344,17 @@ class IngestOrchestrator(BaseOrchestrator):
             self._phase_promote_signals,
             observation,
         )
+
+        # Phase: DETECT_DUPLICATES — keep the richest statement of a fact
+        dedup = await self._run_phase(
+            job_store,
+            job_key,
+            "DETECT_DUPLICATES",
+            self._phase_detect_duplicates,
+            meeting_signals,
+        )
+        if dedup:
+            result["duplicates"] = dedup
 
         # Phase 4: DETECT_SUPERSESSION — annotate new decision signals with candidates
         candidate_count = await self._run_phase(
@@ -1847,6 +1896,73 @@ class IngestOrchestrator(BaseOrchestrator):
             logger.warning(f"[INGEST] infer_relationships exception: {e}")
 
         return []
+
+    async def _phase_detect_duplicates(
+        self, meeting_signals, store=None, similar=None, batch_similarity=None
+    ) -> dict | None:
+        """Phase DETECT_DUPLICATES: hide restated signals behind the richest version.
+
+        See ``app/services/signal_dedup.py``. New signals are annotated in place
+        (persisted with the batch in PERSIST); standing signals hidden behind a
+        richer new one are written back to their own meeting file here.
+
+        ``similar`` / ``batch_similarity`` default to the live vector stack; the
+        phase is a no-op without it or when ``signal_duplicate`` is off. Never
+        fatal.
+
+        Returns {"hidden": n, "linked": n} when anything changed, else None.
+        """
+        if not meeting_signals or not meeting_signals.signals:
+            return None
+
+        from app.services import signal_dedup
+
+        client = signal_dedup._default_client()
+        if client is None:
+            return None
+
+        from app.services.signal_store import signal_store as _signal_store
+
+        active_store = store if store is not None else _signal_store
+        try:
+            if similar is None or batch_similarity is None:
+                stack = await asyncio.to_thread(_dedup_similarity_fns, meeting_signals.signals)
+                if stack is None:
+                    return None
+                similar, batch_similarity = stack
+            batches = active_store.load_all()
+            container_of = {sig.id: b for b in batches for sig in b.signals}
+            standing = {sig.id: sig for b in batches for sig in b.signals}
+            candidates = await asyncio.to_thread(
+                signal_dedup.find_duplicate_candidates,
+                meeting_signals.signals, similar, standing,
+                batch_similarity=batch_similarity,
+            )
+            outcome = await signal_dedup.judge_duplicates(candidates, client)
+        except Exception as e:
+            logger.warning("[INGEST] DETECT_DUPLICATES failed (non-fatal): %s", e)
+            return None
+
+        new_ids = {sig.id for sig in meeting_signals.signals}
+        hidden = outcome.hidden_new
+        for old in outcome.hidden_old:
+            if old.id in new_ids:
+                hidden += 1  # batch-internal: persisted with the batch
+                continue
+            try:
+                active_store.replace_signal(old, container_of[old.id])
+                hidden += 1
+            except Exception as e:
+                logger.warning(
+                    "[INGEST] DETECT_DUPLICATES: could not persist %s (non-fatal): %s",
+                    old.id, e,
+                )
+        if not (hidden or outcome.linked):
+            return None
+        logger.info(
+            "[INGEST] DETECT_DUPLICATES: hid %d, linked %d", hidden, outcome.linked
+        )
+        return {"hidden": hidden, "linked": outcome.linked}
 
     async def _phase_detect_supersession(self, meeting_signals, store=None) -> int:
         """Phase DETECT_SUPERSESSION: annotate new decision signals with candidates.

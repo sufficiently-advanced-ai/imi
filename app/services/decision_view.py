@@ -31,12 +31,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.services.signal_store import SignalStore
 
 
-def load_decision_signals(store: SignalStore | None = None) -> list[Signal]:
+def load_decision_signals(
+    store: SignalStore | None = None, *, include_duplicates: bool = False
+) -> list[Signal]:
     """Return all signals with type == 'decision' across all meeting files.
 
     Args:
         store: SignalStore instance.  Defaults to the module-level tenant-scoped
                proxy (``signal_store``) when None.
+        include_duplicates: Also return decisions hidden as restatements of
+               another decision (``signal_dedup``). Off by default so a restated
+               decision is neither reviewed nor counted twice.
 
     Returns:
         Flat list of Signal objects whose ``type`` is ``"decision"``.
@@ -46,12 +51,18 @@ def load_decision_signals(store: SignalStore | None = None) -> list[Signal]:
 
         store = _default_store  # type: ignore[assignment]
 
-    results: list[Signal] = []
-    for meeting_signals in store.load_all():
-        for sig in meeting_signals.signals:
-            if sig.type == "decision":
-                results.append(sig)
-    return results
+    results: list[Signal] = [
+        sig
+        for meeting_signals in store.load_all()
+        for sig in meeting_signals.signals
+        if sig.type == "decision"
+    ]
+    if include_duplicates:
+        return results
+    from app.services.signal_dedup import resolve_hidden
+
+    hidden = resolve_hidden(results)
+    return [sig for sig in results if sig.id not in hidden]
 
 
 def decision_to_view(signal: Signal, *, now: datetime | None = None) -> dict:

@@ -19,6 +19,7 @@ See docs/prd/memory-governance-and-retrieval-prd.md §7 (G3).
 
 import logging
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -152,6 +153,8 @@ def index_signal(vector_store, embedder, signal: Signal) -> str | None:
             "tenant_id": signal.tenant_id,
             # ADR-003: store-side lane filter; recall re-hydrates it from the record.
             "lane": getattr(signal, "lane", "record"),
+            # Signal dedup: shown under another signal, so kept out of search.
+            "duplicate_of": (signal.metadata or {}).get("duplicate_of"),
         }
         ids = vector_store.store_vectors([embedding], metadata=[metadata])
         return ids[0] if ids else None
@@ -271,13 +274,33 @@ def tenant_matches(record_tenant: str | None, requested: str | None) -> bool:
     return (record_tenant or "default") == (requested or "default")
 
 
-def _passes_governance(meta: dict, authority: str, include_rejected: bool) -> bool:
+def _is_hidden_duplicate(meta: dict, is_hidden: Callable[[str], bool] | None) -> bool:
+    """Whether a result is shown under another signal (``signal_dedup``).
+
+    With ``is_hidden`` (signal id -> bool, ``signal_dedup.shown_under`` over
+    the store) the answer is authoritative and ignores the vector's metadata,
+    which can be stale. Without it, the vector's ``duplicate_of`` is trusted.
+    """
+    if is_hidden is not None:
+        return is_hidden(meta.get("id") or "")
+    return bool(meta.get("duplicate_of"))
+
+
+def _passes_governance(
+    meta: dict,
+    authority: str,
+    include_rejected: bool,
+    *,
+    is_hidden_duplicate: Callable[[str], bool] | None = None,
+) -> bool:
     """Apply the trust-axis filter to a single result's metadata."""
     if not include_rejected:
         if meta.get("review_status") in _EXCLUDED_REVIEW:
             return False
         if meta.get("provenance_status") in _EXCLUDED_PROVENANCE:
             return False
+        if _is_hidden_duplicate(meta, is_hidden_duplicate):
+            return False  # shown under the signal it restates (signal_dedup)
     if authority == "instruction":
         return bool(meta.get("can_use_as_instruction"))
     # default: evidence-grade or better
@@ -297,6 +320,7 @@ def search_signals_semantic(
     recency_weight: float = 0.0,
     half_life_days: float = 90,
     include_rejected: bool = False,
+    is_hidden_duplicate: Callable[[str], bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Governance-aware semantic search over indexed signals.
 
@@ -335,6 +359,20 @@ def search_signals_semantic(
 
     results = vector_store.search_vectors(embedding, k=limit * 2, **search_kwargs)
 
+    # Stores without upsert (FAISS) keep a signal's older vectors after it is
+    # re-indexed, so a vector from before the signal was hidden (signal_dedup)
+    # lacks ``duplicate_of``. With ``is_hidden_duplicate`` every result is
+    # checked against the store, so a stale vector cannot leak. Without it,
+    # fall back to "any co-returned vector saying so wins" (best effort: the
+    # vector carrying the key may rank outside this window).
+    hidden_ids: set = set()
+    if is_hidden_duplicate is None:
+        hidden_ids = {
+            (r.get("metadata") or {}).get("id")
+            for r in results or []
+            if (r.get("metadata") or {}).get("duplicate_of")
+        }
+
     scored: list[dict[str, Any]] = []
     for result in results or []:
         meta = result.get("metadata", {}) or {}
@@ -342,7 +380,11 @@ def search_signals_semantic(
             continue
         if not tenant_matches(meta.get("tenant_id"), tenant_id):
             continue
-        if not _passes_governance(meta, authority, include_rejected):
+        if not _passes_governance(
+            meta, authority, include_rejected, is_hidden_duplicate=is_hidden_duplicate
+        ):
+            continue
+        if not include_rejected and meta.get("id") in hidden_ids:
             continue
 
         similarity = float(result.get("score", 0.0))

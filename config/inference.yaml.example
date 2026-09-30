@@ -169,6 +169,8 @@ decisions:
     entity_resolution_tiebreak: do-jev
     signal_promotion_triage: do-jev
     signal_relation: do-jev               # judges supersession candidates (app/services/signal_relation.py)
+    signal_duplicate: do-jev              # keeps the richest restatement of a fact (app/services/signal_dedup.py)
   # modes:                                # per operation: off | shadow | on (default: shadow when served)
   #   signal_relation: on                 # on = only confident `supersedes` pairs reach the review queue
+  #   signal_duplicate: on                # on = hide restatements behind the richest version, link overlaps
   default: do-jev

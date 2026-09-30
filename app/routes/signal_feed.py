@@ -173,6 +173,9 @@ async def get_signal_feed(
         None, description="Filter end date (YYYY-MM-DD, inclusive)"
     ),
     limit: int = Query(100, ge=1, le=500, description="Max signals to return"),
+    include_duplicates: bool = Query(
+        False, description="Include signals hidden as restatements of another (signal dedup)"
+    ),
 ):
     """
     Get reverse-chronological feed of signals extracted from meetings.
@@ -186,10 +189,20 @@ async def get_signal_feed(
     if not all_meeting_signals:
         return SignalFeedResponse(days=[], total_signals=0, total_meetings=0)
 
+    # Signal dedup: restatements are shown under the signal they repeat, which
+    # lists them as corroborations.
+    from app.services.signal_dedup import corroborations, resolve_hidden
+
+    everything = [sig for ms in all_meeting_signals for sig in ms.signals]
+    hidden = resolve_hidden(everything)
+    corroborated = corroborations(everything, hidden)
+
     # Flatten and filter
     filtered: list[PersistedSignal] = []
     for ms in all_meeting_signals:
         for signal in ms.signals:
+            if signal.id in hidden and not include_duplicates:
+                continue
             if signal_type and signal.type != signal_type:
                 continue
             if entity_id and not _matches_entity_filter(signal, entity_id):
@@ -209,6 +222,10 @@ async def get_signal_feed(
     day_groups: dict[str, DayGroup] = {}
     for persisted in filtered:
         api_signal = _to_api_signal(persisted)
+        if persisted.id in corroborated:
+            api_signal.metadata = {
+                **(api_signal.metadata or {}), "corroborated_by": corroborated[persisted.id]
+            }
         try:
             date_str = api_signal.source_timestamp[:10]
         except (IndexError, TypeError):
