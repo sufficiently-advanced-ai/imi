@@ -19,6 +19,7 @@ See docs/prd/memory-governance-and-retrieval-prd.md §7 (G3).
 
 import logging
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -273,14 +274,29 @@ def tenant_matches(record_tenant: str | None, requested: str | None) -> bool:
     return (record_tenant or "default") == (requested or "default")
 
 
-def _passes_governance(meta: dict, authority: str, include_rejected: bool) -> bool:
+def _is_hidden_duplicate(meta: dict, target_exists: Callable[[str], bool] | None) -> bool:
+    """``duplicate_of`` hides a signal only while the signal it points at exists.
+
+    ``target_exists`` None trusts the pointer (callers without store access).
+    """
+    target = meta.get("duplicate_of")
+    return bool(target) and (target_exists is None or target_exists(target))
+
+
+def _passes_governance(
+    meta: dict,
+    authority: str,
+    include_rejected: bool,
+    *,
+    duplicate_target_exists: Callable[[str], bool] | None = None,
+) -> bool:
     """Apply the trust-axis filter to a single result's metadata."""
     if not include_rejected:
         if meta.get("review_status") in _EXCLUDED_REVIEW:
             return False
         if meta.get("provenance_status") in _EXCLUDED_PROVENANCE:
             return False
-        if meta.get("duplicate_of"):
+        if _is_hidden_duplicate(meta, duplicate_target_exists):
             return False  # shown under the signal it restates (signal_dedup)
     if authority == "instruction":
         return bool(meta.get("can_use_as_instruction"))
@@ -301,6 +317,7 @@ def search_signals_semantic(
     recency_weight: float = 0.0,
     half_life_days: float = 90,
     include_rejected: bool = False,
+    duplicate_target_exists: Callable[[str], bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Governance-aware semantic search over indexed signals.
 
@@ -345,7 +362,7 @@ def search_signals_semantic(
     hidden_ids = {
         (r.get("metadata") or {}).get("id")
         for r in results or []
-        if (r.get("metadata") or {}).get("duplicate_of")
+        if _is_hidden_duplicate(r.get("metadata") or {}, duplicate_target_exists)
     }
 
     scored: list[dict[str, Any]] = []
@@ -355,7 +372,9 @@ def search_signals_semantic(
             continue
         if not tenant_matches(meta.get("tenant_id"), tenant_id):
             continue
-        if not _passes_governance(meta, authority, include_rejected):
+        if not _passes_governance(
+            meta, authority, include_rejected, duplicate_target_exists=duplicate_target_exists
+        ):
             continue
         if not include_rejected and meta.get("id") in hidden_ids:
             continue

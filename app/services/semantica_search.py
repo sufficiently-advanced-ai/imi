@@ -397,8 +397,10 @@ class SemanticaSearch:
         if not query or not query.strip():
             return []
         try:
+            from app.services.signal_dedup import lazy_signal_exists
             from app.services.signal_retrieval import search_signals_semantic
 
+            kwargs.setdefault("duplicate_target_exists", lazy_signal_exists())
             return search_signals_semantic(
                 self.vector_store, self.embedder, query, **kwargs
             )

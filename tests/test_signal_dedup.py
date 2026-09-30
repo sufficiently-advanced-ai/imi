@@ -281,3 +281,33 @@ def test_search_hides_a_signal_when_any_of_its_vectors_says_so():
     assert ids == ["s2"]
     everything = search_signals_semantic(_Store(), _Embedder(), "q", include_rejected=True)
     assert {r["id"] for r in everything} == {"s1", "s2"}
+
+
+@pytest.mark.asyncio
+async def test_hide_old_skips_a_signal_already_shown_under_another():
+    b = _sig("b", "short", ts="2026-03-01T10:00:00Z", metadata={"duplicate_of": "a"})
+    new = _sig("n", "fuller", meeting="m2", ts="2026-03-05T10:00:00Z")
+    fake = _Fake({("short", "fuller"): ("later_richer", 0.9)})
+    out = await judge_duplicates([DuplicateCandidate(new, b, 0.9)], client=fake)
+    assert out.hidden_old == [] and b.metadata["duplicate_of"] == "a"
+
+
+def test_search_ignores_dangling_duplicate_pointers():
+    from app.services.signal_retrieval import search_signals_semantic
+
+    class _Store:
+        def search_vectors(self, embedding, k=10, **kwargs):
+            base = {"content_type": "signal", "can_use_as_evidence": True}
+            return [
+                {"score": 0.9, "metadata": {**base, "id": "s1", "duplicate_of": "gone"}},
+                {"score": 0.8, "metadata": {**base, "id": "s3", "duplicate_of": "s4"}},
+            ]
+
+    class _Embedder:
+        def generate_embeddings(self, text, data_type="text"):
+            return [0.1, 0.2]
+
+    exists = {"s1", "s3", "s4"}.__contains__
+    ids = [r["id"] for r in search_signals_semantic(
+        _Store(), _Embedder(), "q", duplicate_target_exists=exists)]
+    assert ids == ["s1"]  # s1's target is gone, so it shows; s3 stays hidden under s4

@@ -287,8 +287,13 @@ async def recall(
             governance = {f: getattr(record, f, None) for f in _GOVERNANCE_FIELDS}
             governance["lane"] = governance["lane"] or "record"
             hydrated = {**meta, **governance}
-            # Dedup state is authoritative on the record too (vector metadata lags).
-            hydrated["duplicate_of"] = (getattr(record, "metadata", None) or {}).get("duplicate_of")
+            # Dedup state is authoritative on the record too (vector metadata lags);
+            # a pointer at a signal that no longer exists hides nothing.
+            dup = (getattr(record, "metadata", None) or {}).get("duplicate_of")
+            signal_resolver = resolvers.get("signal")
+            if dup and signal_resolver is not None and signal_resolver(dup) is None:
+                dup = None
+            hydrated["duplicate_of"] = dup
             hydrated["confidence"] = getattr(record, "confidence", None)
             if hydrated["lane"] != lane:
                 continue  # vector metadata is stale; the record is authoritative

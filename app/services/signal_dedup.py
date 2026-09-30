@@ -328,7 +328,10 @@ async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = N
             new.metadata["duplicate_of"] = c.old.id
             new.metadata["duplicate_relation"] = relation
             outcome.hidden_new += 1
-        elif action == "hide_old" and c.old.id not in hidden_old_ids:
+        elif (action == "hide_old" and c.old.id not in hidden_old_ids
+              # already shown under another signal, or would point back at us
+              and not c.old.metadata.get("duplicate_of")
+              and new.metadata.get("duplicate_of") != c.old.id):
             c.old.metadata["duplicate_of"] = new.id
             c.old.metadata["duplicate_relation"] = relation
             hidden_old_ids.add(c.old.id)
@@ -358,6 +361,25 @@ def resolve_hidden(signals: list[Any]) -> dict[str, str]:
         return None
 
     return {sid: r for sid in ids if (r := root(sid)) is not None}
+
+
+def lazy_signal_exists() -> Callable[[str], bool]:
+    """Existence check over the signal store, loaded on first use only.
+
+    Read paths that filter on vector metadata use it so a ``duplicate_of``
+    pointing at a deleted signal hides nothing (matches ``resolve_hidden``).
+    """
+    ids: set[str] | None = None
+
+    def exists(signal_id: str) -> bool:
+        nonlocal ids
+        if ids is None:
+            from app.services.signal_store import signal_store
+
+            ids = {s.id for b in signal_store.load_all() for s in b.signals}
+        return signal_id in ids
+
+    return exists
 
 
 def corroborations(signals: list[Any], hidden: dict[str, str] | None = None) -> dict[str, list[dict]]:

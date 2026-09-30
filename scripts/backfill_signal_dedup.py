@@ -137,8 +137,35 @@ async def main() -> int:
     # meanwhile (status, content, review, new signals) are never overwritten.
     # SignalStore has no cross-process lock; this narrows the window to the
     # read-merge-write of one file.
-    by_meeting: dict[str, set[str]] = {}
+    # A verdict judged the statements as they were during the replay. If either
+    # side has been edited since, the verdict no longer applies: drop it
+    # (a later run re-judges the new text) instead of hiding edited content.
+    replayed = {s.id: s.content for s in signals}
+    now = {s.id: s.content for c in store.load_all() for s in c.signals}
+
+    def unchanged(sid: str | None) -> bool:
+        return sid is not None and sid in now and now[sid] == replayed.get(sid)
+
+    decided: dict[str, dict] = {}
     for sid in changed:
+        meta = by_id[sid].metadata
+        keep = {k: meta[k] for k in _DEDUP_KEYS if k in meta}
+        if not unchanged(sid):
+            print(f"skip {sid[:8]}: edited or removed during the replay")
+            continue
+        if "duplicate_of" in keep and not unchanged(keep["duplicate_of"]):
+            print(f"skip hide of {sid[:8]}: {keep['duplicate_of'][:8]} edited or removed during the replay")
+            keep.pop("duplicate_of")
+            keep.pop("duplicate_relation", None)
+        if "related_signals" in keep:
+            keep["related_signals"] = [r for r in keep["related_signals"] if unchanged(r["id"])]
+            if not keep["related_signals"]:
+                keep.pop("related_signals")
+        if keep:
+            decided[sid] = keep
+
+    by_meeting: dict[str, set[str]] = {}
+    for sid in decided:
         by_meeting.setdefault(container_of[sid].bot_id, set()).add(sid)
     saved = 0
     for bot_id, ids in by_meeting.items():
@@ -148,12 +175,10 @@ async def main() -> int:
             continue
         merged = False
         for sig in current.signals:
-            if sig.id not in ids:
-                continue
-            for key in _DEDUP_KEYS:
-                if key in by_id[sig.id].metadata:
-                    sig.metadata[key] = by_id[sig.id].metadata[key]
-                    merged = True
+            if sig.id not in ids or sig.content != replayed[sig.id]:
+                continue  # edited between the check above and this write
+            sig.metadata.update(decided[sig.id])
+            merged = True
         if merged:
             store.save(current)
             saved += 1

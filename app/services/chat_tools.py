@@ -363,6 +363,7 @@ async def search_signals_semantic(
             return {"error": "semantic index unavailable", "results": []}
         from app.core.middleware.request_context import current_tenant_id
         from app.services import signal_indexing, signal_retrieval
+        from app.services.signal_dedup import lazy_signal_exists
 
         # Resolve the tenant's store (pgvector on hosted) and scope the filter —
         # reading sk.vector_store directly dropped both (Phase 3 fix).
@@ -378,6 +379,7 @@ async def search_signals_semantic(
             limit=limit,
             recency_weight=recency_weight,
             include_rejected=include_rejected,
+            duplicate_target_exists=lazy_signal_exists(),
         )
         return {"results": results, "count": len(results)}
     except Exception as e:
