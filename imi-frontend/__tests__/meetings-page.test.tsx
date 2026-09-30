@@ -3,7 +3,7 @@
  * searches through the API, and opens the meeting viewer on click.
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import MeetingsPage from "@/app/(protected)/meetings/page";
 import { fetchMeetingHistoryList, fetchMeetingHistoryStats } from "@/lib/api/meetings";
 
@@ -79,4 +79,23 @@ test("search queries the API", async () => {
   await waitFor(() =>
     expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ q: "globex" })),
   );
+});
+
+test("a stale search response does not replace the latest results", async () => {
+  let resolveOld: (v: unknown) => void = () => {};
+  render(<MeetingsPage />);
+  await screen.findByText("Northwind planning");
+  listMock.mockImplementationOnce(() => new Promise((r) => { resolveOld = r; }));
+  listMock.mockResolvedValueOnce({
+    items: [item({ bot_id: "g", title: "Globex only" })], total: 1, next_cursor: null, page_size: 50,
+  });
+  fireEvent.change(screen.getByLabelText("Search meetings"), { target: { value: "glo" } });
+  await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ q: "glo" })));
+  fireEvent.change(screen.getByLabelText("Search meetings"), { target: { value: "globex" } });
+  expect(await screen.findByText("Globex only")).toBeInTheDocument();
+  await act(async () => {
+    resolveOld({ items: [item({ bot_id: "o", title: "Old query row" })], total: 1, next_cursor: null, page_size: 50 });
+  });
+  expect(screen.queryByText("Old query row")).not.toBeInTheDocument();
+  expect(screen.getByText("Globex only")).toBeInTheDocument();
 });

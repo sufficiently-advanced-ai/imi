@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -82,7 +82,10 @@ function MeetingRow({
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
       }}
     >
       <div className="flex gap-3">
@@ -201,19 +204,25 @@ export default function MeetingsPage() {
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
   const [selected, setSelected] = useState<MeetingHistoryItem | null>(null);
+  // Responses can resolve out of order; only the latest list request (a new
+  // search or its next page) may write the list.
+  const requestRef = useRef(0);
 
   const load = useCallback(async (q: string) => {
+    const request = ++requestRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetchMeetingHistoryList({ q: q || undefined, page_size: PAGE_SIZE });
+      if (request !== requestRef.current) return;
       setItems(res.items);
       setTotal(res.total);
       setNextCursor(res.next_cursor);
     } catch (err) {
+      if (request !== requestRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load meetings");
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
   }, []);
 
@@ -227,6 +236,7 @@ export default function MeetingsPage() {
 
   const loadMore = async () => {
     if (!nextCursor) return;
+    const request = ++requestRef.current;
     setLoadingMore(true);
     try {
       const res = await fetchMeetingHistoryList({
@@ -234,9 +244,11 @@ export default function MeetingsPage() {
         page_size: PAGE_SIZE,
         cursor: nextCursor,
       });
+      if (request !== requestRef.current) return;
       setItems((prev) => [...prev, ...res.items]);
       setNextCursor(res.next_cursor);
     } catch (err) {
+      if (request !== requestRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load meetings");
     } finally {
       setLoadingMore(false);

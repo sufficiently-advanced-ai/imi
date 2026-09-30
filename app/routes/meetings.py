@@ -273,8 +273,9 @@ async def meeting_stats():
         meetings_with_transcripts=sum(1 for m in meetings if m.raw_content),
         meetings_summarized=sum(1 for m in meetings if m.summary),
         total_signals=sum(len(_visible_signals(m.external_id)) for m in meetings),
-        first_meeting=_iso(meetings[-1].occurred_at),
-        last_meeting=_iso(meetings[0].occurred_at),
+        # Same event time the list sorts by (start_time, else observed_at).
+        first_meeting=_iso(meetings[-1].occurred_at or meetings[-1].observed_at),
+        last_meeting=_iso(meetings[0].occurred_at or meetings[0].observed_at),
     )
 
 

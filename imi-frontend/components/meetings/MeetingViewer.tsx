@@ -47,6 +47,9 @@ export default function MeetingViewer({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedRef = useRef<boolean>(false);
+  // Only the latest request may write state: a slow response for a previous
+  // botId must not overwrite the meeting now shown.
+  const requestRef = useRef<number>(0);
 
   // Transcript search state
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -64,20 +67,23 @@ export default function MeetingViewer({
   }, [botId, isOpen]);
 
   const loadContent = async () => {
-    if (isLoading || hasLoadedRef.current) return;
+    if (hasLoadedRef.current) return;
+    const request = ++requestRef.current;
 
     setIsLoading(true);
     setError(null);
 
     try {
       const content = await fetchMeetingContent(botId);
+      if (request !== requestRef.current) return;
       setMeetingContent(content);
       hasLoadedRef.current = true;
     } catch (err) {
+      if (request !== requestRef.current) return;
       const errorMessage = err instanceof Error ? err.message : 'Failed to load meeting content';
       setError(errorMessage);
     } finally {
-      setIsLoading(false);
+      if (request === requestRef.current) setIsLoading(false);
     }
   };
 

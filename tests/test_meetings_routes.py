@@ -112,3 +112,11 @@ def test_legacy_body_is_shown(client, tmp_path):
 def test_content_rejects_bad_ids_and_missing(client):
     assert client.get("/api/meetings/..%2Fetc/content").status_code in (400, 404)
     assert client.get("/api/meetings/nope/content").status_code == 404
+
+
+def test_stats_fall_back_to_observed_at_for_undated_meetings(client, tmp_path):
+    md = ("---\nmeeting_id: m\nbot_id: undated\nupdated_at: 2026-10-05T09:00:00+00:00\ntitle: Undated\n"
+          "entities_mentioned: {}\n---\n\n# Undated\n\n## Full Transcript\n\nhi")
+    (tmp_path / "meetings" / "meeting-undated.md").write_text(md)
+    s = client.get("/api/meetings/history/stats").json()
+    assert s["last_meeting"] == "2026-10-05T09:00:00+00:00"
