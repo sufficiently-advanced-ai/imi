@@ -187,3 +187,16 @@ async def test_promoter_skips_library_signals(monkeypatch):
     record = await promoter.promote(obs)
     assert record is not None and fake.calls
     assert all("triage" in s.metadata for s in record.signals)
+
+
+def test_long_meetings_send_the_segments_that_match_the_signal():
+    filler = "We talked about the weather and lunch plans. " * 80  # ~3.6k chars
+    body = (filler * 10) + "Omar agreed to configure the Initech SSO integration. " + (filler * 10)
+    assert len(body) > signal_triage.MAX_BODY_CHARS
+    sig = _sig("a", "action_item", content="Configure Initech SSO integration",
+               entities=[EntityRef(id="account-initech", type="account", name="Initech")])
+    text = signal_triage.meeting_text(body, sig)
+    assert "configure the Initech SSO integration" in text
+    assert len(text) <= signal_triage.SEGMENT_CHARS * signal_triage.MAX_SEGMENTS + 200
+    short = "Omar will configure SSO."
+    assert signal_triage.meeting_text(short, sig) == short

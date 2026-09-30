@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -54,7 +55,18 @@ CLIENT_MIN_PROBABILITY = 0.75
 # every question unambiguously refers to it. (Several signals in one state
 # with per-signal question names scored near chance in the eval: the model
 # cannot tell which signal "the SIGNAL" means.)
-MAX_BODY_CHARS = 40_000
+# A meeting up to this size is sent whole (the model's state budget is ~32k
+# tokens). A longer transcript is cut into segments and each signal gets the
+# segments that share the most of its words and entity names, in order.
+MAX_BODY_CHARS = 60_000
+SEGMENT_CHARS = 3_000
+MAX_SEGMENTS = 8
+_STOPWORDS = frozenset(
+    "about after again also because been before being between could does doing during "
+    "every from have having into just like make more most much other over should since "
+    "some such than that their them then there these they this those through under until "
+    "very what when where which while will with would your".split()
+)
 
 _TYPE_CRITERIA = {
     "decision": "A choice the group made or proposed about what to do or how to do it.",
@@ -122,14 +134,39 @@ def _client_question(options: dict[str, str]):
 
 
 def _meeting_state(observation: Any, participants: list[str]) -> dict:
-    body = observation.content or ""
-    clipped = len(body) > MAX_BODY_CHARS
     return {
         "title": observation.title,
         "date": observation.observed_at.date().isoformat() if observation.observed_at else None,
         "participants": participants,
-        "text": body[:MAX_BODY_CHARS] + ("\n[... clipped]" if clipped else ""),
     }
+
+
+def _terms(signal: Any) -> set[str]:
+    words = re.findall(r"[a-z][a-z'\-]{3,}", (signal.content or "").lower())
+    terms = {w for w in words if w not in _STOPWORDS}
+    for ref in getattr(signal, "entities", None) or []:
+        terms.update(w for w in ref.name.lower().split() if len(w) > 2)
+    return terms
+
+
+def meeting_text(body: str, signal: Any) -> str:
+    """What the model reads for ``signal``: the whole meeting when it fits,
+    else the transcript segments that best match the signal's words and
+    entity names, kept in meeting order. Evidence gathering only."""
+    if len(body) <= MAX_BODY_CHARS:
+        return body
+    segments = [body[i:i + SEGMENT_CHARS] for i in range(0, len(body), SEGMENT_CHARS)]
+    terms = _terms(signal)
+    scored = []
+    for idx, seg in enumerate(segments):
+        low = seg.lower()
+        hits = sum(1 for t in terms if t in low)
+        if hits:
+            scored.append((hits, idx))
+    best = sorted(idx for _, idx in sorted(scored, reverse=True)[:MAX_SEGMENTS])
+    if not best:
+        best = list(range(min(MAX_SEGMENTS, len(segments))))
+    return "\n[...]\n".join(segments[i] for i in best) + "\n[excerpts of a longer meeting]"
 
 
 def _person_options(entity_refs: list[Any], participants: list[str]) -> list[str]:
@@ -163,8 +200,11 @@ def build_questions(people: list[str], clients: list[Any]) -> dict:
     return questions
 
 
-def build_state(meeting: dict, signal: Any) -> dict:
-    return {"meeting": meeting, "signal": {"type": signal.type, "content": signal.content}}
+def build_state(meeting: dict, body: str, signal: Any) -> dict:
+    return {
+        "meeting": {**meeting, "text": meeting_text(body, signal)},
+        "signal": {"type": signal.type, "content": signal.content},
+    }
 
 
 def _answer(result: Any, name: str) -> dict | None:
@@ -313,7 +353,8 @@ async def triage_signals(
     async def one(i: int, sig: Any) -> None:
         try:
             result = await client.decide(
-                build_state(meeting, sig), questions, operation=TRIAGE_OPERATION
+                build_state(meeting, observation.content or "", sig), questions,
+                operation=TRIAGE_OPERATION,
             )
             verdict = verdict_for(result, people, clients)
         except (DecisionUnavailable, ValueError, KeyError, TypeError, IndexError) as e:
