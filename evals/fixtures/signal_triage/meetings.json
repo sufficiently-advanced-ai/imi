@@ -1,0 +1,122 @@
+{
+  "description": "Meetings with the signals the promoter's extractor returned for them (type, content, self-reported confidence, owner as written, entity names) and gold labels for what each signal is. scripts/eval_signal_triage.py rebuilds each signal with the promoter's own heuristics (tier from confidence < 0.7, first-name owner match, lone-client scope), runs signal_promotion_triage, and scores heuristics vs the model vs gold. gold.type may list also_ok_type for a genuinely ambiguous signal; gold.firmness is set only for decisions; gold.owner / gold.client are a name or null, with also_ok_<field> for a defensible alternative (the cadence of a client's own sync may count as that client's). The damaging errors are a proposal promoted to a firm decision, work assigned to the wrong person, and a client stamped on an internal signal.",
+  "provenance": "Synthetic. Failure types taken from the signal promoter's heuristics (app/services/signal_promoter.py) and from signals observed on a production KB (2026-09): first-name owner collisions, options under discussion stored as decisions, a meeting's lone client stamped on internal items, status facts recorded as decisions. Names and details invented. Labels authored with the triage operation and not independently reviewed (also_ok_client on m01 was added after the first run); treat as a smoke test, not a benchmark.",
+  "meetings": [
+    {
+      "id": "m01_two_priyas",
+      "title": "Northwind weekly sync",
+      "date": "2026-05-04",
+      "participants": ["Priya Raman", "Priya Shah", "Tom Becker"],
+      "entities": {"person": ["Priya Raman", "Priya Shah", "Tom Becker"], "account": ["Northwind"]},
+      "text": "Tom Becker opened with the Northwind pilot status. Priya Raman said the data extract is done. Priya Shah said she will send Northwind the revised statement of work by Friday, after legal signs off on the liability clause. Tom floated moving this sync to every other week once the pilot is live; nobody objected but they agreed to revisit it next month. The group agreed to run the pilot on Snowflake, since Northwind's warehouse is already there.",
+      "signals": [
+        {"extracted": {"type": "action_item", "content": "Send Northwind the revised statement of work by Friday", "confidence": 0.9, "owner": "Priya", "entities": ["Northwind"]},
+         "gold": {"type": "action_item", "owner": "Priya Shah", "client": "Northwind"}},
+        {"extracted": {"type": "decision", "content": "Move the weekly sync to every other week once the pilot is live", "confidence": 0.8, "entities": []},
+         "gold": {"type": "decision", "firmness": "proposed", "owner": null, "client": null, "also_ok_client": ["Northwind"]}},
+        {"extracted": {"type": "decision", "content": "Run the Northwind pilot on Snowflake", "confidence": 0.9, "entities": ["Northwind"]},
+         "gold": {"type": "decision", "firmness": "firm", "owner": null, "client": "Northwind"}}
+      ]
+    },
+    {
+      "id": "m02_internal_items_in_client_call",
+      "title": "Acme renewal prep",
+      "date": "2026-05-06",
+      "participants": ["Dana Wu", "Luis Ortega"],
+      "entities": {"person": ["Dana Wu", "Luis Ortega"], "account": ["Acme"]},
+      "text": "Dana Wu and Luis Ortega prepared for the Acme renewal. They agreed to offer Acme a two-year term at the current rate. Luis will draft the renewal proposal for Acme by Wednesday. Separately, Dana reminded Luis that the team's quarterly expense reports are due to finance on the 15th, and Luis said he would update the team's shared PTO calendar before the holiday.",
+      "signals": [
+        {"extracted": {"type": "decision", "content": "Offer Acme a two-year renewal at the current rate", "confidence": 0.85, "entities": ["Acme"]},
+         "gold": {"type": "decision", "firmness": "firm", "owner": null, "client": "Acme"}},
+        {"extracted": {"type": "action_item", "content": "Draft the Acme renewal proposal by Wednesday", "confidence": 0.9, "owner": "Luis Ortega", "entities": ["Acme"]},
+         "gold": {"type": "action_item", "owner": "Luis Ortega", "client": "Acme"}},
+        {"extracted": {"type": "action_item", "content": "Update the team's shared PTO calendar before the holiday", "confidence": 0.8, "owner": "Luis", "entities": []},
+         "gold": {"type": "action_item", "owner": "Luis Ortega", "client": null}},
+        {"extracted": {"type": "key_point", "content": "Quarterly expense reports are due to finance on the 15th", "confidence": 0.7, "entities": []},
+         "gold": {"type": "key_point", "also_ok_type": ["action_item"], "owner": null, "client": null}}
+      ]
+    },
+    {
+      "id": "m03_mistyped",
+      "title": "Offsite planning",
+      "date": "2026-05-07",
+      "participants": ["Jen Ortiz", "Marcus Lee", "Sam Patel"],
+      "entities": {"person": ["Jen Ortiz", "Marcus Lee", "Sam Patel"]},
+      "text": "Quick call to plan the June offsite. Everyone said they enjoyed last year's offsite in Denver. Jen Ortiz will book the venue in Austin this week. Marcus Lee noted the budget for the offsite is $40k, the same as last year. Sam Patel observed that attendance dropped when the offsite overlapped with quarter close, so the dates matter more than the location.",
+      "signals": [
+        {"extracted": {"type": "key_point", "content": "Jen Ortiz will book the Austin venue this week", "confidence": 0.8, "entities": ["Jen Ortiz"]},
+         "gold": {"type": "action_item", "owner": "Jen Ortiz", "client": null}},
+        {"extracted": {"type": "insight", "content": "Everyone enjoyed last year's offsite in Denver", "confidence": 0.6, "entities": []},
+         "gold": {"type": "none", "owner": null, "client": null}},
+        {"extracted": {"type": "decision", "content": "The offsite budget is $40k, the same as last year", "confidence": 0.8, "entities": []},
+         "gold": {"type": "key_point", "also_ok_type": ["decision"], "firmness": "firm", "owner": null, "client": null}},
+        {"extracted": {"type": "insight", "content": "Attendance drops when the offsite overlaps quarter close, so dates matter more than location", "confidence": 0.85, "entities": []},
+         "gold": {"type": "insight", "owner": null, "client": null}}
+      ]
+    },
+    {
+      "id": "m04_pending_approval",
+      "title": "Globex integration options",
+      "date": "2026-05-11",
+      "participants": ["Aisha Karim", "Ben Foster", "Carla Diaz"],
+      "entities": {"person": ["Aisha Karim", "Ben Foster", "Carla Diaz"], "account": ["Globex"]},
+      "text": "Aisha Karim walked through three integration options for Globex. The group is leaning toward option B, the event-stream integration, but Carla Diaz said it needs Globex's security team to approve before anyone commits. Ben Foster will write up option B's security questions for Globex's review. Aisha said the final call is definitely going with a managed Kafka service rather than self-hosting, whichever option wins; that is settled.",
+      "signals": [
+        {"extracted": {"type": "decision", "content": "Go with option B, the event-stream integration, for Globex", "confidence": 0.75, "entities": ["Globex"]},
+         "gold": {"type": "decision", "firmness": "proposed", "owner": null, "client": "Globex"}},
+        {"extracted": {"type": "action_item", "content": "Write up option B's security questions for Globex's review", "confidence": 0.9, "owner": "Ben", "entities": ["Globex"]},
+         "gold": {"type": "action_item", "owner": "Ben Foster", "client": "Globex"}},
+        {"extracted": {"type": "decision", "content": "Use a managed Kafka service rather than self-hosting", "confidence": 0.65, "entities": []},
+         "gold": {"type": "decision", "firmness": "firm", "owner": null, "client": "Globex"}}
+      ]
+    },
+    {
+      "id": "m05_owner_not_in_extraction",
+      "title": "Initech onboarding",
+      "date": "2026-05-12",
+      "participants": ["Rachel Green", "Omar Haddad"],
+      "entities": {"person": ["Rachel Green", "Omar Haddad"], "account": ["Initech"]},
+      "text": "Kickoff for Initech onboarding. Omar Haddad said he would set up Initech's SSO integration and send them the configuration guide. Initech needs the SSO working before their 200 users are invited. Someone from Initech's IT team will send over the list of user groups; no name was given.",
+      "signals": [
+        {"extracted": {"type": "action_item", "content": "Set up Initech's SSO integration and send the configuration guide", "confidence": 0.9, "entities": ["Initech"]},
+         "gold": {"type": "action_item", "owner": "Omar Haddad", "client": "Initech"}},
+        {"extracted": {"type": "action_item", "content": "Send over the list of Initech user groups", "confidence": 0.8, "owner": "Initech IT team", "entities": ["Initech"]},
+         "gold": {"type": "action_item", "owner": null, "client": "Initech"}},
+        {"extracted": {"type": "key_point", "content": "SSO must work before Initech's 200 users are invited", "confidence": 0.85, "entities": ["Initech"]},
+         "gold": {"type": "key_point", "also_ok_type": ["insight"], "owner": null, "client": "Initech"}}
+      ]
+    },
+    {
+      "id": "m06_two_clients_wrong_entity",
+      "title": "Portfolio review",
+      "date": "2026-05-14",
+      "participants": ["Hannah Moss", "Victor Chen"],
+      "entities": {"person": ["Hannah Moss", "Victor Chen"], "account": ["Acme", "Globex"]},
+      "text": "Hannah Moss and Victor Chen reviewed the accounts. Acme's usage is up 30% quarter over quarter. Globex asked for a discount on their renewal; Victor will reply to Globex declining the discount but offering extra training hours. They decided to prioritize Acme's expansion over new logos this quarter.",
+      "signals": [
+        {"extracted": {"type": "key_point", "content": "Acme usage is up 30% quarter over quarter", "confidence": 0.9, "entities": ["Acme"]},
+         "gold": {"type": "key_point", "owner": null, "client": "Acme"}},
+        {"extracted": {"type": "action_item", "content": "Reply declining the renewal discount but offer extra training hours", "confidence": 0.85, "owner": "Victor Chen", "entities": ["Acme"]},
+         "gold": {"type": "action_item", "owner": "Victor Chen", "client": "Globex"}},
+        {"extracted": {"type": "decision", "content": "Prioritize Acme's expansion over new logos this quarter", "confidence": 0.9, "entities": ["Acme"]},
+         "gold": {"type": "decision", "firmness": "firm", "owner": null, "client": "Acme"}}
+      ]
+    },
+    {
+      "id": "m07_two_marcuses",
+      "title": "Platform standup",
+      "date": "2026-05-15",
+      "participants": ["Marcus Webb", "Elena Rossi"],
+      "entities": {"person": ["Marcus Lee", "Marcus Webb", "Elena Rossi"]},
+      "text": "Marcus Webb said he will finish the database migration runbook by Thursday. Elena Rossi mentioned that Marcus Lee from finance approved the extra staging cluster. Elena suggested they could try feature flags for the rollout, but wanted to think about it more.",
+      "signals": [
+        {"extracted": {"type": "action_item", "content": "Finish the database migration runbook by Thursday", "confidence": 0.9, "owner": "Marcus", "entities": []},
+         "gold": {"type": "action_item", "owner": "Marcus Webb", "client": null}},
+        {"extracted": {"type": "key_point", "content": "Finance approved the extra staging cluster", "confidence": 0.8, "entities": ["Marcus Lee"]},
+         "gold": {"type": "key_point", "also_ok_type": ["decision"], "firmness": "firm", "owner": null, "client": null}},
+        {"extracted": {"type": "decision", "content": "Use feature flags for the rollout", "confidence": 0.7, "entities": []},
+         "gold": {"type": "decision", "also_ok_type": ["insight"], "firmness": "proposed", "owner": null, "client": null}}
+      ]
+    }
+  ]
+}

@@ -48,3 +48,37 @@ def test_signal_with_multiple_clients_is_ambiguous(monkeypatch):
                 EntityRef(id="client-globex", type="client", name="Globex")])
     scoped = promoter._apply_client_scope([sig])
     assert scoped[0].client_id is None
+
+
+def _domain_with(client_entity_types):
+    from app.model_schemas.domain_config import DomainConfiguration, DomainEntity
+
+    entities = {t: DomainEntity(name=t, description=t, plural=f"{t}s") for t in ("account", "person")}
+    return DomainConfiguration(id="d", name="D", entities=entities, client_entity_types=client_entity_types)
+
+
+def _active(monkeypatch, domain):
+    from app.core.domain_config import domain_config_service
+
+    service = type("S", (), {"get_active_domain": lambda self: domain})()
+    monkeypatch.setattr(domain_config_service, "get_domain_config_service", lambda: service)
+
+
+def test_domain_client_entity_types_empty_means_no_client_scope(monkeypatch):
+    _active(monkeypatch, _domain_with([]))
+    assert SignalPromoter._client_type_ids() == set()
+    sig = _sig([EntityRef(id="account-acme", type="account", name="Acme")])
+    assert SignalPromoter()._apply_client_scope([sig])[0].client_id is None
+
+
+def test_domain_client_entity_types_unset_keeps_account_fallback(monkeypatch):
+    _active(monkeypatch, _domain_with(None))
+    assert SignalPromoter._client_type_ids() == {"account"}
+
+
+def test_domain_client_entity_types_must_name_defined_types():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="client_entity_types"):
+        _domain_with(["client"])

@@ -131,3 +131,13 @@ def disable_rate_limiting(monkeypatch):
         return
     monkeypatch.setattr(RateLimiter, "is_allowed", lambda self, request: (True, {}))
     yield
+
+
+@pytest.fixture(autouse=True)
+def no_live_signal_triage(monkeypatch):
+    """SignalPromoter.promote() calls the signal_promotion_triage decision op.
+    Keep promoter tests off a live decision endpoint when config/inference.yaml
+    serves one; tests that exercise triage pass their own client."""
+    from app.services import signal_triage
+
+    monkeypatch.setattr(signal_triage, "_default_client", lambda: None)

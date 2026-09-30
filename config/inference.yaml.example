@@ -167,10 +167,11 @@ decisions:
       # max_state_chars: 100000           # reject oversized states; the model's state budget is 32k tokens
   operations:
     entity_resolution_tiebreak: do-jev
-    signal_promotion_triage: do-jev
+    signal_promotion_triage: do-jev       # re-judges promoted signals: type, firmness, owner, client (app/services/signal_triage.py)
     signal_relation: do-jev               # judges supersession candidates (app/services/signal_relation.py)
     signal_duplicate: do-jev              # keeps the richest restatement of a fact (app/services/signal_dedup.py)
   # modes:                                # per operation: off | shadow | on (default: shadow when served)
   #   signal_relation: on                 # on = only confident `supersedes` pairs reach the review queue
   #   signal_duplicate: on                # on = hide restatements behind the richest version, link overlaps
+  #   signal_promotion_triage: shadow     # keep in shadow until the bars are calibrated; verdicts land in metadata.triage
   default: do-jev

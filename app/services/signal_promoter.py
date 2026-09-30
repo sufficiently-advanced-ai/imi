@@ -95,6 +95,22 @@ class SignalPromoter:
 
         signals = self._apply_client_scope(signals)
 
+        # The decision model re-judges type, firmness, owner and client
+        # (signal_promotion_triage: off/shadow/on, never raises). Library
+        # signals become attributed claims downstream, so they are skipped.
+        if getattr(observation, "lane", "record") != "library":
+            from app.services.signal_triage import triage_signals
+
+            signals = await triage_signals(
+                signals,
+                observation,
+                entity_refs,
+                self._client_type_ids(),
+                lambda name: self._resolve_person_exact(name, entity_refs),
+            )
+            if not signals:
+                return None
+
         return MeetingSignals(
             meeting_id=observation.observation_id,
             bot_id=observation.external_id,
@@ -633,12 +649,16 @@ class SignalPromoter:
 
     @staticmethod
     def _client_type_ids() -> set[str]:
-        """Entity type IDs treated as the 'client' scope for the active domain."""
+        """Entity type IDs treated as the 'client' scope for the active domain:
+        the domain's ``client_entity_types`` when it sets them (``[]`` = none),
+        else whichever of 'client' and 'account' the domain defines (both when
+        it defines both)."""
         try:
             from app.core.domain_config.domain_config_service import get_domain_config_service
             domain = get_domain_config_service().get_active_domain()
+            if domain is not None and getattr(domain, "client_entity_types", None) is not None:
+                return set(domain.client_entity_types)
             if domain and domain.entities:
-                # 'client' if present, else 'account' (relabel mode), else nothing
                 return {t for t in ("client", "account") if t in domain.entities}
         except Exception as e:
             logger.warning("[SIGNALS] Failed to load domain config for client types: %s", e, exc_info=True)
@@ -660,6 +680,16 @@ class SignalPromoter:
         for sig in signals:
             sig.client_id = own_client(sig) or fallback
         return signals
+
+    def _resolve_person_exact(self, name: str, entity_refs: list[EntityRef]) -> EntityRef:
+        """A person the decision model picked by full name: the resolved ref
+        with exactly that name, else a fresh resolution. No first-name match —
+        the model already chose among exact names."""
+        name_lower = name.strip().lower()
+        for ref in entity_refs:
+            if ref.type == "person" and ref.name.lower() == name_lower:
+                return ref
+        return self._resolve_entity("person", name)
 
     def _resolve_owner(self, owner_name: str, entity_refs: list[EntityRef]) -> EntityRef | None:
         """Match an action item owner name against already-resolved entity refs.
