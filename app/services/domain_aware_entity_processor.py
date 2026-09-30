@@ -16,6 +16,7 @@ from app.git_ops import git_ops
 from app.model_schemas.domain_config import DomainConfiguration
 from app.services.claude_client import ClaudeClient
 from app.services.prompt_template_engine import PromptTemplateEngine
+from app.utils.event_time import ASSERTIONS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,8 @@ class DomainAwareEntityProcessor:
         ``relationship_keys`` (the entity type's domain relationship types,
         ``managed_by``...) are graph-owned too: only the verified relationship
         path writes them, so the profile writer can neither drop a verified
-        edge nor add an unverified one."""
+        edge nor add an unverified one. The same holds for their
+        ``relationship_assertions`` evidence."""
         if not profile_content.startswith("---"):
             return profile_content
         parts = profile_content.split("---", 2)
@@ -169,7 +171,9 @@ class DomainAwareEntityProcessor:
                 frontmatter["aliases"] = merged
             else:
                 frontmatter[key] = existing_attrs[key]
-        for key in relationship_keys:
+        # Per-assertion evidence (ADR-004) belongs to those edges: without it a
+        # rebuild recreates them unattributed, losing when they happened.
+        for key in (*relationship_keys, ASSERTIONS_KEY):
             if (existing_attrs or {}).get(key):
                 frontmatter[key] = existing_attrs[key]
             else:
