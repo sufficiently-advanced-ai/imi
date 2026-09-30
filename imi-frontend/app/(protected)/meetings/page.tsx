@@ -112,7 +112,7 @@ function MeetingRow({
           {meeting.key_points.length > 0 && (
             <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
               {meeting.key_points.slice(0, 3).map((kp, i) => (
-                <li key={i} className="line-clamp-1">
+                <li key={i} className="truncate">
                   {kp}
                 </li>
               ))}
