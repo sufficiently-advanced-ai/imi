@@ -23,8 +23,8 @@ Nothing is deleted. The hidden signal keeps its place in its meeting's file
 with ``metadata.duplicate_of`` naming the kept one, so provenance, uuid5 IDs
 and idempotent re-ingest are untouched; clearing the key undoes it. An EARLIER
 signal is only hidden while unreviewed and not instruction-grade — a confirmed
-record is never retired in favour of a fresh extraction (the new one is hidden
-behind it instead). Overlaps are recorded as ``metadata.related_signals`` on
+record is never retired in favour of a fresh extraction (the two are linked
+instead). Overlaps are recorded as ``metadata.related_signals`` on
 the new signal. Read paths hide duplicates by default and report corroborating
 meetings on the kept signal (``resolve_hidden`` / ``corroborations``).
 
@@ -224,7 +224,8 @@ def decide_action(
     less complete side (by event time) only when the kept side omits none of
     its claims (``p_kept_omits`` < OMIT_MAX_PROBABILITY); otherwise the pair
     is linked. A standing signal someone reviewed or confirmed is never
-    retired behind a fresh extraction; the incoming one is hidden instead.
+    retired behind a fresh extraction: when the incoming one is richer, the
+    two are linked instead.
     """
     if p >= HIDE_MIN_PROBABILITY and relation == "same":
         return "hide_new"
@@ -233,9 +234,11 @@ def decide_action(
             return "link"
         hide_later = relation == "earlier_richer"
         hide_new = hide_later == candidate.new_is_later
-        if hide_new or not _may_hide(candidate.old):
+        if hide_new:
             return "hide_new"
-        return "hide_old"
+        # The richer statement is the incoming one, but the standing one has
+        # been reviewed or confirmed: keep both visible and link them.
+        return "hide_old" if _may_hide(candidate.old) else "link"
     if relation == "overlap" and p >= LINK_MIN_PROBABILITY:
         return "link"
     return "none"

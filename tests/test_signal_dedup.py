@@ -92,8 +92,10 @@ def test_decide_action_rules():
     assert decide_action("same", 0.8, c) == "hide_new"
     assert decide_action("earlier_richer", 0.6, c) == "hide_new"
     assert decide_action("later_richer", 0.6, c) == "hide_old"
-    # A confirmed record is never retired behind a fresh extraction.
-    assert decide_action("later_richer", 0.9, DuplicateCandidate(new, confirmed, 0.9)) == "hide_new"
+    # A confirmed record is never retired behind a fresh extraction, and the
+    # richer incoming one is not hidden either: they are linked.
+    assert decide_action("later_richer", 0.9, DuplicateCandidate(new, confirmed, 0.9)) == "link"
+    assert decide_action("earlier_richer", 0.9, DuplicateCandidate(new, confirmed, 0.9)) == "hide_new"
     assert decide_action("later_richer", 0.4, c) == "none"
     assert decide_action("overlap", 0.7, c) == "link"
     assert decide_action("different", 0.99, c) == "none"
