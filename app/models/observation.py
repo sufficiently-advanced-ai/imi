@@ -48,6 +48,29 @@ def _parse_dt(value):
         return None
 
 
+def _header_lines(title: str, participants: list[str]) -> list[str]:
+    parts = [f"# {title}", ""]
+    if participants:
+        parts.append("## Participants")
+        parts.append("")
+        for p in participants:
+            parts.append(f"- {p}")
+        parts.append("")
+    return parts
+
+
+def build_observation_header(title: str, participants: list[str]) -> str:
+    """Title + participants block that opens every observation body."""
+    return "\n".join(_header_lines(title, participants))
+
+
+def build_observation_body(title: str, content: str, participants: list[str]) -> str:
+    """The markdown body signals are promoted from: header + the raw content
+    under ## Discussion. A summarized document does not store this body — it
+    is rebuilt from the transcript on parse (see from_markdown)."""
+    return "\n".join([*_header_lines(title, participants), "## Discussion", "", content])
+
+
 class Observation(BaseModel):
     """A finalized piece of observed content ready for signal extraction."""
 
@@ -80,6 +103,13 @@ class Observation(BaseModel):
     lane: str = "record"
     authors: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
+    # Synthesized meeting summary (app/services/meeting_synthesis.py). When
+    # set, the document body is the summary instead of the Discussion copy of
+    # the transcript; summary_prompt records which prompt version wrote it and
+    # marks the body as a summary on parse. Never extraction input.
+    summary: str | None = None
+    purpose: str | None = None
+    summary_prompt: str | None = None
     status: str = "completed"
     is_finalized: bool = True
     update_count: int = 1
@@ -150,9 +180,22 @@ class Observation(BaseModel):
             for kp in self.key_points:
                 frontmatter.append(f"  - {_yaml_escape(kp)}")
 
+        # A summary without the transcript it summarizes could not be parsed
+        # back into extraction input, so it is only written alongside one.
+        summarized = bool(self.summary and self.raw_content)
+        if summarized:
+            if self.purpose:
+                frontmatter.append(f"purpose: {_yaml_escape(self.purpose)}")
+            frontmatter.append(f"summary_prompt: {_yaml_escape(self.summary_prompt or 'unknown')}")
+
         frontmatter.append("---")
 
-        output = "\n".join(frontmatter) + "\n\n" + self.content
+        if summarized:
+            header = build_observation_header(self.title or "", self.participants)
+            body = header.rstrip() + "\n\n" + self.summary.strip()
+        else:
+            body = self.content
+        output = "\n".join(frontmatter) + "\n\n" + body
         if self.raw_content:
             output += "\n\n## Full Transcript\n\n" + self.raw_content
         return output
@@ -177,6 +220,17 @@ class Observation(BaseModel):
         else:
             content = raw
 
+        # A summarized document stores the summary as its body; the extraction
+        # body is rebuilt from the transcript exactly as BUILD_MEETING built it.
+        summary = None
+        summary_prompt = frontmatter.get("summary_prompt")
+        participants = frontmatter.get("participants") or []
+        if summary_prompt and raw_content:
+            title = str(frontmatter.get("title") or "")
+            header = build_observation_header(title, participants).strip()
+            summary = content[len(header):].strip() if content.startswith(header) else content
+            content = build_observation_body(title, raw_content, participants)
+
         observed_at = _parse_dt(frontmatter["updated_at"])
         if observed_at is None:
             raise ValueError(
@@ -195,11 +249,14 @@ class Observation(BaseModel):
             occurred_at=_parse_dt(frontmatter.get("start_time")),
             recorded_at=_parse_dt(frontmatter.get("recorded_at")),
             time_source=frontmatter.get("time_source") or TIME_SOURCE_UNRECORDED,
-            participants=frontmatter.get("participants") or [],
+            participants=participants,
             entity_ids=frontmatter.get("entity_ids") or [],
             lane=frontmatter.get("lane") or "record",
             authors=frontmatter.get("authors") or [],
             key_points=frontmatter.get("key_points") or [],
+            summary=summary,
+            purpose=frontmatter.get("purpose") if summary else None,
+            summary_prompt=summary_prompt if summary else None,
             status=frontmatter.get("status", "completed"),
             is_finalized=frontmatter.get("is_finalized", False),
             update_count=frontmatter.get("update_count", 0),

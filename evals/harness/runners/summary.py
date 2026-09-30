@@ -59,7 +59,7 @@ SHOULD_JUDGE_ITEMS = [
 
 def parse_output(output: str) -> tuple[str, str]:
     """Parse the finalization output with the same parser the full pipeline
-    uses (vendored in harness.finalization_parsing): returns (title, summary).
+    uses (app.services.meeting_synthesis, via harness.finalization_parsing): returns (title, summary).
     Legacy free-text outputs fall back to heading-derived titles the same
     way production does."""
     from evals.harness.finalization_parsing import parse_finalization_response
