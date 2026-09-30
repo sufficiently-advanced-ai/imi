@@ -378,7 +378,19 @@ async def triage_signals(
                 sig.id[:8], observation.external_id, e,
             )
             return
-        keep = apply_verdict(sig, verdict, mode, resolve_person)
+        # apply_verdict edits in place; a failure part-way must not leave a
+        # half-applied signal or abort the rest of the batch.
+        snapshot = sig.model_copy(deep=True)
+        try:
+            keep = apply_verdict(sig, verdict, mode, resolve_person)
+        except Exception as e:
+            for field in type(sig).model_fields:
+                setattr(sig, field, getattr(snapshot, field))
+            logger.warning(
+                "[TRIAGE] Applying verdict failed for %s of %s, keeping heuristics: %s",
+                sig.id[:8], observation.external_id, e,
+            )
+            return
         if not keep:
             dropped.add(i)
         h = sig.metadata["triage"]["heuristic"]

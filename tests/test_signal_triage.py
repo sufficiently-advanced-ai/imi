@@ -164,6 +164,30 @@ async def test_failure_leaves_heuristics_untouched():
 
 
 @pytest.mark.asyncio
+async def test_failure_applying_a_verdict_restores_that_signal_only():
+    calls = []
+
+    def resolve(name):  # the first lookup (signal "a") blows up, later ones work
+        calls.append(name)
+        if len(calls) == 1:
+            raise RuntimeError("graph lookup blew up")
+        return _resolve(name)
+
+    # retype succeeds, then the owner lookup raises part-way through apply_verdict
+    broken = _sig("a", "decision", metadata={"tier": "candidate"}, client_id="account-globex")
+    fine = _sig("b", "action_item", owner=SARAH, status="open")
+    fake = _Fake({"type": {"action_item": 0.95, "none": 0.05},
+                  "owner": {"Sarah Kim": 0.9, "none": 0.1},
+                  "client": {"Acme": 0.92, "none": 0.08}})
+    kept = await triage_signals([broken, fine], _obs(), REFS, {"account"}, resolve, client=fake)
+
+    assert kept == [broken, fine]
+    assert broken.type == "decision" and broken.status is None and broken.owner is None
+    assert broken.metadata == {"tier": "candidate"} and broken.client_id == "account-globex"
+    assert fine.owner == SARAH_K and fine.metadata["triage"]["applied"] == ["owner", "client"]
+
+
+@pytest.mark.asyncio
 async def test_one_call_per_signal_with_only_that_signal_in_state():
     sigs = [_sig(f"s{i}", "insight", content=f"Insight number {i} about the plan") for i in range(3)]
     fake = _Fake({"type": {"insight": 0.9, "none": 0.1}, "firmness": {"firm": 0.5, "proposed": 0.5},
