@@ -3946,6 +3946,7 @@ class Neo4jKnowledgeGraph:
             "total_edges": len(self.edges),
             "entity_counts": dict(entity_counts),
             "total_documents": len(self.document_entities),
+            "last_build": self.last_build.isoformat() if self.last_build else None,
             "connection_density": len(self.edges)
             / max(1, len(self.nodes) * (len(self.nodes) - 1) / 2),
         }

@@ -652,3 +652,21 @@ class TestInvalidateCache:
         assert len(graph.edges) == 1
         assert len(graph.document_entities) == 1
         assert len(graph.entity_documents) == 1
+
+
+class TestGraphStats:
+    """GET /api/memory/graph/stats validates _get_graph_stats() against
+    GraphStatsResponse, so the dict must carry every field the model needs."""
+
+    def test_stats_include_last_build(self, graph):
+        from datetime import datetime
+
+        from app.routes.memory import GraphStatsResponse
+
+        assert graph._get_graph_stats()["last_build"] is None
+        GraphStatsResponse(**graph._get_graph_stats())
+
+        graph.last_build = datetime(2026, 9, 30, 12, 0, 0)
+        stats = graph._get_graph_stats()
+        assert stats["last_build"] == "2026-09-30T12:00:00"
+        assert GraphStatsResponse(**stats).last_build == "2026-09-30T12:00:00"
