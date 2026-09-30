@@ -1,12 +1,15 @@
 /**
- * Types for Meeting History feature (Issue #583, #585)
+ * Types for the Meetings API (app/routes/meetings.py): meeting documents in
+ * the corpus, ordered by when they happened.
  */
 
 export interface MeetingHistoryStats {
   total_meetings: number;
-  total_duration_minutes: number;
   meetings_with_transcripts: number;
-  meetings_with_recordings: number;
+  meetings_summarized: number;
+  total_signals: number;
+  first_meeting: string | null;
+  last_meeting: string | null;
 }
 
 export interface EntityCounts {
@@ -17,26 +20,27 @@ export interface EntityCounts {
   decisions: number;
 }
 
+export interface SignalCounts {
+  decision: number;
+  action_item: number;
+  key_point: number;
+  insight: number;
+}
+
 export interface MeetingHistoryItem {
   id: string;
-  bot_id: string | null;
-  calendar_id: string | null;
-  calendar_meeting_id: string | null;
+  bot_id: string;
   title: string;
-  start_time: string;
-  end_time: string;
-  duration_minutes: number;
+  start_time: string | null;
+  time_source: string | null;
+  participants: string[];
   attendee_count: number;
-  meeting_type: 'EXTERNAL' | 'INTERNAL';
-  platform: string;
-  meeting_url: string | null;
+  purpose: string | null;
+  key_points: string[];
+  summarized: boolean;
   has_transcript: boolean;
-  has_recording: boolean;
-  extraction_status: 'pending' | 'processing' | 'completed' | 'failed';
-  bot_status?: 'none' | 'scheduled' | 'in_call' | 'done';
-  is_past?: boolean;
-  extraction_step?: 'processing_transcript' | 'extracting_entities';
-  entity_counts?: EntityCounts | null;
+  lane: string;
+  signal_counts: SignalCounts;
 }
 
 export interface MeetingHistoryListResponse {
@@ -49,25 +53,17 @@ export interface MeetingHistoryListResponse {
 export interface MeetingHistoryFilters {
   start_date?: string;
   end_date?: string;
-  platform?: string;
+  q?: string;
   has_transcript?: boolean;
-  has_recording?: boolean;
   cursor?: string;
   page_size?: number;
 }
 
-export interface ExtractionStatus {
-  meeting_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  extraction_step?: 'processing_transcript' | 'extracting_entities';
-  progress?: number;
-  entity_counts?: {
-    people: number;
-    projects: number;
-    accounts: number;
-    action_items: number;
-    decisions: number;
-  };
-  error?: string | null;
-  updated_at: string;
+export interface MeetingSignal {
+  id: string;
+  type: "decision" | "action_item" | "key_point" | "insight" | string;
+  content: string;
+  owner: string | null;
+  status: string | null;
+  position: number;
 }

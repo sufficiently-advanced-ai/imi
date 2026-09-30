@@ -146,6 +146,11 @@ def _configure(app: "FastAPI") -> None:
     app.include_router(signal_mutations_router, tags=["signals"])
     app.include_router(type_registry_router, tags=["type-registry"])
 
+    # Register meetings routes (corpus meeting documents)
+    from .routes.meetings import router as meetings_router
+
+    app.include_router(meetings_router, tags=["meetings"])
+
     # Register decisions routes (Issue #954)
     from .routes.decisions import router as decisions_router
 
