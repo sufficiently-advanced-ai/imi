@@ -21,10 +21,8 @@ Same contract as the other decision operations: batched, never raises,
 ``off``/``shadow``/``on``. ``shadow`` (the default whenever an endpoint serves
 the operation) records the verdicts in ``signal.metadata["triage"]`` next to
 what the heuristics chose, and changes nothing else. ``on`` acts on confident
-answers; its bars are provisional until ``scripts/eval_signal_triage.py`` and
-shadow verdicts from a real KB calibrate them. They are asymmetric like the
-other ops: promoting a proposal to a firm decision (it then feeds the
-constitution and supersession) needs more confidence than demoting one.
+answers (bars below). Promoting a proposal to a firm decision (it then feeds
+the constitution and supersession) needs more confidence than demoting one.
 """
 
 from __future__ import annotations
@@ -39,17 +37,23 @@ logger = logging.getLogger(__name__)
 TRIAGE_OPERATION = "signal_promotion_triage"
 SIGNAL_TYPES = ("decision", "action_item", "key_point", "insight")
 
-# Provisional bars (uncalibrated) — used only in ``on`` mode.
+# Bars for ``on`` mode. Firmness is set from scripts/eval_signal_triage.py
+# (3 runs, 2026-09-30): clear firm/proposed calls scored 1.00, while a stated
+# fact recorded as a decision ("the budget is $40k") drew `proposed` at
+# 0.78-0.81. Both firmness bars sit above that, promotion the higher of the
+# two. The rest are provisional: the synthetic set has no near-bar misses for
+# them. Recalibrate from shadow verdicts on a real KB before turning `on`.
 RETYPE_MIN_PROBABILITY = 0.85
 DROP_MIN_PROBABILITY = 0.85
-FIRM_MIN_PROBABILITY = 0.85  # a proposal becomes a firm decision
-TENTATIVE_MIN_PROBABILITY = 0.70  # a firm decision becomes a candidate
+FIRM_MIN_PROBABILITY = 0.95  # a proposal becomes a firm decision
+TENTATIVE_MIN_PROBABILITY = 0.90  # a firm decision becomes a candidate
 OWNER_MIN_PROBABILITY = 0.75
 CLIENT_MIN_PROBABILITY = 0.75
 
-# Signals per decide() call. Each signal asks up to four questions, and every
-# call carries the meeting text, so chunks keep a busy meeting's request small.
-SIGNALS_PER_CALL = 8
+# One decide() per signal: the state is the meeting plus that one signal, so
+# every question unambiguously refers to it. (Several signals in one state
+# with per-signal question names scored near chance in the eval: the model
+# cannot tell which signal "the SIGNAL" means.)
 MAX_BODY_CHARS = 40_000
 
 _TYPE_CRITERIA = {
@@ -79,10 +83,10 @@ def _firmness_question():
 
     return Choice(
         instructions=(
-            "The SIGNAL was recorded as a decision. In the meeting text, was it decided, "
+            "Treat the SIGNAL as a possible decision. In the meeting text, was it decided, "
             "or only raised? Count it as firm only if the people who could decide agreed "
-            "to it; a suggestion, an option under discussion, or a plan pending someone "
-            "else's approval is proposed."
+            "to it or stated it as settled; a suggestion, an option under discussion, or a "
+            "plan pending someone else's approval is proposed."
         ),
         criteria={
             "firm": "Decided: the group committed to it and is expected to act on it.",
@@ -96,7 +100,7 @@ def _owner_question(options: dict[str, str]):
 
     return Choice(
         instructions=(
-            "The SIGNAL is an action item. Who in the meeting took it on or was assigned "
+            "Treat the SIGNAL as a task. Who in the meeting took it on or was assigned "
             "it? Pick the person the meeting text names or clearly implies. Pick none if "
             "no one is named, the owner is an unnamed role, or it is someone not listed."
         ),
@@ -128,15 +132,13 @@ def _meeting_state(observation: Any, participants: list[str]) -> dict:
     }
 
 
-def _person_options(signals: list[Any], entity_refs: list[Any], participants: list[str]) -> list[str]:
-    """Every name an owner could be: participants, people the meeting
-    mentions, and the owners the extractor already named. Deduped, ordered."""
+def _person_options(entity_refs: list[Any], participants: list[str]) -> list[str]:
+    """Every name an owner could be: participants and the people the meeting
+    mentions. Not the owners the heuristic resolved — those may be the junk
+    this question exists to catch ("Initech IT team" minted as a person)."""
     names: list[str] = []
     seen: set[str] = set()
-    candidates = list(participants)
-    candidates += [r.name for r in entity_refs if r.type == "person"]
-    candidates += [s.owner.name for s in signals if s.owner is not None]
-    for name in candidates:
+    for name in [*participants, *(r.name for r in entity_refs if r.type == "person")]:
         key = (name or "").strip().lower()
         if key and key not in seen:
             seen.add(key)
@@ -148,33 +150,21 @@ def _key(prefix: str, i: int) -> str:
     return f"{prefix}{i}"
 
 
-def build_questions(
-    signals: list[tuple[int, Any]],
-    people: list[str],
-    clients: list[Any],
-) -> dict:
-    """Questions for one chunk: ``s<i>_type`` for every signal, ``s<i>_firm``
-    for decisions, ``s<i>_owner`` for action items (when there are people to
-    choose from), ``s<i>_client`` when the meeting has client entities."""
-    person_opts = {_key("p", i): name for i, name in enumerate(people)}
-    client_opts = {_key("c", i): ref.name for i, ref in enumerate(clients)}
-    questions: dict = {}
-    for i, sig in signals:
-        questions[f"s{i}_type"] = _type_question()
-        if sig.type == "decision":
-            questions[f"s{i}_firm"] = _firmness_question()
-        if sig.type == "action_item" and person_opts:
-            questions[f"s{i}_owner"] = _owner_question(person_opts)
-        if client_opts:
-            questions[f"s{i}_client"] = _client_question(client_opts)
+def build_questions(people: list[str], clients: list[Any]) -> dict:
+    """Every question for one signal. Firmness and owner are asked whatever
+    the extracted type, so a retyped signal still gets them; they are applied
+    only to the type the signal ends up with. Owner needs people and client
+    needs client entities to choose from."""
+    questions: dict = {"type": _type_question(), "firmness": _firmness_question()}
+    if people:
+        questions["owner"] = _owner_question({_key("p", i): name for i, name in enumerate(people)})
+    if clients:
+        questions["client"] = _client_question({_key("c", i): ref.name for i, ref in enumerate(clients)})
     return questions
 
 
-def build_state(meeting: dict, signals: list[tuple[int, Any]]) -> dict:
-    return {
-        "meeting": meeting,
-        "signals": {f"s{i}": {"type": sig.type, "content": sig.content} for i, sig in signals},
-    }
+def build_state(meeting: dict, signal: Any) -> dict:
+    return {"meeting": meeting, "signal": {"type": signal.type, "content": signal.content}}
 
 
 def _answer(result: Any, name: str) -> dict | None:
@@ -188,19 +178,19 @@ def _answer(result: Any, name: str) -> dict | None:
     }
 
 
-def verdict_for(result: Any, i: int, people: list[str], clients: list[Any]) -> dict:
-    """The model's answers for signal ``i`` with option ids mapped back to
+def verdict_for(result: Any, people: list[str], clients: list[Any]) -> dict:
+    """The model's answers for one signal with option ids mapped back to
     names and entity ids."""
     verdict: dict = {}
-    if t := _answer(result, f"s{i}_type"):
+    if t := _answer(result, "type"):
         verdict["type"] = t
-    if f := _answer(result, f"s{i}_firm"):
+    if f := _answer(result, "firmness"):
         verdict["firmness"] = f
-    if o := _answer(result, f"s{i}_owner"):
+    if o := _answer(result, "owner"):
         choice = o["choice"]
         o["name"] = people[int(choice[1:])] if choice.startswith("p") else None
         verdict["owner"] = o
-    if c := _answer(result, f"s{i}_client"):
+    if c := _answer(result, "client"):
         choice = c["choice"]
         c["client_id"] = clients[int(choice[1:])].id if choice.startswith("c") else None
         verdict["client"] = c
@@ -298,7 +288,7 @@ async def triage_signals(
     """Judge a meeting's freshly promoted signals. Returns the signals to
     keep (all of them unless ``on`` mode drops some), annotated in place.
 
-    Never raises: a failed chunk leaves its signals exactly as the heuristics
+    Never raises: a failed call leaves its signal exactly as the heuristics
     left them.
     """
     if not signals:
@@ -314,40 +304,36 @@ async def triage_signals(
     from app.services.inference.decisions import DecisionUnavailable
 
     participants = [p for p in (observation.participants or []) if isinstance(p, str) and p.strip()]
-    people = _person_options(signals, entity_refs, participants)[:254]
+    people = _person_options(entity_refs, participants)[:254]
     clients = [r for r in entity_refs if r.type in client_type_ids][:254]
     meeting = _meeting_state(observation, participants)
-    indexed = list(enumerate(signals))
-    chunks = [indexed[i:i + SIGNALS_PER_CALL] for i in range(0, len(indexed), SIGNALS_PER_CALL)]
+    questions = build_questions(people, clients)
     dropped: set[int] = set()
 
-    async def one(chunk: list[tuple[int, Any]]) -> None:
+    async def one(i: int, sig: Any) -> None:
         try:
             result = await client.decide(
-                build_state(meeting, chunk),
-                build_questions(chunk, people, clients),
-                operation=TRIAGE_OPERATION,
+                build_state(meeting, sig), questions, operation=TRIAGE_OPERATION
             )
-            verdicts = [(i, sig, verdict_for(result, i, people, clients)) for i, sig in chunk]
+            verdict = verdict_for(result, people, clients)
         except (DecisionUnavailable, ValueError, KeyError, TypeError, IndexError) as e:
             logger.warning(
-                "[TRIAGE] Judgment failed for %d signals of %s, keeping heuristics: %s",
-                len(chunk), observation.external_id, e,
+                "[TRIAGE] Judgment failed for %s of %s, keeping heuristics: %s",
+                sig.id[:8], observation.external_id, e,
             )
             return
-        for i, sig, verdict in verdicts:
-            keep = apply_verdict(sig, verdict, mode, resolve_person)
-            if not keep:
-                dropped.add(i)
-            h = sig.metadata["triage"]["heuristic"]
-            logger.info(
-                "[TRIAGE] %s %s type %s->%s firm=%s owner %s->%s client %s->%s%s",
-                mode, sig.id[:8], h["type"], verdict.get("type", {}).get("choice"),
-                verdict.get("firmness", {}).get("choice"),
-                h["owner"], verdict.get("owner", {}).get("name"),
-                h["client_id"], verdict.get("client", {}).get("client_id"),
-                " DROP" if not keep else "",
-            )
+        keep = apply_verdict(sig, verdict, mode, resolve_person)
+        if not keep:
+            dropped.add(i)
+        h = sig.metadata["triage"]["heuristic"]
+        logger.info(
+            "[TRIAGE] %s %s type %s->%s firm=%s owner %s->%s client %s->%s%s",
+            mode, sig.id[:8], h["type"], verdict.get("type", {}).get("choice"),
+            verdict.get("firmness", {}).get("choice"),
+            h["owner"], verdict.get("owner", {}).get("name"),
+            h["client_id"], verdict.get("client", {}).get("client_id"),
+            " DROP" if not keep else "",
+        )
 
-    await asyncio.gather(*(one(c) for c in chunks))
-    return [sig for i, sig in indexed if i not in dropped]
+    await asyncio.gather(*(one(i, sig) for i, sig in enumerate(signals)))
+    return [sig for i, sig in enumerate(signals) if i not in dropped]

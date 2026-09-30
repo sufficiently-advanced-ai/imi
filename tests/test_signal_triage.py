@@ -49,7 +49,7 @@ def _choice(probs):
 
 class _Fake:
     """Scripted Jev: answers each question from ``script[suffix]`` (e.g.
-    ``type``/``firm``/``owner``/``client``), keyed by option name."""
+    ``type``/``firmness``/``owner``/``client``), keyed by option name."""
 
     def __init__(self, script, mode="on", fail=False):
         self.script, self._mode, self.fail, self.calls = script, mode, fail, []
@@ -64,8 +64,10 @@ class _Fake:
             raise DecisionUnavailable("upstream 500")
         answers = {}
         for name, q in questions.items():
-            suffix = name.split("_", 1)[1]
-            by_label = self.script[suffix]
+            # unscripted questions answer "none", or split evenly
+            opts = list(q.criteria)
+            by_label = self.script.get(name) or (
+                {"none": 1.0} if "none" in opts else {o: 1 / len(opts) for o in opts})
             # map option labels (names) back to option ids
             label_to_id = {v: k for k, v in q.criteria.items()}
             probs = {label_to_id.get(k, k): v for k, v in by_label.items()}
@@ -73,14 +75,12 @@ class _Fake:
         return DecisionResult(answers, "jev", "fake", 0, 0, 0.0, 0, {})
 
 
-def test_questions_follow_signal_type_and_meeting_options():
-    sigs = [(0, _sig("a", "decision")), (1, _sig("b", "action_item")), (2, _sig("c", "insight"))]
-    q = build_questions(sigs, ["Sarah Chen"], [ACME])
-    assert set(q) == {"s0_type", "s0_firm", "s0_client", "s1_type", "s1_owner", "s1_client",
-                      "s2_type", "s2_client"}
-    assert q["s1_owner"].criteria == {"p0": "Sarah Chen", "none": "No listed person owns it."}
-    no_clients = build_questions(sigs, [], [])
-    assert not any(k.endswith(("_owner", "_client")) for k in no_clients)
+def test_questions_offer_only_the_meetings_people_and_clients():
+    q = build_questions(["Sarah Chen"], [ACME])
+    assert set(q) == {"type", "firmness", "owner", "client"}
+    assert q["owner"].criteria == {"p0": "Sarah Chen", "none": "No listed person owns it."}
+    assert q["client"].criteria == {"c0": "Acme", "none": "It concerns no listed client."}
+    assert set(build_questions([], [])) == {"type", "firmness"}
 
 
 @pytest.mark.asyncio
@@ -120,14 +120,19 @@ def test_firmness_bars_are_asymmetric():
     assert firm_weak.metadata["tier"] == "candidate"  # not confident enough to promote
 
     firm_strong = _sig("b", "decision", metadata={"tier": "candidate"})
-    apply_verdict(firm_strong, {"firmness": {"choice": "firm", "probabilities": {"firm": 0.9, "proposed": 0.1}}},
+    apply_verdict(firm_strong, {"firmness": {"choice": "firm", "probabilities": {"firm": 0.97, "proposed": 0.03}}},
                   "on", _resolve)
     assert "tier" not in firm_strong.metadata
 
     proposed = _sig("c", "decision")
-    apply_verdict(proposed, {"firmness": {"choice": "proposed", "probabilities": {"firm": 0.28, "proposed": 0.72}}},
+    apply_verdict(proposed, {"firmness": {"choice": "proposed", "probabilities": {"firm": 0.07, "proposed": 0.93}}},
                   "on", _resolve)
     assert proposed.metadata["tier"] == "candidate"
+
+    fact = _sig("d", "decision")  # "the budget is $40k": a fact, drawn toward proposed
+    apply_verdict(fact, {"firmness": {"choice": "proposed", "probabilities": {"firm": 0.2, "proposed": 0.8}}},
+                  "on", _resolve)
+    assert "tier" not in fact.metadata
 
 
 def test_on_mode_retypes_and_drops_only_when_confident():
@@ -159,11 +164,13 @@ async def test_failure_leaves_heuristics_untouched():
 
 
 @pytest.mark.asyncio
-async def test_signals_are_chunked_per_call():
-    sigs = [_sig(f"s{i}", "insight") for i in range(signal_triage.SIGNALS_PER_CALL + 3)]
-    fake = _Fake({"type": {"insight": 0.9, "none": 0.1}, "client": {"none": 0.9, "Acme": 0.1}}, mode="shadow")
+async def test_one_call_per_signal_with_only_that_signal_in_state():
+    sigs = [_sig(f"s{i}", "insight", content=f"Insight number {i} about the plan") for i in range(3)]
+    fake = _Fake({"type": {"insight": 0.9, "none": 0.1}, "firmness": {"firm": 0.5, "proposed": 0.5},
+                  "owner": {"none": 0.9, "Sarah Chen": 0.1}, "client": {"none": 0.9, "Acme": 0.1}}, mode="shadow")
     kept = await triage_signals(sigs, _obs(), REFS, {"account"}, _resolve, client=fake)
-    assert len(kept) == len(sigs) and len(fake.calls) == 2
+    assert len(kept) == 3 and len(fake.calls) == 3
+    assert sorted(state["signal"]["content"] for state, _ in fake.calls) == [s.content for s in sigs]
     assert all("triage" in s.metadata for s in sigs)
 
 
