@@ -649,12 +649,15 @@ class SignalPromoter:
 
     @staticmethod
     def _client_type_ids() -> set[str]:
-        """Entity type IDs treated as the 'client' scope for the active domain."""
+        """Entity type IDs treated as the 'client' scope for the active domain:
+        the domain's ``client_entity_types`` when it sets them (``[]`` = none),
+        else 'client' if present, else 'account' (relabel mode)."""
         try:
             from app.core.domain_config.domain_config_service import get_domain_config_service
             domain = get_domain_config_service().get_active_domain()
+            if domain is not None and getattr(domain, "client_entity_types", None) is not None:
+                return set(domain.client_entity_types)
             if domain and domain.entities:
-                # 'client' if present, else 'account' (relabel mode), else nothing
                 return {t for t in ("client", "account") if t in domain.entities}
         except Exception as e:
             logger.warning("[SIGNALS] Failed to load domain config for client types: %s", e, exc_info=True)

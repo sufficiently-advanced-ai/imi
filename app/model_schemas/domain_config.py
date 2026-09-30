@@ -260,6 +260,16 @@ class DomainConfiguration(BaseModel):
     extraction_priorities: dict[str, ExtractionPriority] = Field(default_factory=dict)
     success_metrics: list[SuccessMetric] = Field(default_factory=list)
     ui: UILabels | None = Field(default=None, description="UI terminology and labeling configuration")
+    client_entity_types: list[str] | None = Field(
+        default=None,
+        description=(
+            "Entity types whose entities are paying clients: a signal's client_id "
+            "(constitution grouping, client filters) is only ever one of these. "
+            "Unset = the 'client' type if the domain has one, else 'account'. "
+            "[] = no automatic client scope (e.g. a personal KB whose accounts are "
+            "employers, partners and vendors, not clients)."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
@@ -303,6 +313,13 @@ class DomainConfiguration(BaseModel):
                 if has_cycle(node, visited, set()):
                     return True
         return False
+
+    @model_validator(mode="after")
+    def validate_client_entity_types(self) -> "DomainConfiguration":
+        unknown = [t for t in self.client_entity_types or [] if t not in self.entities]
+        if unknown:
+            raise ValueError(f"client_entity_types names undefined entity types: {unknown}")
+        return self
 
     @model_validator(mode="after")
     def validate_inverse_names(self) -> "DomainConfiguration":

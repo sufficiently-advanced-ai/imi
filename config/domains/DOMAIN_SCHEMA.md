@@ -57,6 +57,11 @@ domain:
     - { name: client_retention, type: percentage, target: 95 }
                            # type: count|percentage|time|ratio|score
 
+  client_entity_types: [client]   # optional — which types are paying clients, i.e. what a
+                           # signal's client_id may point at. Unset = `client` if defined,
+                           # else `account`; [] = no automatic client scope (use when
+                           # accounts are employers/partners/vendors, not clients)
+
   ui:                      # frontend labels — no rebuild needed
     app_name: "Practice Brain"
     entity_label: "Clients & Engagements"
