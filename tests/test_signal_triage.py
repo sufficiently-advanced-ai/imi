@@ -200,3 +200,29 @@ def test_long_meetings_send_the_segments_that_match_the_signal():
     assert len(text) <= signal_triage.SEGMENT_CHARS * signal_triage.MAX_SEGMENTS + 200
     short = "Omar will configure SSO."
     assert signal_triage.meeting_text(short, sig) == short
+
+
+def test_owner_options_keep_named_heuristic_owners_but_not_minted_phrases():
+    named = _sig("a", "action_item", owner=EntityRef(id="person-sam", type="person", name="Sam"))
+    minted = _sig("b", "action_item", owner=EntityRef(id="person-initech-it-team", type="person",
+                                                      name="Initech IT team"))
+    body = "Sam is building the ad app. Someone from Initech's IT team will send the list."
+    people = signal_triage._person_options([SARAH], ["Scott J"], [named, minted], body)
+    assert people == ["Scott J", "Sarah Chen", "Sam"]
+
+
+def test_clearing_an_owner_needs_more_confidence_than_assigning_one():
+    def owner_verdict(choice, name, p):
+        return {"owner": {"choice": choice, "name": name, "probabilities": {choice: p}}}
+
+    kept = _sig("a", "action_item", owner=SARAH, status="open")
+    apply_verdict(kept, owner_verdict("none", None, 0.79), "on", _resolve)
+    assert kept.owner == SARAH
+
+    cleared = _sig("b", "action_item", owner=SARAH, status="open")
+    apply_verdict(cleared, owner_verdict("none", None, 0.95), "on", _resolve)
+    assert cleared.owner is None
+
+    moved = _sig("c", "action_item", owner=SARAH, status="open")
+    apply_verdict(moved, owner_verdict("p1", "Sarah Kim", 0.8), "on", _resolve)
+    assert moved.owner == SARAH_K

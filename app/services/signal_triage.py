@@ -49,6 +49,9 @@ DROP_MIN_PROBABILITY = 0.85
 FIRM_MIN_PROBABILITY = 0.95  # a proposal becomes a firm decision
 TENTATIVE_MIN_PROBABILITY = 0.90  # a firm decision becomes a candidate
 OWNER_MIN_PROBABILITY = 0.75
+# Clearing an owner loses an assignment: in the eval a true "no owner" scored
+# 1.00, while on a real KB the model cleared a plausible owner at 0.79.
+OWNER_CLEAR_MIN_PROBABILITY = 0.90
 CLIENT_MIN_PROBABILITY = 0.75
 
 # One decide() per signal: the state is the meeting plus that one signal, so
@@ -169,13 +172,24 @@ def meeting_text(body: str, signal: Any) -> str:
     return "\n[...]\n".join(segments[i] for i in best) + "\n[excerpts of a longer meeting]"
 
 
-def _person_options(entity_refs: list[Any], participants: list[str]) -> list[str]:
-    """Every name an owner could be: participants and the people the meeting
-    mentions. Not the owners the heuristic resolved — those may be the junk
-    this question exists to catch ("Initech IT team" minted as a person)."""
+def _person_options(
+    entity_refs: list[Any], participants: list[str], signals: list[Any], body: str
+) -> list[str]:
+    """Every name an owner could be: participants, the people the meeting
+    mentions and the people its signals reference. A name the heuristic
+    resolved as an owner joins only if the meeting text says it verbatim
+    ("Sam" does; "Initech IT team", minted from "Initech's IT team", does not)."""
+    candidates = [*participants, *(r.name for r in entity_refs if r.type == "person")]
+    for sig in signals:
+        candidates += [r.name for r in getattr(sig, "entities", None) or [] if r.type == "person"]
+    text = (body or "").lower()
+    for sig in signals:
+        owner = (sig.owner.name if sig.owner else "") or ""
+        if owner.strip() and re.search(rf"\b{re.escape(owner.strip().lower())}\b", text):
+            candidates.append(owner)
     names: list[str] = []
     seen: set[str] = set()
-    for name in [*participants, *(r.name for r in entity_refs if r.type == "person")]:
+    for name in candidates:
         key = (name or "").strip().lower()
         if key and key not in seen:
             seen.add(key)
@@ -290,7 +304,8 @@ def apply_verdict(
 
     if signal.type == "action_item" and (owner := verdict.get("owner")):
         choice = owner["choice"]
-        if _raw(verdict, "owner", choice) >= OWNER_MIN_PROBABILITY:
+        bar = OWNER_CLEAR_MIN_PROBABILITY if choice == "none" else OWNER_MIN_PROBABILITY
+        if _raw(verdict, "owner", choice) >= bar:
             new_owner = resolve_person(owner["name"]) if owner.get("name") else None
             if (new_owner.id if new_owner else None) != heuristic["owner"]:
                 signal.owner = new_owner
@@ -344,7 +359,7 @@ async def triage_signals(
     from app.services.inference.decisions import DecisionUnavailable
 
     participants = [p for p in (observation.participants or []) if isinstance(p, str) and p.strip()]
-    people = _person_options(entity_refs, participants)[:254]
+    people = _person_options(entity_refs, participants, signals, observation.content or "")[:254]
     clients = [r for r in entity_refs if r.type in client_type_ids][:254]
     meeting = _meeting_state(observation, participants)
     questions = build_questions(people, clients)
