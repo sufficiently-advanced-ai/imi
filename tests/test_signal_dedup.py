@@ -19,6 +19,7 @@ from app.services.signal_dedup import (
     find_duplicate_candidates,
     judge_duplicates,
     resolve_hidden,
+    shown_under,
 )
 
 
@@ -307,7 +308,27 @@ def test_search_ignores_dangling_duplicate_pointers():
         def generate_embeddings(self, text, data_type="text"):
             return [0.1, 0.2]
 
-    exists = {"s1", "s3", "s4"}.__contains__
+    table = {"s1": "gone", "s3": "s4", "s4": None}
+    is_hidden = lambda sid: shown_under(sid, lambda x: (x in table, table.get(x))) is not None  # noqa: E731
     ids = [r["id"] for r in search_signals_semantic(
-        _Store(), _Embedder(), "q", duplicate_target_exists=exists)]
+        _Store(), _Embedder(), "q", is_hidden_duplicate=is_hidden)]
     assert ids == ["s1"]  # s1's target is gone, so it shows; s3 stays hidden under s4
+
+
+@pytest.mark.parametrize("table,expected", [
+    ({"a": "a"}, {}),                                   # self-pointer
+    ({"a": "b", "b": "a"}, {}),                         # two-signal loop
+    ({"a": "gone"}, {}),                                # immediate missing target
+    ({"a": "b", "b": "gone"}, {"a": "b"}),              # A -> B -> missing: shown under B
+    ({"a": "b", "b": "c", "c": None}, {"a": "c", "b": "c"}),  # chain to the root
+    ({"a": "b", "b": "c", "c": "b"}, {}),               # loop further down the chain
+])
+def test_shown_under_is_the_one_rule_for_every_read_path(table, expected):
+    sigs = [_sig(k, "x", metadata={"duplicate_of": v} if v else {}) for k, v in table.items()]
+    assert resolve_hidden(sigs) == expected
+
+    from app.services.memory_recall import _pointer_lookup
+
+    by_id = {s.id: s for s in sigs}
+    for s in sigs:  # recall walks the same chain through its record resolver
+        assert shown_under(s.id, _pointer_lookup(by_id.get, s)) == expected.get(s.id)

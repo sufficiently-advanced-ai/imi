@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.models.lane import Lane
 from app.services.recall_trace_store import record_recall
+from app.services.signal_dedup import shown_under
 from app.services.signal_retrieval import (
     _age_seconds,
     _passes_governance,
@@ -124,6 +125,18 @@ def _resolve_agent_memory(record_id: str):
     from app.services.agent_memory_store import AgentMemoryStore
 
     return AgentMemoryStore().get(record_id)
+
+
+def _pointer_lookup(resolver: Callable[[str], Any], record: Any):
+    """``signal_dedup.PointerLookup`` over a record resolver (``record`` is known)."""
+
+    def lookup(sid: str) -> tuple[bool, str | None]:
+        found = record if sid == getattr(record, "id", None) else resolver(sid)
+        if found is None:
+            return False, None
+        return True, (getattr(found, "metadata", None) or {}).get("duplicate_of")
+
+    return lookup
 
 
 def default_resolvers() -> dict[str, Callable[[str], Any]]:
@@ -291,8 +304,9 @@ async def recall(
             # a pointer at a signal that no longer exists hides nothing.
             dup = (getattr(record, "metadata", None) or {}).get("duplicate_of")
             signal_resolver = resolvers.get("signal")
-            if dup and signal_resolver is not None and signal_resolver(dup) is None:
-                dup = None
+            if dup and signal_resolver is not None:
+                if shown_under(record_id, _pointer_lookup(signal_resolver, record)) is None:
+                    dup = None  # dangling or looping pointer: hides nothing
             hydrated["duplicate_of"] = dup
             hydrated["confidence"] = getattr(record, "confidence", None)
             if hydrated["lane"] != lane:

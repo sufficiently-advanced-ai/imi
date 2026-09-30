@@ -339,47 +339,66 @@ async def judge_duplicates(candidates: list[DuplicateCandidate], client: Any = N
     return outcome
 
 
-def resolve_hidden(signals: list[Any]) -> dict[str, str]:
-    """hidden signal id -> id of the signal it is shown under.
+# Looks up one signal: (exists, its duplicate_of or None).
+PointerLookup = Callable[[str], tuple[bool, str | None]]
 
-    Follows chains (A hidden behind B hidden behind C -> C). A pointer to a
-    signal that does not exist, or a loop, hides nothing — a dangling
-    ``duplicate_of`` must never make a signal disappear.
+
+def shown_under(signal_id: str, lookup: PointerLookup) -> str | None:
+    """The signal ``signal_id`` is shown under, or None if it is visible.
+
+    The single rule every read path uses. Follows chains (A hidden behind B
+    hidden behind C -> C); stops at the last existing signal when a later
+    pointer dangles (A -> B -> missing -> shown under B). A pointer at a
+    signal that does not exist, or any loop (including a self-pointer),
+    hides nothing: a bad ``duplicate_of`` must never make a signal disappear.
     """
-    ids = {s.id for s in signals}
-    pointer = {s.id: (s.metadata or {}).get("duplicate_of") for s in signals}
-
-    def root(sid: str) -> str | None:
-        seen = {sid}
-        cur = pointer.get(sid)
-        while cur in ids and cur not in seen:
-            seen.add(cur)
-            nxt = pointer.get(cur)
-            if nxt not in ids:
-                return cur
-            cur = nxt
+    seen = {signal_id}
+    exists, cur = lookup(signal_id)
+    if not exists:
         return None
+    last = None
+    while cur:
+        if cur in seen:
+            return None
+        cur_exists, nxt = lookup(cur)
+        if not cur_exists:
+            return last
+        seen.add(cur)
+        last, cur = cur, nxt
+    return last
 
-    return {sid: r for sid in ids if (r := root(sid)) is not None}
+
+def resolve_hidden(signals: list[Any]) -> dict[str, str]:
+    """hidden signal id -> id of the signal it is shown under (see ``shown_under``)."""
+    table = {s.id: (s.metadata or {}).get("duplicate_of") for s in signals}
+
+    def lookup(sid: str) -> tuple[bool, str | None]:
+        return sid in table, table.get(sid)
+
+    return {sid: r for sid in table if (r := shown_under(sid, lookup)) is not None}
 
 
-def lazy_signal_exists() -> Callable[[str], bool]:
-    """Existence check over the signal store, loaded on first use only.
+def lazy_is_hidden() -> Callable[[str], bool]:
+    """``shown_under`` over the signal store, loaded on first use only.
 
-    Read paths that filter on vector metadata use it so a ``duplicate_of``
-    pointing at a deleted signal hides nothing (matches ``resolve_hidden``).
+    For read paths that filter on vector metadata (semantic search): the store
+    is read at most once per query, and only when a hit carries the key.
     """
-    ids: set[str] | None = None
+    table: dict[str, str | None] | None = None
 
-    def exists(signal_id: str) -> bool:
-        nonlocal ids
-        if ids is None:
+    def lookup(sid: str) -> tuple[bool, str | None]:
+        nonlocal table
+        if table is None:
             from app.services.signal_store import signal_store
 
-            ids = {s.id for b in signal_store.load_all() for s in b.signals}
-        return signal_id in ids
+            table = {
+                s.id: (s.metadata or {}).get("duplicate_of")
+                for b in signal_store.load_all()
+                for s in b.signals
+            }
+        return sid in table, table.get(sid)
 
-    return exists
+    return lambda sid: shown_under(sid, lookup) is not None
 
 
 def corroborations(signals: list[Any], hidden: dict[str, str] | None = None) -> dict[str, list[dict]]:
