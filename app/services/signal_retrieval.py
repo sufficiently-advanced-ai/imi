@@ -277,13 +277,13 @@ def tenant_matches(record_tenant: str | None, requested: str | None) -> bool:
 def _is_hidden_duplicate(meta: dict, is_hidden: Callable[[str], bool] | None) -> bool:
     """Whether a result is shown under another signal (``signal_dedup``).
 
-    ``is_hidden`` (signal id -> bool) applies ``signal_dedup.shown_under``
-    against the store, so dangling pointers and loops hide nothing; None
-    trusts the pointer (callers without store access).
+    With ``is_hidden`` (signal id -> bool, ``signal_dedup.shown_under`` over
+    the store) the answer is authoritative and ignores the vector's metadata,
+    which can be stale. Without it, the vector's ``duplicate_of`` is trusted.
     """
-    if not meta.get("duplicate_of"):
-        return False
-    return is_hidden is None or is_hidden(meta.get("id") or "")
+    if is_hidden is not None:
+        return is_hidden(meta.get("id") or "")
+    return bool(meta.get("duplicate_of"))
 
 
 def _passes_governance(
@@ -361,12 +361,17 @@ def search_signals_semantic(
 
     # Stores without upsert (FAISS) keep a signal's older vectors after it is
     # re-indexed, so a vector from before the signal was hidden (signal_dedup)
-    # lacks ``duplicate_of``. Hiding is additive: any vector saying so wins.
-    hidden_ids = {
-        (r.get("metadata") or {}).get("id")
-        for r in results or []
-        if _is_hidden_duplicate(r.get("metadata") or {}, is_hidden_duplicate)
-    }
+    # lacks ``duplicate_of``. With ``is_hidden_duplicate`` every result is
+    # checked against the store, so a stale vector cannot leak. Without it,
+    # fall back to "any co-returned vector saying so wins" (best effort: the
+    # vector carrying the key may rank outside this window).
+    hidden_ids: set = set()
+    if is_hidden_duplicate is None:
+        hidden_ids = {
+            (r.get("metadata") or {}).get("id")
+            for r in results or []
+            if (r.get("metadata") or {}).get("duplicate_of")
+        }
 
     scored: list[dict[str, Any]] = []
     for result in results or []:

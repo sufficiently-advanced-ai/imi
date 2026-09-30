@@ -384,8 +384,9 @@ def resolve_hidden(signals: list[Any]) -> dict[str, str]:
 def lazy_is_hidden() -> Callable[[str], bool]:
     """``shown_under`` over the signal store, loaded on first use only.
 
-    For read paths that filter on vector metadata (semantic search): the store
-    is read at most once per query, and only when a hit carries the key.
+    For semantic search, whose vector metadata can be stale (FAISS keeps
+    pre-hide vectors): every result is checked here, and the store is read at
+    most once per query.
     """
     table: dict[str, str | None] | None = None
 

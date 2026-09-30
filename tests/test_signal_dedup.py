@@ -334,3 +334,28 @@ def test_shown_under_is_the_one_rule_for_every_read_path(table, expected):
     by_id = {s.id: s for s in sigs}
     for s in sigs:  # recall walks the same chain through its record resolver
         assert shown_under(s.id, _pointer_lookup(by_id.get, s)) == expected.get(s.id)
+
+
+def test_search_hides_when_only_the_stale_pre_hide_vector_is_returned():
+    """The vector carrying duplicate_of ranked outside the window: the store decides."""
+    from app.services.signal_retrieval import search_signals_semantic
+
+    class _Store:
+        def search_vectors(self, embedding, k=10, **kwargs):
+            base = {"content_type": "signal", "can_use_as_evidence": True}
+            return [
+                {"score": 0.9, "metadata": {**base, "id": "s1"}},  # stale: no duplicate_of
+                {"score": 0.7, "metadata": {**base, "id": "s2"}},
+            ]
+
+    class _Embedder:
+        def generate_embeddings(self, text, data_type="text"):
+            return [0.1, 0.2]
+
+    table = {"s1": "s2", "s2": None}  # authoritative: s1 is shown under s2
+    is_hidden = lambda sid: shown_under(sid, lambda x: (x in table, table.get(x))) is not None  # noqa: E731
+    ids = [r["id"] for r in search_signals_semantic(
+        _Store(), _Embedder(), "q", is_hidden_duplicate=is_hidden)]
+    assert ids == ["s2"]
+    # Without the store check the stale vector cannot be caught (best effort).
+    assert [r["id"] for r in search_signals_semantic(_Store(), _Embedder(), "q")] == ["s1", "s2"]
