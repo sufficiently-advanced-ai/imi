@@ -221,3 +221,26 @@ def test_backfill_eligibility():
     assert bf.eligible(_summarized(), force=True) is None
     assert bf.eligible(_obs(lane="library"), force=False) == "library lane"
     assert bf.eligible(_obs(raw_content=None), force=False) == "no transcript"
+
+
+@pytest.mark.asyncio
+async def test_content_derived_title_keeps_the_extraction_body_parseable():
+    """Synthesis gave no usable title; EXTRACT_ENTITIES then replaces the
+    placeholder. The body a parse rebuilds must equal the one used at ingest."""
+    from unittest.mock import patch
+
+    orch, _ = _orch(_envelope())
+    obs = _summarized()
+    obs.title = "Ingested call_transcript"
+    obs.content = build_observation_body(obs.title, TRANSCRIPT, obs.participants)
+    orch._existing_entity_context = lambda: None
+    orch._entity_type_descriptions = lambda: {}
+    with (
+        patch("app.services.entity_utils.get_active_entity_types", return_value={"person"}),
+        patch("app.services.salient_entity_extractor.extract_salient_entities",
+              AsyncMock(return_value={"entities": [], "meeting_title": "Northwind kickoff"})),
+    ):
+        await orch._phase_extract_entities(obs)
+    assert obs.title == "Northwind kickoff"
+    assert obs.content.startswith("# Northwind kickoff")
+    assert Observation.from_markdown(obs.to_markdown()).content == obs.content

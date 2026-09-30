@@ -807,6 +807,14 @@ class IngestOrchestrator(BaseOrchestrator):
                 or current_title.lower() == "untitled meeting"
             ):
                 observation.title = derived_title
+                # A summarized document doesn't store the extraction body; a
+                # parse rebuilds it from the title, so it must carry this one.
+                if getattr(observation, "summary", None) and observation.raw_content:
+                    from app.models.observation import build_observation_body
+
+                    observation.content = build_observation_body(
+                        derived_title, observation.raw_content, observation.participants
+                    )
                 logger.info("[INGEST] Content-derived title: %r", derived_title)
 
             if not labeled:
