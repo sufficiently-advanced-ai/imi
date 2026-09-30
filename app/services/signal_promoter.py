@@ -651,7 +651,8 @@ class SignalPromoter:
     def _client_type_ids() -> set[str]:
         """Entity type IDs treated as the 'client' scope for the active domain:
         the domain's ``client_entity_types`` when it sets them (``[]`` = none),
-        else 'client' if present, else 'account' (relabel mode)."""
+        else whichever of 'client' and 'account' the domain defines (both when
+        it defines both)."""
         try:
             from app.core.domain_config.domain_config_service import get_domain_config_service
             domain = get_domain_config_service().get_active_domain()

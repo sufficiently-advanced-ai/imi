@@ -58,8 +58,8 @@ domain:
                            # type: count|percentage|time|ratio|score
 
   client_entity_types: [client]   # optional — which types are paying clients, i.e. what a
-                           # signal's client_id may point at. Unset = `client` if defined,
-                           # else `account`; [] = no automatic client scope (use when
+                           # signal's client_id may point at. Unset = whichever of `client`
+                           # and `account` are defined; [] = no automatic client scope (use when
                            # accounts are employers/partners/vendors, not clients)
 
   ui:                      # frontend labels — no rebuild needed

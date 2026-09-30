@@ -265,7 +265,7 @@ class DomainConfiguration(BaseModel):
         description=(
             "Entity types whose entities are paying clients: a signal's client_id "
             "(constitution grouping, client filters) is only ever one of these. "
-            "Unset = the 'client' type if the domain has one, else 'account'. "
+            "Unset = whichever of the 'client' and 'account' types the domain defines. "
             "[] = no automatic client scope (e.g. a personal KB whose accounts are "
             "employers, partners and vendors, not clients)."
         ),
