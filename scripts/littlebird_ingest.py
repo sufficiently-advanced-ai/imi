@@ -11,7 +11,7 @@ own ledger (<export dir>/.ingested.json) and skips meetings already recorded
 there. Delete a ledger entry to force a re-ingest.
 
 Usage:
-    uv run --with httpx scripts/littlebird_ingest.py --base https://holodeck.tail4f2c31.ts.net:9443 [--only ID] [--limit N]
+    uv run --with httpx scripts/littlebird_ingest.py --base https://holodeck.tail4f2c31.ts.net:9443 [--only ID] [--limit N] [--dry-run]
 """
 
 import argparse
@@ -139,6 +139,7 @@ def main() -> None:
     ap.add_argument("--only", action="append", default=[], help="littlebird id(s) to ingest")
     ap.add_argument("--limit", type=int, help="ingest at most N meetings this run")
     ap.add_argument("--poll-timeout", type=float, default=900)
+    ap.add_argument("--dry-run", action="store_true", help="list what would be ingested, send nothing")
     args = ap.parse_args()
 
     export_dir = Path(args.export_dir).expanduser()
@@ -152,9 +153,13 @@ def main() -> None:
     missing = [m for m in todo if not m.get("start_time")]
     if missing:
         sys.exit(f"{len(missing)} meeting(s) have no start_time: {[m['title'] for m in missing]}")
-    if args.limit:
+    if args.limit is not None:
         todo = todo[: args.limit]
     print(f"{len(todo)} meeting(s) to ingest ({len(ledger)} already in ledger)")
+    if args.dry_run:
+        for m in todo:
+            print(f"  {m['start_time'][:10]}  {m['title']}  ({', '.join(m['participants'])})")
+        return
 
     with httpx.Client(base_url=args.base, timeout=60) as client:
         for n, m in enumerate(todo, 1):
