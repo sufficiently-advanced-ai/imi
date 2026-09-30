@@ -328,6 +328,12 @@ TOOLS = [
     build_mcp_tool("list_decisions"),
     build_mcp_tool("get_decision"),
     build_mcp_tool("get_constitution"),
+    # --- Point-in-time tools (ADR-004) ---
+    build_mcp_tool("get_entity_at_time"),
+    build_mcp_tool("find_relationships_at_time"),
+    build_mcp_tool("find_changes"),
+    build_mcp_tool("get_graph_at_time"),
+    build_mcp_tool("get_entity_provenance"),
 ]
 
 
@@ -806,6 +812,52 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             # document in context.
             markdown = render_current_constitution()
             return [TextContent(type="text", text=markdown)]
+
+        elif name in (
+            "get_entity_at_time",
+            "find_relationships_at_time",
+            "find_changes",
+            "get_graph_at_time",
+            "get_entity_provenance",
+        ):
+            from app.services import chat_tools
+
+            entity_id = args.get("entity_id")
+            if not entity_id:
+                return _error("entity_id is required")
+            if name == "get_entity_provenance":
+                result = await chat_tools.get_entity_provenance(entity_id)
+            elif name == "find_changes":
+                if not args.get("date_from"):
+                    return _error("date_from is required")
+                if args.get("date_to"):
+                    result = await chat_tools.what_changed_between(
+                        entity_id, start=args["date_from"], end=args["date_to"]
+                    )
+                else:
+                    result = await chat_tools.what_changed(entity_id, since=args["date_from"])
+            else:
+                if not args.get("timestamp"):
+                    return _error("timestamp is required")
+                if name == "get_entity_at_time":
+                    result = await chat_tools.entity_at_time(entity_id, args["timestamp"])
+                elif name == "find_relationships_at_time":
+                    result = await chat_tools.active_relationships_at_time(
+                        entity_id,
+                        args["timestamp"],
+                        include_co_mentions=args.get("include_co_mentions", True),
+                    )
+                else:
+                    result = await chat_tools.graph_as_of(
+                        entity_id,
+                        args["timestamp"],
+                        depth=max(0, min(int(args.get("max_depth", 2)), 4)),
+                        include_co_mentions=args.get("include_co_mentions", True),
+                    )
+            failed = result[0] if isinstance(result, list) and result else result
+            if isinstance(failed, dict) and failed.get("error"):
+                return _error(str(failed["error"]))
+            return _text(result)
 
         elif name == "ask_kb":
             from app.services.ask_kb import ask_kb

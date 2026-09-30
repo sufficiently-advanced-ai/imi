@@ -80,6 +80,8 @@ def _patch_neo4j_store_execute_query() -> None:
         """Patched execute_query — see semantica_patches._patch_neo4j_store_execute_query."""
         from semantica.utils.exceptions import ProcessingError
 
+        from app.utils.event_time import normalize_temporal
+
         tracking_id = self.progress_tracker.start_tracking(
             module="graph_store",
             submodule="Neo4jStore",
@@ -112,7 +114,8 @@ def _patch_neo4j_store_execute_query() -> None:
                             row[key] = list(value)
                         else:
                             row[key] = value
-                    records.append(row)
+                    # DATETIME properties (ADR-004) are returned as ISO strings.
+                    records.append(normalize_temporal(row))
 
                 self.progress_tracker.stop_tracking(
                     tracking_id,

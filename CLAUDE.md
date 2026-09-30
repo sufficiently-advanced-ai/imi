@@ -26,6 +26,7 @@ cd imi-frontend && npx jest               # frontend tests
 scripts/check_evals.sh                    # extraction-quality evals — REQUIRED after
                                           # changing app/prompts/*.xml or entity_resolver.py
 scripts/smoke_test.sh                     # end-to-end smoke
+python scripts/event_time.py audit --corpus repo   # event-time gaps in a corpus (ADR-004)
 ```
 
 Verification for pipeline/schema changes: real ingest beats unit tests —
@@ -48,6 +49,12 @@ Verification for pipeline/schema changes: real ingest beats unit tests —
 4. **Domain schema is the type system.** Entity/relationship types come from
    `config/domains/<domain>.yaml`, validated at every graph write. Never hardcode entity
    types; the `EntityType` enum in `app/models/api/core.py` is legacy.
+5. **Event time lives on evidence** (`docs/adr/ADR-004-event-time-on-evidence.md`). Documents,
+   signals and relationship edges carry `occurred_at` (when it happened) and `recorded_at`
+   (when imi ingested it). Never use `recorded_at`, `created_at`, `updated_at`, file mtime or
+   git commit time as event time — content is backfilled. Time properties are `DATETIME` in
+   UTC in the graph; compare with typed parameters (`app/utils/event_time.to_utc`), never with
+   strings. Entity relationships are one edge per assertion, MERGEd on `source_id`.
 
 ## Known traps (verified against the code — the docs/agents may mislead you)
 

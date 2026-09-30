@@ -8,6 +8,12 @@
 > calendar surfaces referenced here are hosted-edition-only and are not part
 > of this repo.
 
+> **Superseded in part (2026-09-29).** Phase 1 below describes the temporal substrate as
+> already implemented. It was not: the query methods existed, but nothing wrote the validity
+> windows they read, so every point-in-time query returned the current graph.
+> [ADR-004](../adr/ADR-004-event-time-on-evidence.md) replaces Phase 1 and resolves R1.1, R1.3
+> and R1.4. Phases 2–4 stand.
+
 > **Correction (2026-05-29).** An earlier draft anchored Phase 1 on adopting
 > Graphiti + Kuzu, based on (a) the orphaned `docs/plans/graphiti-kuzu-integration-plan.md`
 > and (b) a fast audit that wrongly reported `get_state_at()` as a stub. Both were

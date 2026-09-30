@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from app.models.signal import Signal
+from app.utils.event_time import signal_event_time
 
 
 def _non_person_entity_ids(signal: Signal) -> frozenset[str]:
@@ -43,6 +44,9 @@ def find_supersession_candidates(
       - ``source_meeting_id`` equals *new_signal*'s (same meeting — intra-meeting
         supersession is handled at promotion time, not here)
       - ``id`` equals *new_signal*'s id (self-match guard)
+      - its event time is later than *new_signal*'s (ADR-004 §6): a decision
+        backfilled after a newer one cannot supersede it. Those pairs are
+        returned, reversed, by ``find_superseding_candidates``.
     * Subject overlap is measured via Jaccard similarity over **non-person**
       entity ID sets.  Candidates with zero shared entities are excluded.
     * Results are sorted by confidence descending and capped at *max_candidates*.
@@ -69,11 +73,14 @@ def find_supersession_candidates(
         return []
 
     new_entities = _non_person_entity_ids(new_signal)
+    new_time = signal_event_time(new_signal)
 
     candidates: list[dict] = []
     proposed_at = datetime.now(UTC).isoformat()
 
     for sig in standing:
+        if _is_later(sig, new_time):
+            continue
         # Must be a decision
         if sig.type != "decision":
             continue
@@ -128,3 +135,44 @@ def find_supersession_candidates(
     # Sort by confidence descending, cap at max_candidates
     candidates.sort(key=lambda c: c["confidence"], reverse=True)
     return candidates[:max_candidates]
+
+
+def _is_later(signal: Signal, than) -> bool:
+    """True when *signal*'s event time is strictly after *than*. Unknown
+    times never count as later, which keeps the pre-ADR-004 behaviour."""
+    when = signal_event_time(signal)
+    return when is not None and than is not None and when > than
+
+
+def find_superseding_candidates(
+    new_signal: Signal,
+    standing: Iterable[Signal],
+    *,
+    max_candidates: int = 3,
+) -> list[tuple[Signal, dict]]:
+    """Standing decisions that may supersede *new_signal* (ADR-004 §6).
+
+    The reverse of ``find_supersession_candidates``: *new_signal* was ingested
+    late but happened earlier, so a standing decision with a later event time
+    is the successor. Returns ``(newer_signal, candidate)`` pairs; each
+    candidate belongs on the newer signal's metadata and names *new_signal*
+    as the old one, so the review queue reads the same in both directions.
+    """
+    if new_signal.type != "decision":
+        return []
+    new_time = signal_event_time(new_signal)
+    if new_time is None:
+        return []
+
+    pairs: list[tuple[Signal, dict]] = []
+    for sig in standing:
+        if not _is_later(sig, new_time):
+            continue
+        if sig.provenance_status == "superseded" or sig.review_status == "rejected":
+            continue
+        found = find_supersession_candidates(sig, [new_signal], max_candidates=1)
+        if found:
+            pairs.append((sig, {**found[0], "backfilled": True}))
+
+    pairs.sort(key=lambda p: p[1]["confidence"], reverse=True)
+    return pairs[:max_candidates]

@@ -32,13 +32,14 @@ PAST = NOW - timedelta(days=30)
 
 
 def _make_svc(graph_records=None):
-    """Build a TemporalQueryService with a mocked graph_store."""
+    """Build a TemporalQueryService over a mocked graph client."""
+    from unittest.mock import AsyncMock
+
     from app.services.temporal_queries import TemporalQueryService
 
-    mock_sk = MagicMock()
-    mock_sk.graph_store = MagicMock()
-    mock_sk.graph_store.execute_query = MagicMock(return_value=graph_records or [])
-    return TemporalQueryService(mock_sk)
+    client = MagicMock()
+    client.execute_read = AsyncMock(return_value=graph_records or [])
+    return TemporalQueryService(client)
 
 
 def _make_signal(
@@ -474,11 +475,11 @@ class TestWindowFiltering:
             date_to=NOW,
         )
 
-        call_args = svc.sk.graph_store.execute_query.call_args
+        call_args = svc.neo4j.execute_read.call_args
         assert call_args is not None
         _cypher, params = call_args[0]
-        assert "date_from" in params
-        assert "date_to" in params
+        assert params["date_from"] is not None
+        assert params["date_to"] is not None
         assert result["contradictions"] == []
 
     @pytest.mark.asyncio
@@ -486,10 +487,10 @@ class TestWindowFiltering:
         svc = _make_svc(graph_records=[])
         await svc.find_contradictions("entity-1")
 
-        call_args = svc.sk.graph_store.execute_query.call_args
+        call_args = svc.neo4j.execute_read.call_args
         _cypher, params = call_args[0]
-        assert "date_from" not in params
-        assert "date_to" not in params
+        assert params["date_from"] is None
+        assert params["date_to"] is None
 
     @pytest.mark.asyncio
     async def test_candidate_outside_window_excluded(self):
@@ -565,7 +566,9 @@ class TestSignalRelationships:
         svc = _make_svc(graph_records=[])
         await svc.find_contradictions("entity-1")
 
-        cypher = svc.sk.graph_store.execute_query.call_args[0][0]
+        cypher, params = svc.neo4j.execute_read.call_args[0]
         assert "REFERENCES_" not in cypher
         assert "ABOUT" not in cypher
-        assert "MENTIONS" in cypher and "FOR_CLIENT" in cypher
+        # The edge types are a query parameter, shared by every point-in-time query.
+        assert "type(r) IN $signal_edges" in cypher
+        assert {"MENTIONS", "FOR_CLIENT", "ASSIGNED_TO"} == set(params["signal_edges"])

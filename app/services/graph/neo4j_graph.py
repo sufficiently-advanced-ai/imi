@@ -27,6 +27,15 @@ import yaml
 from app.model_schemas.domain_config import DomainConfiguration
 from app.neo4j_client import Neo4jClient
 from app.services.entity_utils import slugify
+from app.utils.event_time import (
+    document_event_time,
+    drop_assertions,
+    edge_event_props,
+    make_assertion,
+    merge_assertion,
+    read_assertions,
+    to_utc,
+)
 
 from .batch_writer import Neo4jBatchWriter
 from .models import GraphEdge, GraphNode
@@ -54,6 +63,24 @@ except ImportError:
 # Neo4j one statement at a time (see batch_writer.py). A ContextVar, not an
 # attribute, so only the building task (and tasks it spawns) see it.
 _active_batch: ContextVar[Neo4jBatchWriter | None] = ContextVar("neo4j_active_batch", default=None)
+
+# Edge properties stored as DATETIME (ADR-004). Everything else on an edge
+# goes through serialize_metadata_for_neo4j, which would stringify them.
+_EDGE_TIME_KEYS = ("occurred_at", "recorded_at")
+
+
+def edge_properties(properties: dict[str, Any] | None) -> dict[str, Any]:
+    """Neo4j-ready properties for an entity relationship.
+
+    ``source_id`` is always present: it is part of the MERGE key, so one
+    edge exists per assertion. An edge nothing attributes gets ``''``.
+    """
+    raw = dict(properties or {})
+    times = {k: to_utc(raw.pop(k)) for k in _EDGE_TIME_KEYS if k in raw}
+    props = serialize_metadata_for_neo4j(raw)
+    props.update({k: v for k, v in times.items() if v is not None})
+    props["source_id"] = str(raw.get("source_id") or "")
+    return props
 
 
 class Neo4jKnowledgeGraph:
@@ -581,6 +608,13 @@ class Neo4jKnowledgeGraph:
             await self._upsert_node(eid, entity_type, label, properties)
             document_entities.add(eid)
 
+            # Per-assertion evidence (ADR-004), keyed by (type, target). A
+            # target with no assertion is an unattributed edge.
+            assertions: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for assertion in read_assertions(metadata):
+                a_target = self._canonical_id(assertion["target"])
+                assertions.setdefault((assertion["type"], a_target), []).append(assertion)
+
             # Extract and store relationship targets from metadata
             for rel_def in entity_def.relationships:
                 targets = extract_relationship_targets(metadata, rel_def.type)
@@ -605,21 +639,23 @@ class Neo4jKnowledgeGraph:
                     await self._ensure_entity_exists(
                         normalized, rel_def.target, target_id
                     )
-                    await self._upsert_relationship(
-                        source_id=eid,
-                        target_id=normalized,
-                        rel_type=relationship_type_to_neo4j(rel_def.type),
-                        properties={"source": "metadata", "file_path": file_path},
-                    )
-
-                    # Create inverse edge if inverse_name is defined
-                    if rel_def.inverse_name:
+                    for assertion in assertions.get((rel_def.type.lower(), normalized)) or [None]:
+                        event = edge_event_props(assertion)
                         await self._upsert_relationship(
-                            source_id=normalized,
-                            target_id=eid,
-                            rel_type=relationship_type_to_neo4j(rel_def.inverse_name),
-                            properties={"source": "inverse", "file_path": file_path},
+                            source_id=eid,
+                            target_id=normalized,
+                            rel_type=relationship_type_to_neo4j(rel_def.type),
+                            properties={"source": "metadata", "file_path": file_path, **event},
                         )
+
+                        # Create inverse edge if inverse_name is defined
+                        if rel_def.inverse_name:
+                            await self._upsert_relationship(
+                                source_id=normalized,
+                                target_id=eid,
+                                rel_type=relationship_type_to_neo4j(rel_def.inverse_name),
+                                properties={"source": "inverse", "file_path": file_path, **event},
+                            )
         else:
             # Not an entity profile — create a Document node
             doc_id = f"doc:{file_path}"
@@ -945,6 +981,8 @@ class Neo4jKnowledgeGraph:
         for key in ("title", "created", "modified", "date"):
             if key in metadata and isinstance(metadata[key], (str, int, float)):
                 props[key] = metadata[key]
+        # ADR-004: evidence carries event time as DATETIME.
+        props.update(document_event_time(metadata))
 
         if self._batch is not None:
             self._batch.add_document(doc_id, props)
@@ -1022,8 +1060,12 @@ class Neo4jKnowledgeGraph:
         rel_type: str,
         properties: dict[str, Any] | None = None,
     ) -> None:
-        """MERGE a relationship between two entity nodes."""
-        props = serialize_metadata_for_neo4j(properties or {})
+        """MERGE a relationship between two entity nodes.
+
+        One edge per assertion (ADR-004): ``source_id`` is part of the
+        MERGE key, so evidence from another source adds a parallel edge
+        and re-ingesting the same source merges onto its own."""
+        props = edge_properties(properties)
         props["updated_at"] = datetime.utcnow().isoformat()
 
         if self._batch is not None:
@@ -1034,12 +1076,17 @@ class Neo4jKnowledgeGraph:
         query = (
             f"MATCH (a:Entity {{id: $source}}) "
             f"MATCH (b:Entity {{id: $target}}) "
-            f"MERGE (a)-[r:{rel_type}]->(b) "
+            f"MERGE (a)-[r:{rel_type} {{source_id: $source_id}}]->(b) "
             f"SET r += $props"
         )
         await self.neo4j.execute_write(
             query,
-            {"source": source_id, "target": target_id, "props": props},
+            {
+                "source": source_id,
+                "target": target_id,
+                "source_id": props["source_id"],
+                "props": props,
+            },
         )
         # Re-seed the type registry so clean rebuilds (which delete
         # _TypeRegistry rows along with the graph) leave the relationship
@@ -1370,19 +1417,24 @@ class Neo4jKnowledgeGraph:
     async def find_related_entities_directed(
         self, entity_id: str, max_results: int = 100
     ) -> dict[str, list[dict[str, Any]]]:
-        """Find entities related to the given entity, separated by direction."""
+        """Find entities related to the given entity, separated by direction.
+
+        One row per (entity, relationship type): a relationship stated by
+        several sources is several edges (ADR-004) and is reported once."""
         outgoing_query = (
             "MATCH (e:Entity {id: $id})-[r]->(related:Entity) "
             "WHERE type(r) <> 'CO_OCCURRENCE' "
-            "RETURN related, type(r) AS rel_type, r.strength AS strength "
-            "ORDER BY r.strength DESC "
+            "WITH related, type(r) AS rel_type, max(r.strength) AS strength "
+            "RETURN related, rel_type, strength "
+            "ORDER BY strength DESC "
             "LIMIT $limit"
         )
         incoming_query = (
             "MATCH (e:Entity {id: $id})<-[r]-(related:Entity) "
             "WHERE type(r) <> 'CO_OCCURRENCE' "
-            "RETURN related, type(r) AS rel_type, r.strength AS strength "
-            "ORDER BY r.strength DESC "
+            "WITH related, type(r) AS rel_type, max(r.strength) AS strength "
+            "RETURN related, rel_type, strength "
+            "ORDER BY strength DESC "
             "LIMIT $limit"
         )
         params = {"id": entity_id, "limit": max_results}
@@ -1776,10 +1828,13 @@ class Neo4jKnowledgeGraph:
         self, entity_id: str, max_results: int = 10
     ) -> list[dict[str, Any]]:
         """Find entities related to the given entity via Neo4j traversal."""
+        # Aggregated per (entity, type): parallel assertion edges (ADR-004)
+        # are one relationship.
         query = (
             "MATCH (e:Entity {id: $id})-[r]-(related:Entity) "
-            "RETURN related, type(r) AS rel_type, r.strength AS strength "
-            "ORDER BY r.strength DESC "
+            "WITH related, type(r) AS rel_type, max(r.strength) AS strength "
+            "RETURN related, rel_type, strength "
+            "ORDER BY strength DESC "
             "LIMIT $limit"
         )
         results = await self.neo4j.execute_read(
@@ -2242,14 +2297,14 @@ class Neo4jKnowledgeGraph:
                 f"MATCH (a:Entity)-[r:{relationship_type_to_neo4j(relationship_type)}]-(b:Entity) "
                 "WHERE a.id < b.id "
                 "RETURN a.id AS source, b.id AS target, type(r) AS rel_type, "
-                "       r.strength AS strength"
+                "       max(r.strength) AS strength"
             )
         else:
             query = (
                 "MATCH (a:Entity)-[r]-(b:Entity) "
                 "WHERE a.id < b.id "
                 "RETURN a.id AS source, b.id AS target, type(r) AS rel_type, "
-                "       r.strength AS strength"
+                "       max(r.strength) AS strength"
             )
 
         results = await self.neo4j.execute_read(query)
@@ -2680,7 +2735,7 @@ class Neo4jKnowledgeGraph:
             raise ValueError(f"Target entity '{target_id}' not found")
 
         neo4j_rel_type = relationship_type_to_neo4j(rel_key)
-        props = serialize_metadata_for_neo4j(properties or {})
+        props = edge_properties(properties)
         props["updated_at"] = datetime.utcnow().isoformat()
         # NOTE: _type_status is written here but not yet hydrated on read paths
         # (_sync_from_neo4j / neighborhood / get_all_edges / GraphEdge model).
@@ -2692,13 +2747,18 @@ class Neo4jKnowledgeGraph:
         query = (
             f"MATCH (a:Entity {{id: $source}}) "
             f"MATCH (b:Entity {{id: $target}}) "
-            f"MERGE (a)-[r:{neo4j_rel_type}]->(b) "
+            f"MERGE (a)-[r:{neo4j_rel_type} {{source_id: $source_id}}]->(b) "
             f"SET r += $props "
             f"RETURN type(r) AS rel_type"
         )
         await self.neo4j.execute_write(
             query,
-            {"source": source_id, "target": target_id, "props": props},
+            {
+                "source": source_id,
+                "target": target_id,
+                "source_id": props["source_id"],
+                "props": props,
+            },
         )
 
         # Update in-memory cache. rel_key was normalized at entry.
@@ -2732,8 +2792,18 @@ class Neo4jKnowledgeGraph:
         # so writing a provisional key there would get silently dropped on
         # the next rebuild. See admin `promote` in app/routes/type_registry.py.
         if is_canonical:
+            assertion = None
+            if props["source_id"]:
+                assertion = make_assertion(
+                    rel_key,
+                    target_id,
+                    source_id=props["source_id"],
+                    occurred_at=props.get("occurred_at"),
+                    time_source=props.get("time_source") or "explicit",
+                    recorded_at=props.get("recorded_at") or datetime.utcnow(),
+                )
             await self._persist_relationship_to_file(
-                source_id, target_id, rel_key
+                source_id, target_id, rel_key, assertion=assertion
             )
 
         await self._record_type_usage(
@@ -2815,7 +2885,9 @@ class Neo4jKnowledgeGraph:
                 f"Edge '{source_id}' --[{relationship_type}]--> '{target_id}' not found"
             )
 
-        safe_props = serialize_metadata_for_neo4j(properties)
+        safe_props = edge_properties(properties)
+        # Never rewrite the MERGE key of the edges being updated.
+        safe_props.pop("source_id", None)
         safe_props["updated_at"] = datetime.utcnow().isoformat()
 
         update_query = (
@@ -2998,12 +3070,19 @@ class Neo4jKnowledgeGraph:
             for rel in rels:
                 rel_props = rel.get("props", {}) or {}
                 rel_props.pop("updated_at", None)
-                safe_rel_props = serialize_metadata_for_neo4j(rel_props)
+                # Assertion edges keep their identity (source_id) and their
+                # DATETIME types; Signal/Document edges carry neither.
+                if "source_id" in rel_props:
+                    safe_rel_props = edge_properties(rel_props)
+                    key = " {source_id: $props.source_id}"
+                else:
+                    safe_rel_props = serialize_metadata_for_neo4j(rel_props)
+                    key = ""
                 safe_rel_props["updated_at"] = datetime.utcnow().isoformat()
                 edge = (
-                    f"(p)-[r:{rel['rel_type']}]->(o)"
+                    f"(p)-[r:{rel['rel_type']}{key}]->(o)"
                     if direction == "out"
-                    else f"(o)-[r:{rel['rel_type']}]->(p)"
+                    else f"(o)-[r:{rel['rel_type']}{key}]->(p)"
                 )
                 await self.neo4j.execute_write(
                     "MATCH (p:Entity {id: $primary_id}) "
@@ -3236,14 +3315,22 @@ class Neo4jKnowledgeGraph:
             return False
 
     async def add_frontmatter_relationships(
-        self, entity_id: str, relationships: dict[str, list[str]]
+        self,
+        entity_id: str,
+        relationships: dict[str, list[str]],
+        evidence: dict[str, Any] | None = None,
     ) -> str | None:
         """Files first: append relationship targets to the entity file's
         frontmatter (``managed_by: [person-x]`` — the key is the domain
         relationship type, exactly what the graph build reads) and commit.
         Returns the repo-relative path when the file changed, else None; the
         caller ``ingest_files`` it so the edge (and its inverse) is built the
-        same way a rebuild builds it."""
+        same way a rebuild builds it.
+
+        ``evidence`` (``source_id``, ``occurred_at``, ``time_source``,
+        ``recorded_at``) attributes the relationships to what asserted
+        them (ADR-004). A target already listed still records a new
+        assertion when the evidence is new."""
         try:
             async with self._get_file_lock(entity_id):
                 full_path = self._find_entity_file(entity_id)
@@ -3261,9 +3348,22 @@ class Neo4jKnowledgeGraph:
                     if isinstance(current, str):
                         current = [current]
                     for target in targets:
-                        if target and target != entity_id and target not in current:
+                        if not target or target == entity_id:
+                            continue
+                        if target not in current:
                             current.append(target)
                             changed = True
+                        if evidence and evidence.get("source_id"):
+                            assertion = make_assertion(
+                                key,
+                                target,
+                                source_id=str(evidence["source_id"]),
+                                occurred_at=evidence.get("occurred_at"),
+                                time_source=evidence.get("time_source") or "",
+                                recorded_at=evidence.get("recorded_at"),
+                            )
+                            if merge_assertion(metadata, assertion):
+                                changed = True
                     metadata[key] = current
                 if not changed:
                     return None
@@ -3546,6 +3646,7 @@ class Neo4jKnowledgeGraph:
         source_id: str,
         target_id: str,
         relationship_type: str,
+        assertion: dict[str, Any] | None = None,
     ) -> None:
         """Write-through: add a relationship to the source entity's markdown file.
 
@@ -3576,11 +3677,15 @@ class Neo4jKnowledgeGraph:
                 if not isinstance(existing, list):
                     existing = [str(existing)]
 
-                if target_id in existing:
+                changed = False
+                if target_id not in existing:
+                    existing.append(target_id)
+                    metadata[relationship_type] = existing
+                    changed = True
+                if assertion and merge_assertion(metadata, assertion):
+                    changed = True
+                if not changed:
                     return  # Already present
-
-                existing.append(target_id)
-                metadata[relationship_type] = existing
 
                 # Write back
                 new_content = self._join_frontmatter_and_body(metadata, body)
@@ -3637,10 +3742,12 @@ class Neo4jKnowledgeGraph:
                 if not isinstance(existing, list):
                     existing = [str(existing)]
 
-                if target_id not in existing:
+                dropped = drop_assertions(metadata, relationship_type, target_id)
+                if target_id not in existing and not dropped:
                     return  # Nothing to remove
 
-                existing.remove(target_id)
+                if target_id in existing:
+                    existing.remove(target_id)
                 if existing:
                     metadata[relationship_type] = existing
                 else:

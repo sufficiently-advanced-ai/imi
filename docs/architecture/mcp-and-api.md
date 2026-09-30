@@ -77,14 +77,25 @@ against).
 | `graph_merge_nodes` | Merge a duplicate entity into a primary |
 | `graph_add_edge` / `graph_update_edge` / `graph_delete_edge` | Relationship mutations, validated against the active domain schema |
 
+**Point in time** ([ADR-004](../adr/ADR-004-event-time-on-evidence.md)) — answers are dated by
+when things happened, not by when they were recorded, so backfilled content lands in the right
+place
+
+| Tool | Purpose |
+|---|---|
+| `get_entity_at_time` | What was known about an entity at a past time: evidence counts, first/last seen, signals current then |
+| `find_relationships_at_time` | Relationships stated by then, with how many sources stated each; co-mentions marked `derived` |
+| `find_changes` | What was learned between two dates, plus `recorded_late` (material about an earlier time added during the window) |
+| `get_graph_at_time` | The entities and relationships around an entity as known at a past time |
+| `get_entity_provenance` | Every source that mentions an entity, in event order, with `recorded_at` and `time_source` |
+
 Full parameter schemas: `app/services/mcp_tool_definitions.py`.
 
-**Chat-surface-only tools:** the internal chat agent additionally has temporal graph tools —
-`graph_as_of`, `entity_at_time`, `active_relationships_at_time`, `find_contradictions`,
-`get_entity_provenance`, `temporal_blast_radius` (registered in
-`app/agents/chat_tools_mcp.py`, backed by `app/services/temporal_queries.py`). These are not
-yet exposed on the external MCP surface; use them through the chat UI, `POST /api/query`, or
-`ask_kb`.
+**Chat-surface-only tools:** the internal chat agent has the same point-in-time queries under
+its older names — `graph_as_of`, `entity_at_time`, `active_relationships_at_time`,
+`what_changed` — plus `find_contradictions` and `temporal_blast_radius` (registered in
+`app/agents/chat_tools_mcp.py`). Both surfaces are backed by
+`app/services/temporal_queries.py`.
 
 ### Governance invariant (ADR-002)
 

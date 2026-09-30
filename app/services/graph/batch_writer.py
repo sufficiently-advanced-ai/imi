@@ -45,7 +45,9 @@ class Neo4jBatchWriter:
         self.nodes: dict[str, dict[str, dict[str, Any]]] = {}  # label -> id -> props
         self.stubs: dict[str, dict[str, dict[str, Any]]] = {}  # label -> id -> row
         self.documents: dict[str, dict[str, Any]] = {}  # id -> props
-        self.relationships: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}  # type -> (s,t) -> props
+        # type -> (source, target, source_id) -> props. source_id is part of
+        # the key: one edge per assertion (ADR-004).
+        self.relationships: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {}
         self.mentions: dict[tuple[str, str], dict[str, Any]] = {}  # (eid, did) -> row
         self.type_usage: set[tuple[str, str]] = set()  # (kind, name)
         self.statements_executed = 0
@@ -74,7 +76,7 @@ class Neo4jBatchWriter:
         self, source_id: str, target_id: str, rel_type: str, props: dict[str, Any]
     ) -> None:
         bucket = self.relationships.setdefault(rel_type, {})
-        key = (source_id, target_id)
+        key = (source_id, target_id, str(props.get("source_id") or ""))
         existing = bucket.get(key)
         if existing is None:
             bucket[key] = dict(props)
@@ -146,14 +148,14 @@ class Neo4jBatchWriter:
         # 4. relationships (endpoints now exist)
         for rel_type, bucket in self.relationships.items():
             rows = [
-                {"source": s, "target": t, "props": props}
-                for (s, t), props in bucket.items()
+                {"source": s, "target": t, "source_id": sid, "props": {**props, "source_id": sid}}
+                for (s, t, sid), props in bucket.items()
             ]
             await self._run(
                 f"UNWIND $rows AS row "
                 f"MATCH (a:Entity {{id: row.source}}) "
                 f"MATCH (b:Entity {{id: row.target}}) "
-                f"MERGE (a)-[r:{rel_type}]->(b) "
+                f"MERGE (a)-[r:{rel_type} {{source_id: row.source_id}}]->(b) "
                 f"SET r += row.props",
                 rows,
             )

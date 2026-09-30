@@ -58,7 +58,7 @@ builds the team version of it.
 | Stable layer (constitution) | Git-backed markdown entities + decision records — already the portable source of truth (`entity_file_service.py`, `signals/*.json`) |
 | Current layer (situation) | Signals + drift/contradiction detection computed over the graph |
 | Promotion ritual | The human-in-the-loop approval gate from the May 8 architecture session (Signals vs DecisionRecords, declarative routing) |
-| "What changed since T" | Temporal queries — **already implemented in Semantica** (`get_state_at`, `what_changed`, `graph_as_of`) |
+| "What changed since T" | Point-in-time queries computed from dated evidence ([ADR-004](adr/ADR-004-event-time-on-evidence.md)): `find_changes`, `get_entity_at_time`, `get_graph_at_time` |
 
 The corpus/cache split an advisor argues for ("the KB owns institutional
 truth, the harness owns local recall") is *already* our storage model: git

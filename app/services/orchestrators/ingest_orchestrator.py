@@ -27,6 +27,11 @@ from typing import Any
 
 from app.config import settings
 from app.services.conflict_detector import find_conflict_candidates
+from app.utils.event_time import (
+    TIME_SOURCE_CONTENT,
+    TIME_SOURCE_EXPLICIT,
+    TIME_SOURCE_FALLBACK,
+)
 
 from ..entity_utils import (
     ensure_entity_id_format,
@@ -116,6 +121,10 @@ class IngestOrchestrator(BaseOrchestrator):
         self._git_ops = git_ops
         self._tools = tools or {}
         self._event_emitter = event_emitter
+        # ADR-004 §6: candidates that belong on a standing, newer signal
+        # because the ingested one happened earlier. Written in PERSIST, once
+        # the signal they name exists in the store.
+        self._reversed_supersessions: list[tuple[str, dict]] = []
 
     async def _emit(self, event_type: str, data: dict) -> None:
         """Emit an event to the injected emitter; swallows all exceptions."""
@@ -557,6 +566,14 @@ class IngestOrchestrator(BaseOrchestrator):
         # supersession ordering, and retention honest.
         content_ts = None if request.timestamp else _parse_content_timestamp(request.content)
         observed_at = request.timestamp or content_ts or now
+        # ADR-004: keep how the event time was obtained, so an undated
+        # backfill is distinguishable from a real timestamp.
+        if request.timestamp:
+            time_source = TIME_SOURCE_EXPLICIT
+        elif content_ts is not None:
+            time_source = TIME_SOURCE_CONTENT
+        else:
+            time_source = TIME_SOURCE_FALLBACK
         if content_ts is not None:
             logger.info(
                 "[INGEST] Recovered content date %s from Date: header (not ingest time)",
@@ -604,6 +621,8 @@ class IngestOrchestrator(BaseOrchestrator):
             status="completed",
             title=title,
             occurred_at=observed_at,
+            recorded_at=now,
+            time_source=time_source,
             participants=participants,
             lane=lane,
             authors=authors,
@@ -994,6 +1013,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 transcript=content,
                 meeting=self._meeting_context(observation),
                 names={e.get("id"): e.get("name") for e in entities if e.get("id")},
+                evidence=self._assertion_evidence(observation),
             )
 
             if result["edge_count"] > 0:
@@ -1652,12 +1672,34 @@ class IngestOrchestrator(BaseOrchestrator):
                 return getattr(rel, "description", None)
         return None
 
+    @staticmethod
+    def _assertion_evidence(observation) -> dict | None:
+        """What attributes a relationship to this observation (ADR-004).
+
+        ``source_id`` is the id of the observation's Document node, so an
+        assertion edge joins to its evidence by id. None when the observation
+        has no document to point at.
+        """
+        from app.services.graph.signal_graph_writer import meeting_document_path
+
+        external_id = getattr(observation, "external_id", None)
+        if not external_id:
+            return None
+        return {
+            "source_id": f"doc:{meeting_document_path(external_id)}",
+            "occurred_at": getattr(observation, "occurred_at", None)
+            or getattr(observation, "observed_at", None),
+            "recorded_at": getattr(observation, "recorded_at", None),
+            "time_source": getattr(observation, "time_source", ""),
+        }
+
     async def _write_relationship_edges(
         self,
         relationships: list[dict],
         transcript: str = "",
         meeting: dict | None = None,
         names: dict[str, str] | None = None,
+        evidence: dict | None = None,
     ) -> int:
         """Files first: verify inferred entity-to-entity relationships with
         the decision model (``relationship_verify``), write the accepted ones
@@ -1739,7 +1781,12 @@ class IngestOrchestrator(BaseOrchestrator):
             by_holder.setdefault(p["source_id"], {}).setdefault(p["type"], []).append(p["target_id"])
         paths, count = [], 0
         for holder, rels in by_holder.items():
-            path = await self._graph.add_frontmatter_relationships(holder, rels)
+            if evidence:
+                path = await self._graph.add_frontmatter_relationships(
+                    holder, rels, evidence=evidence
+                )
+            else:
+                path = await self._graph.add_frontmatter_relationships(holder, rels)
             if path:
                 paths.append(path)
                 count += sum(len(t) for t in rels.values())
@@ -1825,7 +1872,10 @@ class IngestOrchestrator(BaseOrchestrator):
             return 0
 
         from app.services.signal_store import signal_store as _signal_store
-        from app.services.supersession_candidates import find_supersession_candidates
+        from app.services.supersession_candidates import (
+            find_superseding_candidates,
+            find_supersession_candidates,
+        )
 
         active_store = store if store is not None else _signal_store
 
@@ -1841,6 +1891,7 @@ class IngestOrchestrator(BaseOrchestrator):
         standing: list = [sig for batch in all_batches for sig in batch.signals]
 
         found: list[tuple] = []
+        reversed_pairs: list[tuple] = []
         for sig in meeting_signals.signals:
             if sig.type != "decision":
                 continue
@@ -1848,6 +1899,12 @@ class IngestOrchestrator(BaseOrchestrator):
                 candidates = find_supersession_candidates(sig, standing)
                 if candidates:
                     found.append((sig, candidates))
+                # Backfill: standing decisions that happened after this one
+                # are its possible successors, never its predecessors.
+                reversed_pairs.extend(
+                    (newer, sig, cand)
+                    for newer, cand in find_superseding_candidates(sig, standing)
+                )
             except Exception as e:
                 logger.warning(
                     "[INGEST] DETECT_SUPERSESSION: candidate matching failed for "
@@ -1871,6 +1928,20 @@ class IngestOrchestrator(BaseOrchestrator):
         for sig, candidates in found:
             sig.metadata["supersession_candidates"] = candidates
             total_candidates += sum(1 for c in candidates if c.get("status") == "pending")
+
+        if reversed_pairs:
+            from app.services.signal_relation import judge_candidates
+
+            judged_reversed = await asyncio.gather(
+                *(
+                    judge_candidates(newer, [cand], {older.id: older})
+                    for newer, older, cand in reversed_pairs
+                )
+            )
+            for (newer, _older, _), cands in zip(reversed_pairs, judged_reversed, strict=True):
+                for cand in cands:
+                    self._reversed_supersessions.append((newer.id, cand))
+                    total_candidates += 1 if cand.get("status") == "pending" else 0
 
         if total_candidates > 0:
             logger.info(
@@ -2051,6 +2122,53 @@ class IngestOrchestrator(BaseOrchestrator):
 
         except Exception as e:
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
+        else:
+            # Only once the signals the candidates name are stored.
+            if meeting_signals and meeting_signals.signal_count > 0:
+                self._persist_reversed_supersessions()
+        finally:
+            # Never carry a failed ingest's candidates into the next one.
+            self._reversed_supersessions = []
+
+    def _persist_reversed_supersessions(self, store=None) -> int:
+        """Attach reversed candidates to the standing signals they belong to.
+
+        Idempotent per ``(newer, old)`` pair: a re-ingest of the same content
+        does not add the candidate twice or reset a reviewed one.
+        """
+        pending, self._reversed_supersessions = self._reversed_supersessions, []
+        if not pending:
+            return 0
+        from app.services.signal_store import signal_store as _signal_store
+
+        active_store = store if store is not None else _signal_store
+        written = 0
+        for newer_id, candidate in pending:
+            try:
+                lookup = active_store.find_signal_by_id(newer_id)
+                if lookup is None:
+                    continue
+                newer, container = lookup
+                existing = newer.metadata.get("supersession_candidates") or []
+                if any(c.get("old_signal_id") == candidate["old_signal_id"] for c in existing):
+                    continue
+                newer.metadata["supersession_candidates"] = [*existing, candidate]
+                active_store.replace_signal(newer, container)
+                written += 1
+            except Exception as e:
+                logger.warning(
+                    "[INGEST] DETECT_SUPERSESSION: could not attach reversed candidate "
+                    "to %s (non-fatal): %s",
+                    newer_id,
+                    e,
+                )
+        if written:
+            logger.info(
+                "[INGEST] DETECT_SUPERSESSION: attached %d reversed candidate(s) to "
+                "standing signals (backfilled decisions)",
+                written,
+            )
+        return written
 
     async def _link_document_in_graph(self, *paths: str) -> None:
         """Give persisted corpus files their graph footprint the same way a

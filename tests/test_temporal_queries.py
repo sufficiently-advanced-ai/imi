@@ -1,802 +1,482 @@
-"""
-Tests for Temporal Knowledge Graph — Issue #864.
+"""Point-in-time queries (ADR-004): how answers are assembled from evidence.
 
-Covers:
-- SemanticaKnowledge temporal methods (get_state_at, get_active_relationships, get_provenance)
-- TemporalQueryService higher-order queries (what_changed, what_changed_between,
-  graph_as_of, find_contradictions, temporal_blast_radius)
+The graph client is faked with canned rows per query, so these cover the
+service's logic. The Cypher itself runs against a real database in
+tests/test_event_time_neo4j.py.
 """
 
-import importlib.util
-import sys
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
 
 import pytest
 
-NOW = datetime(2026, 3, 23, 12, 0, 0, tzinfo=UTC)
-PAST = NOW - timedelta(days=30)
-PAST2 = NOW - timedelta(days=15)
+from app.services import temporal_queries as tq
+from app.services.temporal_queries import TemporalQueryService
+
+T_MARCH = datetime(2026, 3, 1, tzinfo=UTC)
+JAN = "2026-01-12T15:00:00+00:00"
+FEB = "2026-02-10T15:00:00+00:00"
+APR = "2026-04-02T15:00:00+00:00"
+
+
+class FakeGraph:
+    """Answers each query constant with rows built from the params."""
+
+    def __init__(self, entities=None, **handlers):
+        self.entities = entities or {}
+        self.handlers = handlers
+        self.calls: list[tuple[str, dict]] = []
+
+    async def execute_read(self, query, params=None):
+        params = params or {}
+        self.calls.append((query, params))
+        if query == tq._RESOLVE:
+            lookup = params["lookup"]
+            for eid, node in self.entities.items():
+                if eid == lookup or node["name"].lower() == lookup.lower():
+                    return [{"id": eid, "name": node["name"],
+                             "entity_type": node.get("type", "person"),
+                             "props": node.get("props", {"id": eid, "name": node["name"]})}]
+            return []
+        for name, handler in self.handlers.items():
+            if query == getattr(tq, name):
+                return handler(params)
+        return []
+
+
+def _span(n, first=None, last=None):
+    return [{"n": n, "first": first, "last": last}]
+
+
+ALICE = {"person-alice": {"name": "Alice", "props": {
+    "id": "person-alice", "name": "Alice", "entity_type": "person",
+    "canonical_name": "alice", "updated_at": "2026-09-27", "stub": False, "title": "VP",
+}}}
 
 
 # ---------------------------------------------------------------------------
-# Mock heavy imports before importing our modules.
-# These packages only exist inside Docker — mock them for local test runs.
-# Only stub modules that are genuinely unavailable: stubbing an importable
-# module poisons sys.modules for every test that runs AFTER this file in the
-# same session (real numpy consumers crash on the MagicMock).
+# entity_at
 # ---------------------------------------------------------------------------
 
-_MOCK_MODULES = [
-    "numpy", "fastembed", "faiss",
-    "semantica", "semantica.graph_store", "semantica.vector_store",
-    "semantica.embeddings", "semantica.context", "semantica.semantic_extract",
-    "semantica.deduplication", "semantica.kg", "semantica.search",
-]
-for _mod in _MOCK_MODULES:
-    if _mod not in sys.modules and importlib.util.find_spec(_mod.split(".")[0]) is None:
-        sys.modules[_mod] = MagicMock()
+
+@pytest.mark.asyncio
+async def test_entity_with_no_evidence_by_then_is_unknown():
+    """The node exists today, but nothing dated by T mentions it."""
+    graph = FakeGraph(ALICE)
+    assert await TemporalQueryService(graph).entity_at("person-alice", T_MARCH) is None
 
 
-# ===========================================================================
-# Helpers
-# ===========================================================================
+@pytest.mark.asyncio
+async def test_missing_entity_is_unknown():
+    assert await TemporalQueryService(FakeGraph()).entity_at("person-nobody", T_MARCH) is None
 
 
-def _build_real_sk(mock_graph_store):
-    """Build a real SemanticaKnowledge with mocked dependencies."""
-    from app.services.semantica_knowledge import SemanticaKnowledge
+@pytest.mark.asyncio
+async def test_entity_state_is_assembled_from_evidence():
+    standing = [{"id": "s1", "type": "decision", "content": "Use Postgres",
+                 "valid_from": JAN, "valid_to": None,
+                 "source_meeting_id": "a", "source_meeting_title": "Kickoff"}]
+    graph = FakeGraph(
+        ALICE,
+        _DOCUMENT_EVIDENCE=lambda p: _span(2, JAN, FEB),
+        _SIGNAL_EVIDENCE=lambda p: _span(5, "2026-01-12T15:00:01+00:00", FEB),
+        _ASSERTION_EVIDENCE=lambda p: _span(0),
+        _STANDING_SIGNALS=lambda p: standing,
+    )
+    state = await TemporalQueryService(graph).entity_at("Alice", "2026-03-01T00:00:00Z")
+    assert state["id"] == "person-alice"
+    assert state["as_of"] == "2026-03-01T00:00:00+00:00"
+    assert state["first_seen"] == JAN
+    assert state["last_seen"] == FEB
+    assert state["evidence"] == {"documents": 2, "signals": 5, "relationship_assertions": 0}
+    assert state["standing_signals"] == standing
+    # Identity and bookkeeping keys are not attributes; attributes are current.
+    assert state["attributes"] == {"title": "VP"}
+    assert state["attributes_are_current"] is True
 
-    return SemanticaKnowledge(
-        graph_store=mock_graph_store,
-        vector_store=MagicMock(),
-        embedding_generator=MagicMock(),
-        context_graph=MagicMock(),
-        ner_extractor=MagicMock(),
-        duplicate_detector=MagicMock(),
+
+@pytest.mark.asyncio
+async def test_relationship_assertion_alone_is_evidence():
+    graph = FakeGraph(ALICE, _ASSERTION_EVIDENCE=lambda p: _span(1, JAN, JAN))
+    state = await TemporalQueryService(graph).entity_at("person-alice", T_MARCH)
+    assert state["evidence"]["relationship_assertions"] == 1
+    assert state["first_seen"] == JAN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "given, expected",
+    [
+        ("2026-03-01T00:00:00Z", datetime(2026, 3, 1, tzinfo=UTC)),
+        ("2026-03-01", datetime(2026, 3, 1, tzinfo=UTC)),
+        ("2026-02-28T19:00:00-05:00", datetime(2026, 3, 1, tzinfo=UTC)),
+        (datetime(2026, 3, 1), datetime(2026, 3, 1, tzinfo=UTC)),
+    ],
+)
+async def test_times_reach_the_graph_typed_and_in_utc(given, expected):
+    graph = FakeGraph(ALICE, _DOCUMENT_EVIDENCE=lambda p: _span(1, JAN, JAN))
+    await TemporalQueryService(graph).entity_at("person-alice", given)
+    sent = [p["at"] for _q, p in graph.calls if "at" in p]
+    assert sent and all(v == expected and v.tzinfo is not None for v in sent)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_time_is_an_error_not_a_guess():
+    with pytest.raises(ValueError, match="timestamp"):
+        await TemporalQueryService(FakeGraph(ALICE)).entity_at("person-alice", "last tuesday")
+
+
+# ---------------------------------------------------------------------------
+# relationships_at
+# ---------------------------------------------------------------------------
+
+
+def _typed(rel, other, first, last=None, n=1, sources=("doc:a",)):
+    return {"rel_type": rel, "other_id": other, "other_name": other.split("-", 1)[1].title(),
+            "other_type": other.split("-")[0], "assertions": n, "first": first,
+            "last": last or first, "sources": list(sources), "time_sources": ["explicit"]}
+
+
+def _co(other, first, shared=1):
+    return {"other_id": other, "other_name": other.split("-", 1)[1].title(),
+            "other_type": other.split("-")[0], "shared_documents": shared,
+            "first": first, "last": first}
+
+
+@pytest.mark.asyncio
+async def test_relationships_report_direction_and_evidence():
+    graph = FakeGraph(
+        ALICE,
+        _TYPED_OUT=lambda p: [_typed("WORKS_ON_PROJECTS", "project-atlas", JAN, FEB, n=2,
+                                     sources=("doc:a", "doc:b", ""))],
+        _TYPED_IN=lambda p: [_typed("REPORTS_TO", "person-bob", FEB)],
+        _CO_MENTIONED=lambda p: [_co("account-acme", JAN, shared=3)],
+    )
+    rels = await TemporalQueryService(graph).relationships_at("person-alice", T_MARCH)
+
+    out, incoming, co = rels
+    assert out["relationship_type"] == "works_on_projects"
+    assert (out["direction"], out["source_id"], out["target_id"]) == (
+        "outgoing", "person-alice", "project-atlas")
+    assert (out["assertions"], out["valid_from"], out["last_asserted"]) == (2, JAN, FEB)
+    assert out["sources"] == ["doc:a", "doc:b"]  # the empty source is dropped
+    assert out["derived"] is False
+
+    assert (incoming["direction"], incoming["source_id"], incoming["target_id"]) == (
+        "incoming", "person-bob", "person-alice")
+
+    assert co["relationship_type"] == "co_mentioned"
+    assert co["derived"] is True
+    assert co["assertions"] == 3
+    assert co["other_id"] == "account-acme"
+
+
+@pytest.mark.asyncio
+async def test_co_mentions_can_be_left_out():
+    graph = FakeGraph(ALICE, _CO_MENTIONED=lambda p: [_co("account-acme", JAN)])
+    svc = TemporalQueryService(graph)
+    assert await svc.relationships_at("person-alice", T_MARCH, include_co_mentions=False) == []
+    assert not any(q == tq._CO_MENTIONED for q, _ in graph.calls)
+
+
+@pytest.mark.asyncio
+async def test_point_in_time_never_reads_the_materialised_co_occurrence():
+    """CO_OCCURRENCE is a current-state cache; using it would leak the present."""
+    for name in ("_TYPED_OUT", "_TYPED_IN", "_ASSERTION_EVIDENCE", "_RELATIONSHIPS_IN_WINDOW", "_UNDATED"):
+        assert "type(r) <> $derived" in getattr(tq, name), name
+    graph = FakeGraph(ALICE)
+    await TemporalQueryService(graph).relationships_at("person-alice", T_MARCH)
+    assert {p["derived"] for _q, p in graph.calls if "derived" in p} == {"CO_OCCURRENCE"}
+    assert "CO_OCCURRENCE" not in tq._CO_MENTIONED
+    assert "MENTIONED_IN" in tq._CO_MENTIONED and "d.occurred_at <= $at" in tq._CO_MENTIONED
+
+
+@pytest.mark.asyncio
+async def test_undated_relationships_are_counted_separately():
+    graph = FakeGraph(ALICE, _UNDATED=lambda p: [{"n": 4}])
+    assert await TemporalQueryService(graph).undated_relationships("person-alice") == 4
+    for name in ("_TYPED_OUT", "_TYPED_IN"):
+        assert "r.occurred_at <= $at" in getattr(tq, name)
+
+
+# ---------------------------------------------------------------------------
+# what_changed
+# ---------------------------------------------------------------------------
+
+
+def _changes_graph():
+    return FakeGraph(
+        ALICE,
+        _DOCUMENT_EVIDENCE=lambda p: _span(1, JAN, JAN),
+        _DOCUMENTS_IN_WINDOW=lambda p: [
+            {"id": "doc:b", "path": "meetings/b.md", "title": "Review", "occurred_at": APR,
+             "recorded_at": APR, "time_source": "explicit"}],
+        _SIGNALS_IN_WINDOW=lambda p: [
+            {"id": "s2", "type": "decision", "content": "Use MySQL", "occurred_at": APR,
+             "source_meeting_title": "Review"}],
+        _SIGNALS_CLOSED_IN_WINDOW=lambda p: [
+            {"id": "s1", "type": "decision", "content": "Use Postgres",
+             "valid_to": "2026-04-02T15:00:01+00:00", "superseded_by": "s2"}],
+        _RELATIONSHIPS_IN_WINDOW=lambda p: [
+            {"rel_type": "REPORTS_TO", "direction": "incoming", "other_id": "person-bob",
+             "other_name": "Bob", "first": "2026-03-15T00:00:00+00:00", "sources": ["doc:c", ""]}],
+        _CO_MENTIONED_IN_WINDOW=lambda p: [
+            {"other_id": "account-acme", "other_name": "Acme", "other_type": "account",
+             "first": "2026-03-20T00:00:00+00:00"}],
+        _RECORDED_LATE=lambda p: [
+            {"id": "doc:old", "path": "meetings/old.md", "title": "Backfilled",
+             "occurred_at": JAN, "recorded_at": "2026-03-05T00:00:00+00:00",
+             "time_source": "content_header"}],
     )
 
 
-def _mock_graph_store(query_results=None):
-    """Create a mock graph_store with execute_query returning given results."""
-    gs = MagicMock()
-    gs.execute_query = MagicMock(return_value=query_results or [])
-    return gs
-
-
-# ===========================================================================
-# Phase 1 — SemanticaKnowledge temporal methods
-# ===========================================================================
-
-
-class TestGetStateAt:
-    """get_state_at should return entity properties at a specific timestamp."""
-
-    @pytest.mark.asyncio
-    async def test_returns_entity_state_at_past_time(self):
-        gs = _mock_graph_store([
-            {
-                "id": "entity-1",
-                "name": "Acme Corp",
-                "entity_type": "Organization",
-                "props": {"sector": "Technology"},
-                "valid_from": "2026-01-01T00:00:00Z",
-                "valid_to": None,
-            }
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_state_at("entity-1", PAST)
-
-        assert result is not None
-        assert result["name"] == "Acme Corp"
-        assert result["type"] == "Organization"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_entity_not_found(self):
-        gs = _mock_graph_store([])
-        sk = _build_real_sk(gs)
-        result = await sk.get_state_at("nonexistent", PAST)
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_accepts_entity_name_lookup(self):
-        """Should match by name when entity_id is a name, not an ID."""
-        gs = _mock_graph_store([
-            {
-                "id": "entity-1",
-                "name": "Acme Corp",
-                "entity_type": "Organization",
-                "props": {},
-                "valid_from": "2026-01-01T00:00:00Z",
-                "valid_to": None,
-            }
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_state_at("Acme Corp", PAST)
-
-        assert result is not None
-        assert result["id"] == "entity-1"
-        # Unified Cypher matches by both id and name
-        cypher_used = gs.execute_query.call_args[0][0]
-        assert "toLower(n.name)" in cypher_used
-
-    @pytest.mark.asyncio
-    async def test_single_word_name_resolves(self):
-        """Single-word names like 'Acme' should also resolve via name match."""
-        gs = _mock_graph_store([
-            {
-                "id": "entity-1",
-                "name": "Acme",
-                "entity_type": "Organization",
-                "props": {},
-                "valid_from": "2026-01-01T00:00:00Z",
-                "valid_to": None,
-            }
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_state_at("Acme", PAST)
-
-        assert result is not None
-        assert result["id"] == "entity-1"
-
-
-class TestGetActiveRelationships:
-    """get_active_relationships should return relationships active at a time."""
-
-    @pytest.mark.asyncio
-    async def test_returns_active_relationships(self):
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=[
-            # Outgoing
-            [
-                {
-                    "rel_type": "WORKS_FOR",
-                    "target_id": "entity-2",
-                    "target_name": "Acme Corp",
-                    "target_type": "Organization",
-                    "props": {"role": "CEO"},
-                    "valid_from": "2026-01-01T00:00:00Z",
-                    "valid_to": None,
-                }
-            ],
-            # Incoming (empty)
-            [],
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_active_relationships("entity-1", PAST)
-
-        assert len(result) == 1
-        assert result[0]["relationship_type"] == "WORKS_FOR"
-        assert result[0]["target_name"] == "Acme Corp"
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_when_no_relationships(self):
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=[[], []])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_active_relationships("entity-1", PAST)
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_includes_both_directions(self):
-        """Should return both outgoing and incoming relationships."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=[
-            # Outgoing
-            [{"rel_type": "WORKS_FOR", "target_id": "e2", "target_name": "Acme",
-              "target_type": "Organization", "props": {},
-              "valid_from": "2026-01-01T00:00:00Z", "valid_to": None}],
-            # Incoming
-            [{"rel_type": "MANAGES", "source_id": "e3", "source_name": "Bob",
-              "source_type": "Person", "props": {},
-              "valid_from": "2026-01-01T00:00:00Z", "valid_to": None}],
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_active_relationships("entity-1", PAST)
-
-        assert len(result) == 2
-
-
-class TestGetProvenance:
-    """get_provenance should return entity's provenance chain."""
-
-    @pytest.mark.asyncio
-    async def test_returns_provenance_data(self):
-        gs = _mock_graph_store([
-            {
-                "source": "meeting-transcript-2026-01-15.md",
-                "action": "MENTIONS",
-                "timestamp": "2026-01-15T10:00:00Z",
-                "actor": "webhook",
-            },
-            {
-                "source": "meeting-transcript-2026-02-01.md",
-                "action": "EXTRACTED_FROM",
-                "timestamp": "2026-02-01T14:00:00Z",
-                "actor": "webhook",
-            },
-        ])
-
-        sk = _build_real_sk(gs)
-        result = await sk.get_provenance("entity-1")
-
-        assert "history" in result
-        assert len(result["history"]) == 2
-        assert result["history"][0]["action"] == "MENTIONS"
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_provenance_for_unknown_entity(self):
-        gs = _mock_graph_store([])
-        sk = _build_real_sk(gs)
-        result = await sk.get_provenance("nonexistent")
-        assert "history" in result
-        assert len(result["history"]) == 0
-
-
-class TestErrorPropagation:
-    """Errors from graph_store should propagate, not be swallowed."""
-
-    @pytest.mark.asyncio
-    async def test_get_state_at_propagates_errors(self):
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=RuntimeError("Neo4j down"))
-
-        sk = _build_real_sk(gs)
-        with pytest.raises(RuntimeError, match="Neo4j down"):
-            await sk.get_state_at("entity-1", PAST)
-
-    @pytest.mark.asyncio
-    async def test_get_active_relationships_propagates_errors(self):
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=RuntimeError("Connection lost"))
-
-        sk = _build_real_sk(gs)
-        with pytest.raises(RuntimeError, match="Connection lost"):
-            await sk.get_active_relationships("entity-1", PAST)
-
-    @pytest.mark.asyncio
-    async def test_get_provenance_propagates_errors(self):
-        gs = MagicMock()
-        gs.execute_query = MagicMock(side_effect=RuntimeError("Timeout"))
-
-        sk = _build_real_sk(gs)
-        with pytest.raises(RuntimeError, match="Timeout"):
-            await sk.get_provenance("entity-1")
-
-
-# ===========================================================================
-# Phase 2 — TemporalQueryService higher-order queries
-# ===========================================================================
-
-
-class TestWhatChanged:
-    """what_changed should diff entity state between a past time and now."""
-
-    @pytest.mark.asyncio
-    async def test_detects_attribute_changes(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Acme", "type": "Organization",
-             "attributes": {"sector": "Finance", "status": "Active"}},
-            {"id": "e1", "name": "Acme", "type": "Organization",
-             "attributes": {"sector": "Technology", "status": "Active"}},
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.what_changed("e1", since=PAST)
-
-        assert result["entity_id"] == "e1"
-        changes = result["changes"]
-        assert any(c["field"] == "attributes.sector" for c in changes)
-
-    @pytest.mark.asyncio
-    async def test_returns_no_changes_when_unchanged(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        state = {"id": "e1", "name": "Acme", "type": "Organization",
-                 "attributes": {"sector": "Technology"}}
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value=state)
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.what_changed("e1", since=PAST)
-
-        assert result["changes"] == []
-
-    @pytest.mark.asyncio
-    async def test_handles_entity_not_found_at_since(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            None,
-            {"id": "e1", "name": "Acme", "type": "Organization", "attributes": {}},
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.what_changed("e1", since=PAST)
-
-        assert result["entity_id"] == "e1"
-        assert result["created_after_since"] is True
-
-
-class TestWhatChangedBetween:
-    """what_changed_between should diff between two arbitrary timestamps."""
-
-    @pytest.mark.asyncio
-    async def test_diffs_between_two_timestamps(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Acme", "type": "Organization",
-             "attributes": {"sector": "Finance"}},
-            {"id": "e1", "name": "Acme Corp", "type": "Organization",
-             "attributes": {"sector": "Technology"}},
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.what_changed_between("e1", start=PAST, end=PAST2)
-
-        assert result["entity_id"] == "e1"
-        assert result["start"] == PAST.isoformat()
-        assert result["end"] == PAST2.isoformat()
-        changes = result["changes"]
-        assert any(c["field"] == "name" for c in changes)
-        assert any(c["field"] == "attributes.sector" for c in changes)
-
-    @pytest.mark.asyncio
-    async def test_handles_both_states_missing(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value=None)
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.what_changed_between("e1", start=PAST, end=PAST2)
-
-        assert result["entity_id"] == "e1"
-        assert result["error"] is not None
-
-
-class TestGraphAsOf:
-    """graph_as_of should reconstruct subgraph around entity at a time."""
-
-    @pytest.mark.asyncio
-    async def test_builds_subgraph_at_time(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Alice", "type": "Person", "attributes": {}},
-            {"id": "e2", "name": "Acme", "type": "Organization", "attributes": {}},
-        ])
-        mock_sk.get_active_relationships = AsyncMock(side_effect=[
-            [{"relationship_type": "WORKS_FOR", "target_id": "e2",
-              "target_name": "Acme", "properties": {}}],
-            [],
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.graph_as_of("e1", timestamp=PAST, depth=1)
-
-        assert len(result["nodes"]) == 2
-        assert len(result["edges"]) == 1
-        node_names = {n["name"] for n in result["nodes"]}
-        assert "Alice" in node_names
-        assert "Acme" in node_names
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_entity(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value=None)
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.graph_as_of("nonexistent", timestamp=PAST)
-
-        assert result["nodes"] == []
-        assert result["edges"] == []
-
-    @pytest.mark.asyncio
-    async def test_respects_depth_zero(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value={
-            "id": "e1", "name": "Alice", "type": "Person", "attributes": {}
-        })
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.graph_as_of("e1", timestamp=PAST, depth=0)
-
-        assert len(result["nodes"]) == 1
-        assert len(result["edges"]) == 0
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_edges(self):
-        """Same relationship seen from both sides should appear only once."""
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Alice", "type": "Person", "attributes": {}},
-            {"id": "e2", "name": "Bob", "type": "Person", "attributes": {}},
-        ])
-        # When visiting e1: outgoing KNOWS -> e2
-        # When visiting e2: incoming KNOWS from e1 (same relationship, other direction)
-        mock_sk.get_active_relationships = AsyncMock(side_effect=[
-            [{"relationship_type": "KNOWS", "target_id": "e2",
-              "target_name": "Bob", "direction": "outgoing", "properties": {}}],
-            [{"relationship_type": "KNOWS", "source_id": "e1",
-              "source_name": "Alice", "target_id": "e2",
-              "direction": "incoming", "properties": {}}],
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.graph_as_of("e1", timestamp=PAST, depth=2)
-
-        assert len(result["nodes"]) == 2
-        # Edge should only appear once despite being seen from both sides
-        assert len(result["edges"]) == 1
-
-
-class TestFindContradictions:
-    """find_contradictions should detect conflicting signals for an entity.
-
-    S4-4: sources from semantic conflict layer only (keyword path removed).
-    """
-
-    @pytest.mark.asyncio
-    async def test_detects_contradicting_signals_from_semantic_layer(self):
-        """Signals with LLM-detected conflict metadata surface as contradictions."""
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.graph_store = MagicMock()
-        mock_sk.graph_store.execute_query = MagicMock(return_value=[
-            {
-                "signal_id": "s1",
-                "content": "Project Alpha is on track for Q1 delivery",
-                "timestamp": "2026-01-15T10:00:00Z",
-                "type": "status_update",
-            },
-        ])
-
-        # s1 has a pending conflict candidate pointing at s2 (LLM-detected)
-        mock_signal = MagicMock()
-        mock_signal.id = "s1"
-        mock_signal.source_timestamp = "2026-01-15T10:00:00Z"
-        mock_signal.metadata = {
-            "conflict_candidates": [{
-                "other_signal_id": "s2",
-                "other_content": "Project Alpha is delayed",
-                "rationale": "Contradicts on-track status",
-                "confidence": 0.91,
-                "speakers": ["Alice"],
-                "status": "pending",
-                "proposed_at": "2026-02-20T10:00:00Z",
-            }]
-        }
-
-        svc = TemporalQueryService(mock_sk)
-        with patch("app.services.temporal_queries.signal_store") as mock_store:
-            mock_store.find_signal_by_id.side_effect = lambda sid: (
-                (mock_signal, MagicMock()) if sid == "s1" else None
-            )
-            result = await svc.find_contradictions("entity-alpha")
-
-        assert "contradictions" in result
-        assert len(result["contradictions"]) >= 1
-        contradiction = result["contradictions"][0]
-        assert "signal_a" in contradiction
-        assert "signal_b" in contradiction
-        assert "reason" in contradiction
-
-    @pytest.mark.asyncio
-    async def test_no_contradictions_when_single_signal(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.graph_store = MagicMock()
-        mock_sk.graph_store.execute_query = MagicMock(return_value=[
-            {
-                "signal_id": "s1",
-                "content": "Project Alpha is on track",
-                "timestamp": "2026-01-15T10:00:00Z",
-                "type": "status_update",
-            },
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.find_contradictions("entity-alpha")
-
-        assert result["contradictions"] == []
-
-    @pytest.mark.asyncio
-    async def test_filters_by_date_range(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.graph_store = MagicMock()
-        mock_sk.graph_store.execute_query = MagicMock(return_value=[])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.find_contradictions(
-            "entity-alpha",
-            date_from=PAST,
-            date_to=NOW,
-        )
-
-        # Verify date filtering was applied in query params
-        call_args = mock_sk.graph_store.execute_query.call_args
-        assert call_args is not None
-        assert result["contradictions"] == []
-
-    @pytest.mark.asyncio
-    async def test_uses_signal_writer_relationship_pattern(self):
-        """Should query SignalGraphWriter's edges, not :ABOUT or REFERENCES_*."""
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.graph_store = MagicMock()
-        mock_sk.graph_store.execute_query = MagicMock(return_value=[])
-
-        svc = TemporalQueryService(mock_sk)
-        await svc.find_contradictions("entity-1")
-
-        cypher = mock_sk.graph_store.execute_query.call_args[0][0]
-        assert "MENTIONS" in cypher and "ASSIGNED_TO" in cypher
-        assert "REFERENCES_" not in cypher
-        assert "ABOUT" not in cypher
-
-
-class TestTemporalBlastRadius:
-    """temporal_blast_radius should BFS traverse with time-scoped relationships."""
-
-    @pytest.mark.asyncio
-    async def test_traverses_to_max_depth(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Alice", "type": "Person", "attributes": {}},
-            {"id": "e2", "name": "Acme", "type": "Organization", "attributes": {}},
-            {"id": "e3", "name": "Project X", "type": "Project", "attributes": {}},
-        ])
-        mock_sk.get_active_relationships = AsyncMock(side_effect=[
-            [{"relationship_type": "WORKS_FOR", "target_id": "e2",
-              "target_name": "Acme", "properties": {}}],
-            [{"relationship_type": "OWNS", "target_id": "e3",
-              "target_name": "Project X", "properties": {}}],
-            [],
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.temporal_blast_radius("e1", at_time=PAST, max_depth=3)
-
-        assert len(result["nodes"]) == 3
-        assert result["depth_map"]["e1"] == 0
-        assert result["depth_map"]["e2"] == 1
-        assert result["depth_map"]["e3"] == 2
-
-    @pytest.mark.asyncio
-    async def test_handles_cycles(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Alice", "type": "Person", "attributes": {}},
-            {"id": "e2", "name": "Bob", "type": "Person", "attributes": {}},
-        ])
-        mock_sk.get_active_relationships = AsyncMock(side_effect=[
-            [{"relationship_type": "KNOWS", "target_id": "e2",
-              "target_name": "Bob", "properties": {}}],
-            [{"relationship_type": "KNOWS", "target_id": "e1",
-              "target_name": "Alice", "properties": {}}],
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.temporal_blast_radius("e1", at_time=PAST, max_depth=5)
-
-        assert len(result["nodes"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_for_missing_entity(self):
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(return_value=None)
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.temporal_blast_radius("nonexistent", at_time=PAST)
-
-        assert result["nodes"] == []
-        assert result["edges"] == []
-        assert result["depth_map"] == {}
-
-    @pytest.mark.asyncio
-    async def test_uses_resolved_id_not_raw_name(self):
-        """BFS should use the resolved entity ID from get_state_at, not the raw input."""
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        # Name lookup resolves "Alice" to id "e1"
-        mock_sk.get_state_at = AsyncMock(return_value={
-            "id": "e1", "name": "Alice", "type": "Person", "attributes": {}
-        })
-        mock_sk.get_active_relationships = AsyncMock(return_value=[])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.temporal_blast_radius("Alice", at_time=PAST)
-
-        # depth_map should use resolved ID "e1", not raw name "Alice"
-        assert "e1" in result["depth_map"]
-        assert result["depth_map"]["e1"] == 0
-        # get_active_relationships should be called with resolved ID
-        mock_sk.get_active_relationships.assert_called_once_with("e1", PAST)
-
-    @pytest.mark.asyncio
-    async def test_traverses_incoming_relationships(self):
-        """BFS should follow incoming relationships using source_id."""
-        from app.services.temporal_queries import TemporalQueryService
-
-        mock_sk = MagicMock()
-        mock_sk.get_state_at = AsyncMock(side_effect=[
-            {"id": "e1", "name": "Alice", "type": "Person", "attributes": {}},
-            {"id": "e3", "name": "Bob", "type": "Person", "attributes": {}},
-        ])
-        mock_sk.get_active_relationships = AsyncMock(side_effect=[
-            # e1 has an incoming relationship from e3
-            [{"relationship_type": "MANAGES", "source_id": "e3",
-              "source_name": "Bob", "target_id": "e1",
-              "direction": "incoming", "properties": {}}],
-            [],
-        ])
-
-        svc = TemporalQueryService(mock_sk)
-        result = await svc.temporal_blast_radius("e1", at_time=PAST, max_depth=2)
-
-        assert len(result["nodes"]) == 2
-        # Bob should be found via the incoming relationship
-        node_names = {n["name"] for n in result["nodes"]}
-        assert "Bob" in node_names
-        # Edge should be source=e3 -> target=e1 (preserving direction)
-        assert result["edges"][0]["source"] == "e3"
-        assert result["edges"][0]["target"] == "e1"
-
-
-# ===========================================================================
-# Part A — Temporal validity set during graph build
-# ===========================================================================
-
-
-class TestAddEntityTemporalValidity:
-    """add_entity should set valid_from on nodes from available metadata."""
-
-    @pytest.mark.asyncio
-    async def test_sets_valid_from_from_updated_at(self):
-        """Should extract valid_from from updated_at in metadata."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        await sk.add_entity(
-            entity_id="person-test",
-            entity_type="person",
-            name="Test Person",
-            properties={"updated_at": "2026-02-15T10:00:00Z"},
-        )
-
-        # Extract the props dict passed to execute_query
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert "valid_from" in props
-        assert props["valid_from"] == "2026-02-15T10:00:00Z"
-
-    @pytest.mark.asyncio
-    async def test_sets_valid_from_fallback_to_now(self):
-        """Should fall back to current time if no date fields in metadata."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        before = datetime.now(UTC).isoformat()
-        await sk.add_entity(
-            entity_id="person-test",
-            entity_type="person",
-            name="Test Person",
-            properties={"title": "Engineer"},
-        )
-
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert "valid_from" in props
-        # Should be approximately now
-        assert props["valid_from"] >= before
-
-    @pytest.mark.asyncio
-    async def test_preserves_explicit_valid_from(self):
-        """Should not overwrite an explicitly provided valid_from."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        await sk.add_entity(
-            entity_id="person-test",
-            entity_type="person",
-            name="Test Person",
-            properties={"valid_from": "2026-01-01T00:00:00Z", "updated_at": "2026-03-01T00:00:00Z"},
-        )
-
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert props["valid_from"] == "2026-01-01T00:00:00Z"
-
-    @pytest.mark.asyncio
-    async def test_preserves_explicit_valid_to(self):
-        """Should preserve valid_to for departed entities."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        await sk.add_entity(
-            entity_id="person-departed",
-            entity_type="person",
-            name="Departed Person",
-            properties={"valid_from": "2026-01-01T00:00:00Z", "valid_to": "2026-02-28T23:59:59Z"},
-        )
-
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert props["valid_to"] == "2026-02-28T23:59:59Z"
-
-
-class TestAddRelationshipTemporalValidity:
-    """add_relationship should set valid_from on edges."""
-
-    @pytest.mark.asyncio
-    async def test_sets_valid_from_on_relationship(self):
-        """Should set valid_from matching created_at."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        await sk.add_relationship(
-            source_id="person-a",
-            target_id="team-b",
-            rel_type="member_of",
-        )
-
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert "valid_from" in props
-        assert "created_at" in props
-        assert props["valid_from"] == props["created_at"]
-
-    @pytest.mark.asyncio
-    async def test_preserves_explicit_valid_from_on_relationship(self):
-        """Should not overwrite explicitly provided valid_from."""
-        gs = MagicMock()
-        gs.execute_query = MagicMock(return_value={"success": True, "records": []})
-
-        sk = _build_real_sk(gs)
-        await sk.add_relationship(
-            source_id="person-a",
-            target_id="team-b",
-            rel_type="member_of",
-            properties={"valid_from": "2026-01-06T00:00:00Z"},
-        )
-
-        call_args = gs.execute_query.call_args
-        props = call_args[1]["props"] if "props" in call_args[1] else call_args[0][1]["props"]
-        assert props["valid_from"] == "2026-01-06T00:00:00Z"
+@pytest.mark.asyncio
+async def test_changes_are_listed_in_event_order():
+    result = await TemporalQueryService(_changes_graph()).what_changed_between(
+        "person-alice", "2026-03-01", "2026-05-01")
+    assert [(c["kind"], c["at"]) for c in result["changes"]] == [
+        ("relationship", "2026-03-15T00:00:00+00:00"),
+        ("co_mentioned", "2026-03-20T00:00:00+00:00"),
+        ("document", APR),
+        ("signal", APR),
+        ("signal_superseded", "2026-04-02T15:00:01+00:00"),
+    ]
+    assert result["counts"] == {"relationship": 1, "co_mentioned": 1, "document": 1,
+                                "signal": 1, "signal_superseded": 1}
+    assert result["start"] == "2026-03-01T00:00:00+00:00"
+    assert result["end"] == "2026-05-01T00:00:00+00:00"
+    relationship = result["changes"][0]
+    assert relationship["relationship_type"] == "reports_to"
+    assert relationship["direction"] == "incoming"
+    assert relationship["sources"] == ["doc:c"]
+    assert result["changes"][-1]["superseded_by"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_backfilled_evidence_is_reported_as_recorded_late():
+    """Something that happened before the window but was only ingested during
+    it is not a change in the window — it is reported on its own."""
+    result = await TemporalQueryService(_changes_graph()).what_changed_between(
+        "person-alice", "2026-03-01", "2026-05-01")
+    assert [d["id"] for d in result["recorded_late"]] == ["doc:old"]
+    assert "doc:old" not in [c.get("id") for c in result["changes"]]
+    assert "d.occurred_at <= $start" in tq._RECORDED_LATE
+    assert "d.recorded_at > $start" in tq._RECORDED_LATE
+
+
+@pytest.mark.asyncio
+async def test_window_is_open_at_the_start_and_closed_at_the_end():
+    for name in ("_DOCUMENTS_IN_WINDOW", "_SIGNALS_IN_WINDOW"):
+        query = getattr(tq, name)
+        assert "occurred_at > $start" in query and "occurred_at <= $end" in query
+    assert "first > $start" in tq._RELATIONSHIPS_IN_WINDOW
+    assert "first > $start" in tq._CO_MENTIONED_IN_WINDOW
+
+
+@pytest.mark.asyncio
+async def test_entity_first_heard_of_inside_the_window():
+    graph = _changes_graph()
+    graph.handlers["_DOCUMENT_EVIDENCE"] = lambda p: _span(0)
+    result = await TemporalQueryService(graph).what_changed_between(
+        "person-alice", "2026-03-01", "2026-05-01")
+    assert result["first_known_in_window"] is True
+
+
+@pytest.mark.asyncio
+async def test_what_changed_runs_to_now():
+    before = datetime.now(UTC)
+    result = await TemporalQueryService(_changes_graph()).what_changed("person-alice", "2026-03-01")
+    assert result["since"] == "2026-03-01T00:00:00+00:00"
+    assert datetime.fromisoformat(result["now"]) >= before
+    assert "start" not in result and "end" not in result
+    assert len(result["changes"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_changes_for_unknown_entity_or_backwards_window():
+    svc = TemporalQueryService(FakeGraph(ALICE))
+    missing = await svc.what_changed_between("person-nobody", "2026-03-01", "2026-05-01")
+    assert missing["changes"] == [] and missing["error"] == "Entity not found"
+    backwards = await svc.what_changed_between("person-alice", "2026-05-01", "2026-03-01")
+    assert backwards["changes"] == [] and "before start" in backwards["error"]
+
+
+# ---------------------------------------------------------------------------
+# graph_as_of / temporal_blast_radius
+# ---------------------------------------------------------------------------
+
+WORLD = {
+    "person-alice": {"name": "Alice"},
+    "project-atlas": {"name": "Atlas", "type": "project"},
+    "person-bob": {"name": "Bob"},
+    "account-acme": {"name": "Acme", "type": "account"},
+    "person-late": {"name": "Late"},
+}
+# Entities with evidence by T; person-late is only mentioned afterwards.
+KNOWN = {"person-alice", "project-atlas", "person-bob", "account-acme"}
+OUT = {
+    "person-alice": [_typed("WORKS_ON_PROJECTS", "project-atlas", JAN),
+                     _typed("COLLABORATES_WITH", "person-late", JAN)],
+    "project-atlas": [_typed("MANAGED_BY", "person-bob", FEB)],
+}
+IN = {"project-atlas": [_typed("HAS_TEAM_MEMBERS", "person-alice", JAN)]}
+CO = {"person-alice": [_co("account-acme", JAN)], "account-acme": [_co("person-alice", JAN)]}
+
+
+def _world():
+    return FakeGraph(
+        WORLD,
+        _DOCUMENT_EVIDENCE=lambda p: _span(1 if p["id"] in KNOWN else 0, JAN, JAN),
+        _TYPED_OUT=lambda p: OUT.get(p["id"], []),
+        _TYPED_IN=lambda p: IN.get(p["id"], []),
+        _CO_MENTIONED=lambda p: CO.get(p["id"], []),
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_as_of_follows_evidence_outward():
+    result = await TemporalQueryService(_world()).graph_as_of("person-alice", T_MARCH, depth=2)
+    assert [n["id"] for n in result["nodes"]] == [
+        "person-alice", "project-atlas", "account-acme", "person-bob"]
+    edges = {(e["source"], e["relationship_type"], e["target"]) for e in result["edges"]}
+    assert ("person-alice", "works_on_projects", "project-atlas") in edges
+    assert ("project-atlas", "managed_by", "person-bob") in edges
+    assert ("person-alice", "has_team_members", "project-atlas") in edges
+    assert result["timestamp"] == "2026-03-01T00:00:00+00:00"
+    assert result["depth"] == 2
+    first = next(e for e in result["edges"] if e["relationship_type"] == "works_on_projects")
+    assert first["properties"] == {"first_asserted": JAN, "last_asserted": JAN,
+                                   "assertions": 1, "derived": False}
+
+
+@pytest.mark.asyncio
+async def test_entity_not_yet_known_is_not_a_node():
+    """An edge to something nothing had mentioned by T leads nowhere."""
+    result = await TemporalQueryService(_world()).graph_as_of("person-alice", T_MARCH, depth=3)
+    assert "person-late" not in [n["id"] for n in result["nodes"]]
+    assert all("person-late" not in (e["source"], e["target"]) for e in result["edges"])
+
+
+@pytest.mark.asyncio
+async def test_co_mention_is_one_edge_seen_from_both_sides():
+    result = await TemporalQueryService(_world()).graph_as_of("person-alice", T_MARCH, depth=2)
+    co = [e for e in result["edges"] if e["relationship_type"] == "co_mentioned"]
+    assert len(co) == 1 and co[0]["properties"]["derived"] is True
+
+
+@pytest.mark.asyncio
+async def test_depth_limits_the_traversal():
+    svc = TemporalQueryService(_world())
+    one = await svc.graph_as_of("person-alice", T_MARCH, depth=1)
+    assert "person-bob" not in [n["id"] for n in one["nodes"]]
+    zero = await svc.graph_as_of("person-alice", T_MARCH, depth=0)
+    assert [n["id"] for n in zero["nodes"]] == ["person-alice"] and zero["edges"] == []
+
+
+@pytest.mark.asyncio
+async def test_graph_as_of_before_anything_was_known_is_empty():
+    graph = FakeGraph(WORLD)
+    result = await TemporalQueryService(graph).graph_as_of("person-alice", "2025-01-01")
+    assert result["nodes"] == [] and result["edges"] == []
+
+
+@pytest.mark.asyncio
+async def test_blast_radius_follows_stated_relationships_only():
+    result = await TemporalQueryService(_world()).temporal_blast_radius(
+        "person-alice", T_MARCH, max_depth=3)
+    assert result["depth_map"] == {"person-alice": 0, "project-atlas": 1, "person-bob": 2}
+    assert "account-acme" not in result["depth_map"]  # co-mentioned, not related
+    assert all(e["relationship_type"] != "co_mentioned" for e in result["edges"])
+    assert result["at_time"] == "2026-03-01T00:00:00+00:00"
+    assert result["max_depth"] == 3
+
+
+@pytest.mark.asyncio
+async def test_blast_radius_of_an_unknown_entity_is_empty():
+    result = await TemporalQueryService(FakeGraph(WORLD)).temporal_blast_radius(
+        "person-alice", T_MARCH)
+    assert result == {"nodes": [], "edges": [], "depth_map": {}}
+
+
+# ---------------------------------------------------------------------------
+# provenance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provenance_reports_both_times_and_the_time_source():
+    graph = FakeGraph(ALICE, _PROVENANCE=lambda p: [
+        {"source": "meetings/a.md", "title": "Kickoff", "action": "MENTIONED_IN",
+         "occurred_at": JAN, "recorded_at": "2026-09-27T22:00:00+00:00",
+         "time_source": "explicit"},
+        {"source": "s1", "title": "Use Postgres", "action": "MENTIONS",
+         "occurred_at": JAN, "recorded_at": None, "time_source": None},
+    ])
+    result = await TemporalQueryService(graph).provenance("Alice")
+    assert result["entity_id"] == "person-alice"
+    assert result["history"] == [
+        {"source": "meetings/a.md", "title": "Kickoff", "action": "MENTIONED_IN",
+         "timestamp": JAN, "recorded_at": "2026-09-27T22:00:00+00:00", "time_source": "explicit"},
+        {"source": "s1", "title": "Use Postgres", "action": "MENTIONS",
+         "timestamp": JAN, "recorded_at": "", "time_source": ""},
+    ]
+    assert "ORDER BY occurred_at" in tq._PROVENANCE
+
+
+@pytest.mark.asyncio
+async def test_provenance_of_unknown_entity_is_empty():
+    result = await TemporalQueryService(FakeGraph()).provenance("person-nobody")
+    assert result == {"entity_id": "person-nobody", "history": []}
+
+
+# ---------------------------------------------------------------------------
+# No validity windows on entities
+# ---------------------------------------------------------------------------
+
+
+def test_no_query_reads_a_validity_window_from_an_entity_or_edge():
+    """valid_from/valid_to exist on signals only (ADR-004 §1)."""
+    import re
+
+    for name, value in vars(tq).items():
+        if not (name.startswith("_") and isinstance(value, str) and "MATCH" in value):
+            continue
+        for var in re.findall(r"\b([a-z])\.valid_(?:from|to)\b", value):
+            assert var == "s", f"{name} reads a validity window from '{var}'"
+
+
+def test_changes_include_relationships_where_the_entity_is_the_target():
+    """A relationship stated in the window with this entity as its target is a
+    change to it too; not every type has a stored inverse."""
+    q = tq._RELATIONSHIPS_IN_WINDOW
+    assert "-[r]-(b:Entity)" in q and "-[r]->" not in q
+    assert "startNode(r) = a" in q and "direction" in q
+
+
+@pytest.mark.asyncio
+async def test_traversal_stops_at_the_node_cap():
+    hub = {"person-hub": {"name": "Hub"}}
+    spokes = {f"person-s{i}": {"name": f"S{i}"} for i in range(30)}
+    graph = FakeGraph(
+        {**hub, **spokes},
+        _DOCUMENT_EVIDENCE=lambda p: _span(1, JAN, JAN),
+        _CO_MENTIONED=lambda p: [_co(s, JAN) for s in spokes] if p["id"] == "person-hub" else [],
+    )
+    svc = TemporalQueryService(graph)
+
+    full = await svc.graph_as_of("person-hub", T_MARCH, depth=1)
+    assert len(full["nodes"]) == 31 and full["truncated"] is False
+
+    graph.calls.clear()
+    capped_nodes, _edges, _depths, _when, truncated = await svc._traverse(
+        "person-hub", T_MARCH, max_depth=1, include_co_mentions=True, max_nodes=10)
+    assert truncated is True
+    assert len(capped_nodes) == 10
+    # Entities past the cap are never evaluated: bounded reads.
+    evaluated = {p["lookup"] for q, p in graph.calls if q == tq._RESOLVE}
+    assert len(evaluated) <= 11
+
+
+@pytest.mark.asyncio
+async def test_blast_radius_reports_truncation():
+    result = await TemporalQueryService(_world()).temporal_blast_radius("person-alice", T_MARCH)
+    assert result["truncated"] is False

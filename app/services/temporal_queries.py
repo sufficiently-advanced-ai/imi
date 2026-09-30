@@ -1,14 +1,23 @@
-"""
-Temporal Query Service — Higher-order temporal queries for Issue #864.
+"""Point-in-time queries over evidence (ADR-004).
 
-Builds on SemanticaKnowledge temporal methods (get_state_at, get_active_relationships)
-to provide composite temporal intelligence:
+Time belongs to evidence. Documents, signals and relationship assertions carry
+``occurred_at`` (when it happened) and ``recorded_at`` (when imi ingested it);
+entities are timeless identities. "The graph as of T" is the subgraph supported
+by evidence with ``occurred_at <= T`` — computed by traversal, never read from
+validity windows on entity nodes.
 
-- what_changed: Diff entity state between a past timestamp and now
-- what_changed_between: Diff entity state between two arbitrary timestamps
-- graph_as_of: Reconstruct subgraph around entity at a past point in time
-- find_contradictions: Detect signals that conflict with prior signals for same entity
-- temporal_blast_radius: BFS traversal filtered to relationships active at a specific time
+- entity_at: what was known about an entity at T
+- relationships_at: relationships asserted, and entities co-mentioned, by T
+- what_changed / what_changed_between: evidence that arrived in a window,
+  plus evidence recorded late about an earlier time
+- graph_as_of: the subgraph around an entity at T
+- temporal_blast_radius: the same traversal with hop distances
+- provenance: every piece of evidence about an entity, in event order
+- find_contradictions: reviewed and pending conflicts between signals
+
+All comparisons are on Neo4j ``DATETIME`` values in UTC. Backfilled content is
+placed by its event time, so it appears in every point-in-time query from the
+moment it is ingested.
 """
 
 from __future__ import annotations
@@ -18,6 +27,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from app.utils.event_time import to_utc
+
 logger = logging.getLogger(__name__)
 
 # Signal store is imported here so callers can patch
@@ -25,182 +36,497 @@ logger = logging.getLogger(__name__)
 # The proxy resolves to the correct tenant-scoped store at call time.
 from app.services.signal_store import signal_store  # noqa: E402
 
+# Edges a signal uses to point at the entities it is about.
+_SIGNAL_EDGES = ["MENTIONS", "ASSIGNED_TO", "FOR_CLIENT"]
+# Derived, current-state cache; point-in-time co-occurrence is computed from
+# MENTIONED_IN filtered by event time.
+_DERIVED_EDGE = "CO_OCCURRENCE"
+
+_RESOLVE = (
+    "MATCH (n:Entity) WHERE NOT n:Signal "
+    "AND (n.id = $lookup OR toLower(n.name) = toLower($lookup)) "
+    "RETURN n.id AS id, n.name AS name, n.entity_type AS entity_type, properties(n) AS props "
+    "ORDER BY CASE WHEN n.id = $lookup THEN 0 ELSE 1 END LIMIT 1"
+)
+
+_DOCUMENT_EVIDENCE = (
+    "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(d:Document) "
+    "WHERE d.occurred_at <= $at "
+    "RETURN count(d) AS n, min(d.occurred_at) AS first, max(d.occurred_at) AS last"
+)
+
+_SIGNAL_EVIDENCE = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $signal_edges AND s.occurred_at <= $at "
+    "RETURN count(DISTINCT s) AS n, min(s.occurred_at) AS first, max(s.occurred_at) AS last"
+)
+
+_ASSERTION_EVIDENCE = (
+    "MATCH (e:Entity {id: $id})-[r]-(o:Entity) "
+    "WHERE NOT o:Signal AND type(r) <> $derived AND r.occurred_at <= $at "
+    "RETURN count(r) AS n, min(r.occurred_at) AS first, max(r.occurred_at) AS last"
+)
+
+_STANDING_SIGNALS = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $signal_edges AND s.valid_from <= $at "
+    "AND (s.valid_to IS NULL OR s.valid_to > $at) "
+    "RETURN DISTINCT s.id AS id, s.signal_type AS type, s.content AS content, "
+    "s.valid_from AS valid_from, s.valid_to AS valid_to, "
+    "s.source_meeting_id AS source_meeting_id, "
+    "s.source_meeting_title AS source_meeting_title "
+    "ORDER BY valid_from DESC LIMIT $max_results"
+)
+
+_TYPED_OUT = (
+    "MATCH (a:Entity {id: $id})-[r]->(b:Entity) "
+    "WHERE NOT b:Signal AND type(r) <> $derived AND r.occurred_at <= $at "
+    "RETURN type(r) AS rel_type, b.id AS other_id, b.name AS other_name, "
+    "b.entity_type AS other_type, count(r) AS assertions, "
+    "min(r.occurred_at) AS first, max(r.occurred_at) AS last, "
+    "collect(DISTINCT r.source_id) AS sources, "
+    "collect(DISTINCT r.time_source) AS time_sources"
+)
+
+_TYPED_IN = (
+    "MATCH (b:Entity)-[r]->(a:Entity {id: $id}) "
+    "WHERE NOT b:Signal AND type(r) <> $derived AND r.occurred_at <= $at "
+    "RETURN type(r) AS rel_type, b.id AS other_id, b.name AS other_name, "
+    "b.entity_type AS other_type, count(r) AS assertions, "
+    "min(r.occurred_at) AS first, max(r.occurred_at) AS last, "
+    "collect(DISTINCT r.source_id) AS sources, "
+    "collect(DISTINCT r.time_source) AS time_sources"
+)
+
+_UNDATED = (
+    "MATCH (a:Entity {id: $id})-[r]-(b:Entity) "
+    "WHERE NOT b:Signal AND type(r) <> $derived AND r.occurred_at IS NULL "
+    "RETURN count(r) AS n"
+)
+
+_CO_MENTIONED = (
+    "MATCH (a:Entity {id: $id})-[:MENTIONED_IN]->(d:Document)<-[:MENTIONED_IN]-(b:Entity) "
+    "WHERE d.occurred_at <= $at AND b.id <> $id "
+    "RETURN b.id AS other_id, b.name AS other_name, b.entity_type AS other_type, "
+    "count(DISTINCT d) AS shared_documents, "
+    "min(d.occurred_at) AS first, max(d.occurred_at) AS last"
+)
+
+_DOCUMENTS_IN_WINDOW = (
+    "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(d:Document) "
+    "WHERE d.occurred_at > $start AND d.occurred_at <= $end "
+    "RETURN d.id AS id, d.path AS path, d.title AS title, d.occurred_at AS occurred_at, "
+    "d.recorded_at AS recorded_at, d.time_source AS time_source "
+    "ORDER BY occurred_at ASC"
+)
+
+_SIGNALS_IN_WINDOW = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $signal_edges AND s.occurred_at > $start AND s.occurred_at <= $end "
+    "RETURN DISTINCT s.id AS id, s.signal_type AS type, s.content AS content, "
+    "s.occurred_at AS occurred_at, s.source_meeting_title AS source_meeting_title "
+    "ORDER BY occurred_at ASC"
+)
+
+_SIGNALS_CLOSED_IN_WINDOW = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $signal_edges AND s.valid_to > $start AND s.valid_to <= $end "
+    "OPTIONAL MATCH (n:Signal)-[:SUPERSEDES]->(s) "
+    "RETURN DISTINCT s.id AS id, s.signal_type AS type, s.content AS content, "
+    "s.valid_to AS valid_to, n.id AS superseded_by "
+    "ORDER BY valid_to ASC"
+)
+
+# Both directions: a relationship first stated with this entity as its target
+# is a change to it too (not every type declares a stored inverse).
+_RELATIONSHIPS_IN_WINDOW = (
+    "MATCH (a:Entity {id: $id})-[r]-(b:Entity) "
+    "WHERE NOT b:Signal AND type(r) <> $derived AND r.occurred_at <= $end "
+    "WITH type(r) AS rel_type, b, "
+    "CASE WHEN startNode(r) = a THEN 'outgoing' ELSE 'incoming' END AS direction, "
+    "min(r.occurred_at) AS first, collect(DISTINCT r.source_id) AS sources "
+    "WHERE first > $start "
+    "RETURN rel_type, direction, b.id AS other_id, b.name AS other_name, first, sources "
+    "ORDER BY first ASC"
+)
+
+_CO_MENTIONED_IN_WINDOW = (
+    "MATCH (a:Entity {id: $id})-[:MENTIONED_IN]->(d:Document)<-[:MENTIONED_IN]-(b:Entity) "
+    "WHERE d.occurred_at <= $end AND b.id <> $id "
+    "WITH b, min(d.occurred_at) AS first WHERE first > $start "
+    "RETURN b.id AS other_id, b.name AS other_name, b.entity_type AS other_type, first "
+    "ORDER BY first ASC"
+)
+
+# Evidence about a time at or before ``start`` that imi only ingested after it.
+_RECORDED_LATE = (
+    "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(d:Document) "
+    "WHERE d.occurred_at <= $start AND d.recorded_at > $start AND d.recorded_at <= $end "
+    "RETURN d.id AS id, d.path AS path, d.title AS title, d.occurred_at AS occurred_at, "
+    "d.recorded_at AS recorded_at, d.time_source AS time_source "
+    "ORDER BY occurred_at ASC"
+)
+
+_PROVENANCE = (
+    "CALL { "
+    "  MATCH (n:Entity {id: $id})-[r:MENTIONED_IN]->(d:Document) "
+    "  RETURN coalesce(d.path, d.id) AS source, d.title AS title, type(r) AS action, "
+    "         d.occurred_at AS occurred_at, d.recorded_at AS recorded_at, "
+    "         d.time_source AS time_source "
+    "  UNION "
+    "  MATCH (n:Entity {id: $id})<-[r]-(s:Signal) WHERE type(r) IN $signal_edges "
+    "  RETURN s.id AS source, s.content AS title, type(r) AS action, "
+    "         s.occurred_at AS occurred_at, s.recorded_at AS recorded_at, "
+    "         null AS time_source "
+    "} "
+    "RETURN source, title, action, occurred_at, recorded_at, time_source "
+    "ORDER BY occurred_at IS NULL, occurred_at ASC"
+)
+
+_CONTRADICTION_SIGNALS = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $signal_edges "
+    "AND ($date_from IS NULL OR s.occurred_at >= $date_from) "
+    "AND ($date_to IS NULL OR s.occurred_at <= $date_to) "
+    "RETURN DISTINCT s.id AS signal_id, s.content AS content, "
+    "s.occurred_at AS timestamp, "
+    "coalesce(s.signal_type, s.type) AS type "
+    "ORDER BY timestamp ASC"
+)
+
+# Most entities a point-in-time traversal will evaluate. Each costs a handful
+# of reads, and a heavily co-mentioned entity can reach hundreds at depth 2.
+MAX_TRAVERSAL_NODES = 200
+
+_IDENTITY_KEYS = {"id", "name", "entity_type", "canonical_name", "updated_at", "stub"}
+
+
+def _require_time(value: Any, name: str) -> datetime:
+    when = to_utc(value)
+    if when is None:
+        raise ValueError(f"{name} is not a valid ISO-8601 time: {value!r}")
+    return when
+
+
+def _span(rows: list[dict]) -> dict[str, Any]:
+    row = rows[0] if rows else {}
+    return {"count": int(row.get("n") or 0), "first": row.get("first"), "last": row.get("last")}
+
 
 class TemporalQueryService:
-    """Higher-order temporal queries built on SemanticaKnowledge."""
+    """Point-in-time queries computed from evidence."""
 
-    def __init__(self, semantica_knowledge: Any):
-        self.sk = semantica_knowledge
+    def __init__(self, neo4j_client: Any):
+        self.neo4j = neo4j_client
+
+    async def _read(self, query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return await self.neo4j.execute_read(query, params)
+
+    async def _resolve(self, entity_id: str) -> dict[str, Any] | None:
+        rows = await self._read(_RESOLVE, {"lookup": entity_id})
+        return rows[0] if rows else None
+
+    # ------------------------------------------------------------------
+    # entity_at
+    # ------------------------------------------------------------------
+
+    async def entity_at(
+        self, entity_id: str, at: Any, max_results: int = 25
+    ) -> dict[str, Any] | None:
+        """What was known about an entity at ``at``.
+
+        Returns None when the entity does not exist, or when no evidence dated
+        at or before ``at`` mentions it (imi had not heard of it yet). The
+        profile attributes are the current ones: entities are not versioned,
+        and change over time is carried by ``standing_signals``.
+        """
+        when = _require_time(at, "timestamp")
+        node = await self._resolve(entity_id)
+        if node is None:
+            return None
+        eid = node["id"]
+        params = {"id": eid, "at": when}
+
+        documents = _span(await self._read(_DOCUMENT_EVIDENCE, params))
+        signals = _span(
+            await self._read(_SIGNAL_EVIDENCE, {**params, "signal_edges": _SIGNAL_EDGES})
+        )
+        assertions = _span(
+            await self._read(_ASSERTION_EVIDENCE, {**params, "derived": _DERIVED_EDGE})
+        )
+        if not (documents["count"] or signals["count"] or assertions["count"]):
+            return None
+
+        firsts = [s["first"] for s in (documents, signals, assertions) if s["first"]]
+        lasts = [s["last"] for s in (documents, signals, assertions) if s["last"]]
+        standing = await self._read(
+            _STANDING_SIGNALS,
+            {**params, "signal_edges": _SIGNAL_EDGES, "max_results": max_results},
+        )
+        props = node.get("props") or {}
+        return {
+            "id": eid,
+            "name": node.get("name") or "",
+            "type": node.get("entity_type") or "",
+            "as_of": when.isoformat(),
+            "first_seen": min(firsts) if firsts else None,
+            "last_seen": max(lasts) if lasts else None,
+            "evidence": {
+                "documents": documents["count"],
+                "signals": signals["count"],
+                "relationship_assertions": assertions["count"],
+            },
+            "standing_signals": standing,
+            "attributes": {k: v for k, v in props.items() if k not in _IDENTITY_KEYS},
+            "attributes_are_current": True,
+        }
+
+    # ------------------------------------------------------------------
+    # relationships_at
+    # ------------------------------------------------------------------
+
+    async def relationships_at(
+        self, entity_id: str, at: Any, include_co_mentions: bool = True
+    ) -> list[dict[str, Any]]:
+        """Relationships supported by evidence dated at or before ``at``.
+
+        One entry per ``(type, other entity, direction)``; ``assertions``
+        counts the pieces of evidence behind it. Co-mentions (entities named
+        in the same document) are derived and returned as ``co_mentioned``.
+        """
+        when = _require_time(at, "timestamp")
+        node = await self._resolve(entity_id)
+        if node is None:
+            return []
+        eid = node["id"]
+        params = {"id": eid, "at": when, "derived": _DERIVED_EDGE}
+
+        out: list[dict[str, Any]] = []
+        for direction, query in (("outgoing", _TYPED_OUT), ("incoming", _TYPED_IN)):
+            for row in await self._read(query, params):
+                out.append(_relationship(row, eid, direction, derived=False))
+        if include_co_mentions:
+            for row in await self._read(_CO_MENTIONED, {"id": eid, "at": when}):
+                out.append(_relationship(row, eid, "undirected", derived=True))
+        return out
+
+    async def undated_relationships(self, entity_id: str) -> int:
+        """Relationship edges with no event time (left out of every
+        point-in-time answer)."""
+        node = await self._resolve(entity_id)
+        if node is None:
+            return 0
+        rows = await self._read(_UNDATED, {"id": node["id"], "derived": _DERIVED_EDGE})
+        return int(rows[0]["n"]) if rows else 0
 
     # ------------------------------------------------------------------
     # what_changed
     # ------------------------------------------------------------------
 
-    async def what_changed(
-        self,
-        entity_id: str,
-        since: datetime,
-    ) -> dict[str, Any]:
-        """Diff entity state between `since` and now.
-
-        Returns a list of field-level changes (added, removed, modified).
-        If the entity didn't exist at `since`, flags it as created_after_since.
-        """
-        now = datetime.now(UTC)
-
-        state_then = await self.sk.get_state_at(entity_id, since)
-        state_now = await self.sk.get_state_at(entity_id, now)
-
-        if state_then is None and state_now is None:
-            return {
-                "entity_id": entity_id,
-                "since": since.isoformat(),
-                "changes": [],
-                "error": "Entity not found at either timestamp",
-            }
-
-        if state_then is None:
-            return {
-                "entity_id": entity_id,
-                "since": since.isoformat(),
-                "now": now.isoformat(),
-                "created_after_since": True,
-                "current_state": state_now,
-                "changes": [],
-            }
-
-        if state_now is None:
-            return {
-                "entity_id": entity_id,
-                "since": since.isoformat(),
-                "now": now.isoformat(),
-                "deleted_since": True,
-                "previous_state": state_then,
-                "changes": [],
-            }
-
-        changes = _diff_states(state_then, state_now)
-        return {
-            "entity_id": entity_id,
-            "since": since.isoformat(),
-            "now": now.isoformat(),
-            "changes": changes,
-        }
-
-    # ------------------------------------------------------------------
-    # what_changed_between
-    # ------------------------------------------------------------------
+    async def what_changed(self, entity_id: str, since: Any) -> dict[str, Any]:
+        """Everything learned about an entity since ``since``."""
+        result = await self.what_changed_between(entity_id, since, datetime.now(UTC))
+        result["since"] = result.pop("start")
+        result["now"] = result.pop("end")
+        return result
 
     async def what_changed_between(
+        self, entity_id: str, start: Any, end: Any
+    ) -> dict[str, Any]:
+        """Evidence about an entity with event time in ``(start, end]``.
+
+        ``changes`` lists, in event order: documents that mention the entity,
+        signals about it, signals that stopped being current, relationships
+        first asserted, and entities first mentioned alongside it.
+        ``recorded_late`` lists evidence about a time at or before ``start``
+        that was only ingested inside the window — backfilled content.
+        """
+        begin = _require_time(start, "start")
+        finish = _require_time(end, "end")
+        base = {"entity_id": entity_id, "start": begin.isoformat(), "end": finish.isoformat()}
+        if finish < begin:
+            return {**base, "changes": [], "error": "end is before start"}
+
+        node = await self._resolve(entity_id)
+        if node is None:
+            return {**base, "changes": [], "error": "Entity not found"}
+        eid = node["id"]
+        base["entity_id"] = eid
+        window = {"id": eid, "start": begin, "end": finish}
+        signal_window = {**window, "signal_edges": _SIGNAL_EDGES}
+
+        changes: list[dict[str, Any]] = []
+        for row in await self._read(_DOCUMENTS_IN_WINDOW, window):
+            changes.append({"kind": "document", "at": row["occurred_at"], **row})
+        for row in await self._read(_SIGNALS_IN_WINDOW, signal_window):
+            changes.append({"kind": "signal", "at": row["occurred_at"], **row})
+        for row in await self._read(_SIGNALS_CLOSED_IN_WINDOW, signal_window):
+            changes.append({"kind": "signal_superseded", "at": row["valid_to"], **row})
+        for row in await self._read(
+            _RELATIONSHIPS_IN_WINDOW, {**window, "derived": _DERIVED_EDGE}
+        ):
+            changes.append(
+                {
+                    "kind": "relationship",
+                    "at": row["first"],
+                    "relationship_type": (row["rel_type"] or "").lower(),
+                    "direction": row.get("direction") or "outgoing",
+                    "other_id": row["other_id"],
+                    "other_name": row["other_name"],
+                    "sources": [s for s in row.get("sources") or [] if s],
+                }
+            )
+        for row in await self._read(_CO_MENTIONED_IN_WINDOW, window):
+            changes.append({"kind": "co_mentioned", "at": row["first"], **row})
+        changes.sort(key=lambda c: str(c.get("at") or ""))
+
+        before = await self.entity_at(eid, begin)
+        recorded_late = await self._read(_RECORDED_LATE, window)
+        counts: dict[str, int] = {}
+        for change in changes:
+            counts[change["kind"]] = counts.get(change["kind"], 0) + 1
+        result: dict[str, Any] = {
+            **base,
+            "changes": changes,
+            "counts": counts,
+            "recorded_late": recorded_late,
+        }
+        if before is None:
+            result["first_known_in_window"] = bool(changes)
+        return result
+
+    # ------------------------------------------------------------------
+    # graph_as_of / temporal_blast_radius
+    # ------------------------------------------------------------------
+
+    async def _traverse(
         self,
         entity_id: str,
-        start: datetime,
-        end: datetime,
-    ) -> dict[str, Any]:
-        """Diff entity state between two arbitrary timestamps."""
-        state_start = await self.sk.get_state_at(entity_id, start)
-        state_end = await self.sk.get_state_at(entity_id, end)
+        at: Any,
+        max_depth: int,
+        include_co_mentions: bool,
+        max_nodes: int = MAX_TRAVERSAL_NODES,
+    ) -> tuple[list[dict], list[dict], dict[str, int], datetime, bool]:
+        """Breadth-first over evidence dated by ``at``. Stops evaluating new
+        entities after ``max_nodes`` and reports ``truncated``."""
+        when = _require_time(at, "timestamp")
+        root = await self.entity_at(entity_id, when)
+        if root is None:
+            return [], [], {}, when, False
+        truncated = False
 
-        if state_start is None and state_end is None:
-            return {
-                "entity_id": entity_id,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "changes": [],
-                "error": "Entity not found at either timestamp",
-            }
+        root_id = root["id"]
+        nodes = [root]
+        edges: list[dict[str, Any]] = []
+        seen_edges: set[tuple[str, str, str]] = set()
+        depth_map = {root_id: 0}
+        known: dict[str, dict[str, Any] | None] = {root_id: root}
+        queue: deque[tuple[str, int]] = deque([(root_id, 0)])
 
-        if state_start is None:
-            return {
-                "entity_id": entity_id,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "created_between": True,
-                "current_state": state_end,
-                "changes": [],
-            }
-
-        if state_end is None:
-            return {
-                "entity_id": entity_id,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "deleted_between": True,
-                "previous_state": state_start,
-                "changes": [],
-            }
-
-        changes = _diff_states(state_start, state_end)
-        return {
-            "entity_id": entity_id,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "changes": changes,
-        }
-
-    # ------------------------------------------------------------------
-    # graph_as_of
-    # ------------------------------------------------------------------
+        while queue:
+            current, depth = queue.popleft()
+            if depth >= max_depth:
+                continue
+            for rel in await self.relationships_at(current, when, include_co_mentions):
+                other = rel["other_id"]
+                if other not in known:
+                    if len(known) >= max_nodes:
+                        truncated = True
+                        continue
+                    known[other] = await self.entity_at(other, when, max_results=5)
+                state = known[other]
+                if state is None:
+                    continue  # nothing dated by then mentions it: no node, no edge
+                source, target = rel["source_id"], rel["target_id"]
+                key = (
+                    (min(source, target), max(source, target), rel["relationship_type"])
+                    if rel["derived"]
+                    else (source, target, rel["relationship_type"])
+                )
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append(
+                        {
+                            "source": source,
+                            "target": target,
+                            "relationship_type": rel["relationship_type"],
+                            "properties": {
+                                "first_asserted": rel["valid_from"],
+                                "last_asserted": rel["last_asserted"],
+                                "assertions": rel["assertions"],
+                                "derived": rel["derived"],
+                            },
+                        }
+                    )
+                if other in depth_map:
+                    continue
+                depth_map[other] = depth + 1
+                nodes.append(state)
+                queue.append((other, depth + 1))
+        return nodes, edges, depth_map, when, truncated
 
     async def graph_as_of(
         self,
         entity_id: str,
-        timestamp: datetime,
+        timestamp: Any,
         depth: int = 2,
+        include_co_mentions: bool = True,
     ) -> dict[str, Any]:
-        """Reconstruct subgraph around entity at a past point in time.
-
-        Uses BFS to traverse active relationships up to `depth` hops.
-        """
-        root_state = await self.sk.get_state_at(entity_id, timestamp)
-        if root_state is None:
-            return {"nodes": [], "edges": [], "timestamp": timestamp.isoformat()}
-
-        # Use resolved ID from the state, not the raw lookup string
-        resolved_id = root_state.get("id", entity_id)
-        nodes = [root_state]
-        edges: list[dict[str, Any]] = []
-        seen_edges: set[tuple[str, str, str]] = set()
-        visited = {resolved_id}
-        queue: deque[tuple[str, int]] = deque([(resolved_id, 0)])
-
-        while queue:
-            current_id, current_depth = queue.popleft()
-            if current_depth >= depth:
-                continue
-
-            rels = await self.sk.get_active_relationships(current_id, timestamp)
-            for rel in rels:
-                neighbor_id, edge_source, edge_target = _resolve_neighbor(
-                    rel, current_id
-                )
-                if not neighbor_id:
-                    continue
-
-                # Deduplicate edges (same relationship seen from both sides)
-                edge_key = (edge_source, edge_target, rel.get("relationship_type", ""))
-                if edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    edges.append({
-                        "source": edge_source,
-                        "target": edge_target,
-                        "relationship_type": rel.get("relationship_type", ""),
-                        "properties": rel.get("properties", {}),
-                    })
-
-                if neighbor_id not in visited:
-                    visited.add(neighbor_id)
-                    target_state = await self.sk.get_state_at(neighbor_id, timestamp)
-                    if target_state:
-                        nodes.append(target_state)
-                        queue.append((neighbor_id, current_depth + 1))
-
+        """The subgraph around an entity as evidence supported it at ``timestamp``."""
+        nodes, edges, _, when, truncated = await self._traverse(
+            entity_id, timestamp, depth, include_co_mentions
+        )
         return {
             "nodes": nodes,
             "edges": edges,
-            "timestamp": timestamp.isoformat(),
+            "timestamp": when.isoformat(),
             "depth": depth,
+            "truncated": truncated,
         }
+
+    async def temporal_blast_radius(
+        self, entity_id: str, at_time: Any, max_depth: int = 3
+    ) -> dict[str, Any]:
+        """Entities reachable from ``entity_id`` through relationships that
+        were asserted by ``at_time``, with their hop distance. Co-mentions are
+        not followed: they say two entities appeared together, not that one
+        affects the other."""
+        nodes, edges, depth_map, when, truncated = await self._traverse(
+            entity_id, at_time, max_depth, include_co_mentions=False
+        )
+        if not nodes:
+            return {"nodes": [], "edges": [], "depth_map": {}}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "depth_map": depth_map,
+            "at_time": when.isoformat(),
+            "max_depth": max_depth,
+            "truncated": truncated,
+        }
+
+    # ------------------------------------------------------------------
+    # provenance
+    # ------------------------------------------------------------------
+
+    async def provenance(self, entity_id: str) -> dict[str, Any]:
+        """Every piece of evidence about an entity, in event order."""
+        node = await self._resolve(entity_id)
+        if node is None:
+            return {"entity_id": entity_id, "history": []}
+        rows = await self._read(_PROVENANCE, {"id": node["id"], "signal_edges": _SIGNAL_EDGES})
+        history = [
+            {
+                "source": r.get("source") or "",
+                "title": r.get("title") or "",
+                "action": r.get("action") or "unknown",
+                "timestamp": r.get("occurred_at") or "",
+                "recorded_at": r.get("recorded_at") or "",
+                "time_source": r.get("time_source") or "",
+            }
+            for r in rows
+        ]
+        return {"entity_id": node["id"], "history": history}
 
     # ------------------------------------------------------------------
     # find_contradictions
@@ -220,54 +546,31 @@ class TemporalQueryService:
         - Confirmed conflicts: metadata.conflicts_with IDs, flagged "confirmed".
           Deduped so a (a, b) pair appears exactly once.
 
-        The keyword/sentiment heuristic (_detect_contradictions) has been removed
-        (P3 exit — see S4-4).  Only LLM-verified conflicts are surfaced.
+        Only LLM-verified conflicts are surfaced.
 
         Window filtering (date_from / date_to):
-        - Applied by the Cypher query to restrict which signals are fetched.
+        - Applied to the signals' event time in the graph query.
         - Also applied to candidates: a candidate whose proposed_at falls outside
-          the window is excluded.  Falls back to the signal's source_timestamp
+          the window is excluded.  Falls back to the signal's event time
           when proposed_at is absent.
         """
-        # ------------------------------------------------------------------
-        # 1. Fetch signal IDs from the graph.
-        #    Signals link to entities through SignalGraphWriter's edges
-        #    (MENTIONS / ASSIGNED_TO / FOR_CLIENT); the Semantica layer no
-        #    longer writes its own REFERENCES_* signal copies.
-        # ------------------------------------------------------------------
-        cypher = (
-            "MATCH (s:Signal)-[r]->(e:Entity {id: $entity_id}) "
-            "WHERE type(r) IN ['MENTIONS', 'ASSIGNED_TO', 'FOR_CLIENT'] "
+        window_from = to_utc(date_from)
+        window_to = to_utc(date_to)
+        graph_rows = await self._read(
+            _CONTRADICTION_SIGNALS,
+            {
+                "id": entity_id,
+                "signal_edges": _SIGNAL_EDGES,
+                "date_from": window_from,
+                "date_to": window_to,
+            },
         )
-        params: dict[str, Any] = {"entity_id": entity_id}
-
-        # SignalGraphWriter stores created_at and signal_type on signal nodes;
-        # use coalesce for backward compatibility with any older data.
-        if date_from:
-            cypher += "AND coalesce(s.created_at, s.timestamp) >= $date_from "
-            params["date_from"] = date_from.isoformat()
-        if date_to:
-            cypher += "AND coalesce(s.created_at, s.timestamp) <= $date_to "
-            params["date_to"] = date_to.isoformat()
-
-        cypher += (
-            "RETURN s.id AS signal_id, s.content AS content, "
-            "coalesce(s.created_at, s.timestamp) AS timestamp, "
-            "coalesce(s.signal_type, s.type) AS type "
-            "ORDER BY coalesce(s.created_at, s.timestamp) ASC"
-        )
-
-        raw = self.sk.graph_store.execute_query(cypher, params)
-        graph_rows = raw.get("records", []) if isinstance(raw, dict) else (raw or [])
 
         # Build a fast index: signal_id → graph row (for timestamps / types)
         graph_index: dict[str, dict[str, Any]] = {
             r["signal_id"]: r for r in graph_rows if r.get("signal_id")
         }
 
-        # ------------------------------------------------------------------
-        # 2. Resolve each signal's full metadata from the JSON store
-        # ------------------------------------------------------------------
         contradictions: list[dict[str, Any]] = []
         confirmed_seen: set[frozenset[str]] = set()
 
@@ -279,16 +582,14 @@ class TemporalQueryService:
             meta: dict[str, Any] = signal.metadata or {}
             graph_row = graph_index[signal_id]
 
-            # --------------------------------------------------------------
-            # 2a. Pending candidates → status "candidate"
-            # --------------------------------------------------------------
+            # Pending candidates → status "candidate"
             for cand in meta.get("conflict_candidates", []):
                 if cand.get("status") != "pending":
                     continue
 
                 # Window filter on proposed_at (fall back to signal timestamp)
                 proposed_at_str: str = cand.get("proposed_at") or graph_row.get("timestamp", "")
-                if not _in_window(proposed_at_str, date_from, date_to):
+                if not _in_window(proposed_at_str, window_from, window_to):
                     continue
 
                 other_id: str = cand.get("other_signal_id", "")
@@ -304,9 +605,7 @@ class TemporalQueryService:
                     "speakers": cand.get("speakers", []),
                 })
 
-            # --------------------------------------------------------------
-            # 2b. Confirmed conflicts → status "confirmed", deduped
-            # --------------------------------------------------------------
+            # Confirmed conflicts → status "confirmed", deduped
             for other_id in meta.get("conflicts_with", []):
                 pair_key = frozenset({signal_id, str(other_id)})
                 if pair_key in confirmed_seen:
@@ -343,133 +642,34 @@ class TemporalQueryService:
             "contradictions": contradictions,
         }
 
-    # ------------------------------------------------------------------
-    # temporal_blast_radius
-    # ------------------------------------------------------------------
-
-    async def temporal_blast_radius(
-        self,
-        entity_id: str,
-        at_time: datetime,
-        max_depth: int = 3,
-    ) -> dict[str, Any]:
-        """BFS traversal filtered to relationships active at a specific time.
-
-        Returns all entities reachable from entity_id through relationships
-        that were active at at_time, up to max_depth hops.
-        """
-        root_state = await self.sk.get_state_at(entity_id, at_time)
-        if root_state is None:
-            return {"nodes": [], "edges": [], "depth_map": {}}
-
-        # Use resolved ID from the state, not the raw lookup string
-        resolved_id = root_state.get("id", entity_id)
-        nodes = [root_state]
-        edges: list[dict[str, Any]] = []
-        depth_map: dict[str, int] = {resolved_id: 0}
-        visited = {resolved_id}
-        queue: deque[tuple[str, int]] = deque([(resolved_id, 0)])
-
-        while queue:
-            current_id, current_depth = queue.popleft()
-            if current_depth >= max_depth:
-                continue
-
-            rels = await self.sk.get_active_relationships(current_id, at_time)
-            for rel in rels:
-                neighbor_id, edge_source, edge_target = _resolve_neighbor(
-                    rel, current_id
-                )
-                if not neighbor_id or neighbor_id in visited:
-                    continue
-
-                visited.add(neighbor_id)
-                edges.append({
-                    "source": edge_source,
-                    "target": edge_target,
-                    "relationship_type": rel.get("relationship_type", ""),
-                    "properties": rel.get("properties", {}),
-                })
-
-                neighbor_state = await self.sk.get_state_at(neighbor_id, at_time)
-                if neighbor_state:
-                    nodes.append(neighbor_state)
-                    depth_map[neighbor_id] = current_depth + 1
-                    queue.append((neighbor_id, current_depth + 1))
-
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "depth_map": depth_map,
-            "at_time": at_time.isoformat(),
-            "max_depth": max_depth,
-        }
-
 
 # ===========================================================================
 # Private helpers
 # ===========================================================================
 
 
-def _resolve_neighbor(
-    rel: dict[str, Any],
-    current_id: str,
-) -> tuple[str, str, str]:
-    """Extract the neighbor ID and edge direction from a relationship.
-
-    Returns (neighbor_id, edge_source, edge_target).
-    For incoming relationships, the neighbor is the source; for outgoing, the target.
-    """
-    if rel.get("direction") == "incoming":
-        neighbor_id = rel.get("source_id", "")
-        return neighbor_id, neighbor_id, current_id
-    else:
-        neighbor_id = rel.get("target_id", "")
-        return neighbor_id, current_id, neighbor_id
-
-
-def _diff_states(
-    old: dict[str, Any],
-    new: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Compare two entity state dicts and return a list of changes.
-
-    Compares top-level fields and nested attribute dicts.
-    Skips metadata fields (as_of, valid_from, valid_to).
-    """
-    changes: list[dict[str, Any]] = []
-    skip_fields = {"as_of", "valid_from", "valid_to"}
-
-    # Compare top-level fields
-    all_keys = set(old.keys()) | set(new.keys())
-    for key in all_keys:
-        if key in skip_fields:
-            continue
-        if key == "attributes":
-            # Deep compare attributes
-            old_attrs = old.get("attributes", {}) or {}
-            new_attrs = new.get("attributes", {}) or {}
-            attr_keys = set(old_attrs.keys()) | set(new_attrs.keys())
-            for ak in attr_keys:
-                old_val = old_attrs.get(ak)
-                new_val = new_attrs.get(ak)
-                if old_val != new_val:
-                    changes.append({
-                        "field": f"attributes.{ak}",
-                        "old": old_val,
-                        "new": new_val,
-                    })
-        else:
-            old_val = old.get(key)
-            new_val = new.get(key)
-            if old_val != new_val:
-                changes.append({
-                    "field": key,
-                    "old": old_val,
-                    "new": new_val,
-                })
-
-    return changes
+def _relationship(
+    row: dict[str, Any], entity_id: str, direction: str, *, derived: bool
+) -> dict[str, Any]:
+    """One relationship entry. ``valid_from`` is the first assertion."""
+    other = row["other_id"]
+    incoming = direction == "incoming"
+    return {
+        "relationship_type": "co_mentioned" if derived else (row["rel_type"] or "").lower(),
+        "direction": direction,
+        "source_id": other if incoming else entity_id,
+        "target_id": entity_id if incoming else other,
+        "other_id": other,
+        "other_name": row.get("other_name") or "",
+        "other_type": row.get("other_type") or "",
+        "assertions": int(row.get("assertions") or row.get("shared_documents") or 0),
+        "valid_from": row.get("first"),
+        "valid_to": None,
+        "last_asserted": row.get("last"),
+        "sources": [s for s in row.get("sources") or [] if s],
+        "time_sources": [s for s in row.get("time_sources") or [] if s],
+        "derived": derived,
+    }
 
 
 def _in_window(
@@ -486,17 +686,14 @@ def _in_window(
         return True
     if not ts_str:
         return True  # conservative: include when timestamp is unknown
-    try:
-        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        if date_from and ts < date_from:
-            return False
-        if date_to and ts > date_to:
-            return False
-        return True
-    except (ValueError, AttributeError):
+    ts = to_utc(ts_str)
+    if ts is None:
         return True  # conservative: include on parse error
+    if date_from and ts < date_from:
+        return False
+    if date_to and ts > date_to:
+        return False
+    return True
 
 
 def _resolve_signal_timestamp(

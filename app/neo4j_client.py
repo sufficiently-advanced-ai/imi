@@ -10,6 +10,7 @@ import logging
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession
 
 from .config import settings
+from .utils.event_time import normalize_temporal
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,9 @@ class Neo4jClient:
         async with self.session() as session:
             async def tx_func(tx):
                 result = await tx.run(query, parameters or {})
-                return [record.data() async for record in result]
+                # Temporal properties are stored as DATETIME (ADR-004); callers
+                # keep receiving ISO-8601 strings.
+                return [normalize_temporal(record.data()) async for record in result]
             return await session.execute_write(tx_func)
 
     async def execute_read(self, query: str, parameters: dict | None = None) -> list:
@@ -87,7 +90,7 @@ class Neo4jClient:
         async with self.session() as session:
             async def tx_func(tx):
                 result = await tx.run(query, parameters or {})
-                return [record.data() async for record in result]
+                return [normalize_temporal(record.data()) async for record in result]
             return await session.execute_read(tx_func)
 
     async def execute_many(self, statements: list[str]) -> dict:

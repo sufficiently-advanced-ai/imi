@@ -52,13 +52,18 @@ def snapshot() -> tuple[set, set]:
                     ignored=list(_IGNORED_LABELS),
                 )
             }
+            # source_id and the event time are part of an edge's identity
+            # (ADR-004): one edge per assertion, so live ingest and a rebuild
+            # must agree on which source stated what, and when.
             edges = {
-                (r["src"], r["type"], r["dst"])
+                (r["src"], r["type"], r["dst"], r["source_id"], r["occurred_at"])
                 for r in s.run(
                     "MATCH (a)-[r]->(b) "
                     "WHERE none(l IN labels(a) + labels(b) WHERE l IN $ignored) "
                     "RETURN coalesce(a.id, elementId(a)) AS src, type(r) AS type, "
-                    "coalesce(b.id, elementId(b)) AS dst",
+                    "coalesce(b.id, elementId(b)) AS dst, "
+                    "coalesce(r.source_id, '') AS source_id, "
+                    "coalesce(toString(r.occurred_at), '') AS occurred_at",
                     ignored=list(_IGNORED_LABELS),
                 )
             }

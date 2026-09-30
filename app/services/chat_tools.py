@@ -2241,22 +2241,38 @@ async def trace_decision_chain(
 
 
 # ============================================================================
-# TEMPORAL TOOLS (Issue #864 — powered by Semantica)
+# POINT-IN-TIME TOOLS (ADR-004 — computed from evidence in the graph)
 # ============================================================================
+
+_NO_GRAPH = "Point-in-time queries need the graph database (not connected)"
 
 
 def _get_temporal_query_service():
-    """Get a TemporalQueryService instance if Semantica is available."""
-    sk = _get_semantica()
-    if not sk:
+    """Get a TemporalQueryService over the graph, or None when Neo4j is absent."""
+    try:
+        from app.neo4j_client import get_neo4j_client
+        from app.services.temporal_queries import TemporalQueryService
+
+        client = get_neo4j_client()
+        if client is None or not client.is_initialized:
+            return None
+        return TemporalQueryService(client)
+    except Exception:
         return None
-    from app.services.temporal_queries import TemporalQueryService
-    return TemporalQueryService(sk)
 
 
 def _parse_iso_timestamp(ts: str) -> datetime:
-    """Parse an ISO 8601 timestamp string."""
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    """Parse an ISO 8601 timestamp (or YYYY-MM-DD date) into aware UTC.
+
+    A value without a timezone is read as UTC, so comparisons against the
+    graph's UTC DATETIME values never mix aware and naive times.
+    """
+    from app.utils.event_time import to_utc
+
+    parsed = to_utc(ts)
+    if parsed is None:
+        raise ValueError(f"Not a valid ISO-8601 time: {ts!r}")
+    return parsed
 
 
 async def entity_at_time(
@@ -2269,15 +2285,18 @@ async def entity_at_time(
         entity_id: Entity ID or name.
         timestamp: ISO 8601 timestamp.
     """
-    sk = _get_semantica()
-    if not sk:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+    svc = _get_temporal_query_service()
+    if not svc:
+        return {"error": _NO_GRAPH}
 
     try:
         at_time = _parse_iso_timestamp(timestamp)
-        result = await sk.get_state_at(entity_id, at_time)
+        result = await svc.entity_at(entity_id, at_time)
         if result is None:
-            return {"error": f"Entity '{entity_id}' not found at {timestamp}"}
+            return {
+                "error": f"Nothing was known about '{entity_id}' at {timestamp}: "
+                "no evidence dated at or before then mentions it"
+            }
         logger.info(f"[ENTITY_AT_TIME] Retrieved state for {entity_id} at {timestamp}")
         return _serialize_for_json(result)
     except Exception as e:
@@ -2288,6 +2307,7 @@ async def entity_at_time(
 async def active_relationships_at_time(
     entity_id: str,
     timestamp: str,
+    include_co_mentions: bool = True,
 ) -> list[dict[str, Any]]:
     """Get relationships active at a specific time.
 
@@ -2295,13 +2315,15 @@ async def active_relationships_at_time(
         entity_id: Entity ID.
         timestamp: ISO 8601 timestamp.
     """
-    sk = _get_semantica()
-    if not sk:
-        return [{"error": "Temporal queries require Semantica (not initialized)"}]
+    svc = _get_temporal_query_service()
+    if not svc:
+        return [{"error": _NO_GRAPH}]
 
     try:
         at_time = _parse_iso_timestamp(timestamp)
-        rels = await sk.get_active_relationships(entity_id, at_time)
+        rels = await svc.relationships_at(
+            entity_id, at_time, include_co_mentions=include_co_mentions
+        )
         logger.info(f"[ACTIVE_RELS_AT_TIME] Found {len(rels)} relationships for {entity_id} at {timestamp}")
         return _serialize_for_json(rels)
     except Exception as e:
@@ -2317,12 +2339,12 @@ async def get_entity_provenance(
     Args:
         entity_id: Entity ID.
     """
-    sk = _get_semantica()
-    if not sk:
-        return {"error": "Provenance queries require Semantica (not initialized)"}
+    svc = _get_temporal_query_service()
+    if not svc:
+        return {"error": _NO_GRAPH}
 
     try:
-        result = await sk.get_provenance(entity_id)
+        result = await svc.provenance(entity_id)
         logger.info(f"[ENTITY_PROVENANCE] Retrieved provenance for {entity_id}: {len(result.get('history', []))} entries")
         return _serialize_for_json(result)
     except Exception as e:
@@ -2378,7 +2400,7 @@ async def what_changed(
     """
     svc = _get_temporal_query_service()
     if not svc:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+        return {"error": _NO_GRAPH}
 
     try:
         since_dt = _parse_iso_timestamp(since)
@@ -2404,7 +2426,7 @@ async def what_changed_between(
     """
     svc = _get_temporal_query_service()
     if not svc:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+        return {"error": _NO_GRAPH}
 
     try:
         start_dt = _parse_iso_timestamp(start)
@@ -2421,6 +2443,7 @@ async def graph_as_of(
     entity_id: str,
     timestamp: str,
     depth: int = 2,
+    include_co_mentions: bool = True,
 ) -> dict[str, Any]:
     """Reconstruct subgraph around entity at a past point in time.
 
@@ -2431,11 +2454,16 @@ async def graph_as_of(
     """
     svc = _get_temporal_query_service()
     if not svc:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+        return {"error": _NO_GRAPH}
 
     try:
         ts_dt = _parse_iso_timestamp(timestamp)
-        result = await svc.graph_as_of(entity_id, timestamp=ts_dt, depth=depth)
+        result = await svc.graph_as_of(
+            entity_id,
+            timestamp=ts_dt,
+            depth=depth,
+            include_co_mentions=include_co_mentions,
+        )
         logger.info(f"[GRAPH_AS_OF] Reconstructed {len(result.get('nodes', []))} nodes for {entity_id} at {timestamp}")
         return _serialize_for_json(result)
     except Exception as e:
@@ -2457,7 +2485,7 @@ async def find_contradictions(
     """
     svc = _get_temporal_query_service()
     if not svc:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+        return {"error": _NO_GRAPH}
 
     try:
         from_dt = _parse_iso_timestamp(date_from) if date_from else None
@@ -2484,7 +2512,7 @@ async def temporal_blast_radius(
     """
     svc = _get_temporal_query_service()
     if not svc:
-        return {"error": "Temporal queries require Semantica (not initialized)"}
+        return {"error": _NO_GRAPH}
 
     try:
         at_dt = _parse_iso_timestamp(at_time)

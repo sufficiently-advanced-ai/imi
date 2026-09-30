@@ -12,6 +12,7 @@ from typing import Any
 from app.core.middleware.request_context import ambient_tenant_id
 from app.models.signal import MeetingSignals, Signal
 from app.neo4j_client import Neo4jClient
+from app.utils.event_time import signal_event_time, to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,9 @@ SET s.signal_type = $signal_type,
     s.can_use_as_instruction = $can_use_as_instruction,
     s.tenant_id = $tenant_id,
     s.valid_from = $valid_from,
-    s.valid_to = $valid_to
+    s.valid_to = $valid_to,
+    s.occurred_at = $occurred_at,
+    s.recorded_at = $recorded_at
 """
 
 # Cypher for MENTIONS relationship (Signal -> Entity)
@@ -203,8 +206,12 @@ class SignalGraphWriter:
             ),
             # R1.1 — validity window (valid_from defaults to source_timestamp
             # via model_validator; valid_to is set on supersession only).
-            "valid_from": signal.valid_from,
-            "valid_to": signal.valid_to,
+            # ADR-004: stored as DATETIME (UTC) so point-in-time filters are
+            # typed comparisons; the signal file keeps its ISO strings.
+            "valid_from": signal_event_time(signal),
+            "valid_to": to_utc(signal.valid_to),
+            "occurred_at": signal_event_time(signal),
+            "recorded_at": to_utc(signal.created_at),
         }
         await self._client.execute_write(_UPSERT_SIGNAL, params)
 
@@ -336,9 +343,9 @@ class SignalGraphWriter:
             props["tenant_id"] = tenant_id
         # R1.1 validity window fields (valid_to only set by supersede — ADR-002)
         if valid_from is not None:
-            props["valid_from"] = valid_from
+            props["valid_from"] = to_utc(valid_from) or valid_from
         if valid_to is not None:
-            props["valid_to"] = valid_to
+            props["valid_to"] = to_utc(valid_to) or valid_to
 
         if not props:
             return True  # Nothing to update
