@@ -1,0 +1,182 @@
+"""Tests for the signal_promotion_triage decision operation."""
+
+from datetime import UTC, datetime
+
+import pytest
+
+from app.models.observation import Observation
+from app.models.signal import EntityRef, Signal
+from app.services import signal_triage
+from app.services.inference.decisions import ChoiceAnswer, DecisionResult, DecisionUnavailable
+from app.services.signal_promoter import SignalPromoter
+from app.services.signal_triage import (
+    FIRM_MIN_PROBABILITY,
+    apply_verdict,
+    build_questions,
+    triage_signals,
+)
+
+SARAH = EntityRef(id="person-sarah-chen", type="person", name="Sarah Chen")
+SARAH_K = EntityRef(id="person-sarah-kim", type="person", name="Sarah Kim")
+ACME = EntityRef(id="account-acme", type="account", name="Acme")
+GLOBEX = EntityRef(id="account-globex", type="account", name="Globex")
+REFS = [SARAH, SARAH_K, ACME, GLOBEX]
+
+
+def _obs(**kw):
+    base = dict(
+        observation_id="ingest-obs1", external_id="ingest-bot1",
+        observed_at=datetime(2026, 6, 4, 15, 0, tzinfo=UTC), title="Planning call",
+        participants=["Sarah Chen", "Sarah Kim"], entities_mentioned={"person": ["Sarah Chen", "Sarah Kim"]},
+        content="Sarah Kim will draft the Acme rollout plan.",
+    )
+    return Observation(**{**base, **kw})
+
+
+def _sig(sid, type_, content="Something substantive happened", **kw):
+    return Signal(id=sid, type=type_, content=content, source_meeting_id="ingest-bot1",
+                  source_timestamp="2026-06-04T15:00:00+00:00", **kw)
+
+
+def _resolve(name):
+    return next(r for r in REFS if r.name == name)
+
+
+def _choice(probs):
+    choice = max(probs, key=probs.get)
+    return ChoiceAnswer(choice, probs, probs[choice])
+
+
+class _Fake:
+    """Scripted Jev: answers each question from ``script[suffix]`` (e.g.
+    ``type``/``firm``/``owner``/``client``), keyed by option name."""
+
+    def __init__(self, script, mode="on", fail=False):
+        self.script, self._mode, self.fail, self.calls = script, mode, fail, []
+
+    def mode(self, operation):
+        return self._mode
+
+    async def decide(self, state, questions, *, operation):
+        assert operation == signal_triage.TRIAGE_OPERATION
+        self.calls.append((state, questions))
+        if self.fail:
+            raise DecisionUnavailable("upstream 500")
+        answers = {}
+        for name, q in questions.items():
+            suffix = name.split("_", 1)[1]
+            by_label = self.script[suffix]
+            # map option labels (names) back to option ids
+            label_to_id = {v: k for k, v in q.criteria.items()}
+            probs = {label_to_id.get(k, k): v for k, v in by_label.items()}
+            answers[name] = _choice(probs)
+        return DecisionResult(answers, "jev", "fake", 0, 0, 0.0, 0, {})
+
+
+def test_questions_follow_signal_type_and_meeting_options():
+    sigs = [(0, _sig("a", "decision")), (1, _sig("b", "action_item")), (2, _sig("c", "insight"))]
+    q = build_questions(sigs, ["Sarah Chen"], [ACME])
+    assert set(q) == {"s0_type", "s0_firm", "s0_client", "s1_type", "s1_owner", "s1_client",
+                      "s2_type", "s2_client"}
+    assert q["s1_owner"].criteria == {"p0": "Sarah Chen", "none": "No listed person owns it."}
+    no_clients = build_questions(sigs, [], [])
+    assert not any(k.endswith(("_owner", "_client")) for k in no_clients)
+
+
+@pytest.mark.asyncio
+async def test_shadow_records_verdicts_and_changes_nothing():
+    owner_heuristic = SARAH  # first-name match picked the wrong Sarah
+    item = _sig("a", "action_item", owner=owner_heuristic, status="open", client_id="account-globex")
+    fake = _Fake({"type": {"action_item": 0.95, "none": 0.05},
+                  "owner": {"Sarah Kim": 0.9, "none": 0.1},
+                  "client": {"Acme": 0.92, "none": 0.08}}, mode="shadow")
+    kept = await triage_signals([item], _obs(), REFS, {"account"}, _resolve, client=fake)
+    assert kept == [item]
+    assert item.owner == SARAH and item.client_id == "account-globex"
+    t = item.metadata["triage"]
+    assert t["mode"] == "shadow"
+    assert t["heuristic"]["owner"] == "person-sarah-chen"
+    assert t["owner"]["name"] == "Sarah Kim"
+    assert t["client"]["client_id"] == "account-acme"
+    assert "applied" not in t
+
+
+@pytest.mark.asyncio
+async def test_on_mode_reassigns_owner_and_client():
+    item = _sig("a", "action_item", owner=SARAH, status="open", client_id="account-globex")
+    fake = _Fake({"type": {"action_item": 0.95, "none": 0.05},
+                  "owner": {"Sarah Kim": 0.9, "none": 0.1},
+                  "client": {"Acme": 0.92, "none": 0.08}})
+    await triage_signals([item], _obs(), REFS, {"account"}, _resolve, client=fake)
+    assert item.owner == SARAH_K
+    assert item.client_id == "account-acme"
+    assert item.metadata["triage"]["applied"] == ["owner", "client"]
+
+
+def test_firmness_bars_are_asymmetric():
+    firm_weak = _sig("a", "decision", metadata={"tier": "candidate"})
+    apply_verdict(firm_weak, {"firmness": {"choice": "firm", "probabilities": {"firm": FIRM_MIN_PROBABILITY - 0.01,
+                                                                                "proposed": 0.16}}}, "on", _resolve)
+    assert firm_weak.metadata["tier"] == "candidate"  # not confident enough to promote
+
+    firm_strong = _sig("b", "decision", metadata={"tier": "candidate"})
+    apply_verdict(firm_strong, {"firmness": {"choice": "firm", "probabilities": {"firm": 0.9, "proposed": 0.1}}},
+                  "on", _resolve)
+    assert "tier" not in firm_strong.metadata
+
+    proposed = _sig("c", "decision")
+    apply_verdict(proposed, {"firmness": {"choice": "proposed", "probabilities": {"firm": 0.28, "proposed": 0.72}}},
+                  "on", _resolve)
+    assert proposed.metadata["tier"] == "candidate"
+
+
+def test_on_mode_retypes_and_drops_only_when_confident():
+    retyped = _sig("a", "decision", metadata={"tier": "candidate"})
+    assert apply_verdict(retyped, {"type": {"choice": "action_item",
+                                            "probabilities": {"action_item": 0.9, "decision": 0.1}}}, "on", _resolve)
+    assert retyped.type == "action_item" and retyped.status == "open" and "tier" not in retyped.metadata
+
+    unsure = _sig("b", "key_point")
+    assert apply_verdict(unsure, {"type": {"choice": "none", "probabilities": {"none": 0.6, "key_point": 0.4}}},
+                         "on", _resolve)
+    assert not apply_verdict(_sig("c", "key_point"),
+                             {"type": {"choice": "none", "probabilities": {"none": 0.9, "key_point": 0.1}}},
+                             "on", _resolve)
+
+
+def test_reviewed_signals_are_annotated_not_redecided():
+    reviewed = _sig("a", "key_point", review_status="confirmed")
+    assert apply_verdict(reviewed, {"type": {"choice": "none", "probabilities": {"none": 0.99}}}, "on", _resolve)
+    assert reviewed.type == "key_point"
+    assert reviewed.metadata["triage"]["type"]["choice"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_failure_leaves_heuristics_untouched():
+    item = _sig("a", "action_item", owner=SARAH, status="open")
+    kept = await triage_signals([item], _obs(), REFS, {"account"}, _resolve, client=_Fake({}, fail=True))
+    assert kept == [item] and item.owner == SARAH and "triage" not in item.metadata
+
+
+@pytest.mark.asyncio
+async def test_signals_are_chunked_per_call():
+    sigs = [_sig(f"s{i}", "insight") for i in range(signal_triage.SIGNALS_PER_CALL + 3)]
+    fake = _Fake({"type": {"insight": 0.9, "none": 0.1}, "client": {"none": 0.9, "Acme": 0.1}}, mode="shadow")
+    kept = await triage_signals(sigs, _obs(), REFS, {"account"}, _resolve, client=fake)
+    assert len(kept) == len(sigs) and len(fake.calls) == 2
+    assert all("triage" in s.metadata for s in sigs)
+
+
+@pytest.mark.asyncio
+async def test_promoter_skips_library_signals(monkeypatch):
+    fake = _Fake({"type": {"key_point": 0.9, "none": 0.1}}, mode="shadow")
+    monkeypatch.setattr(signal_triage, "_default_client", lambda: fake)
+    obs = _obs(content="## Key Points\n- The market for widgets grew 12% last year\n")
+    promoter = SignalPromoter(claude_client=None, knowledge_graph=None)
+
+    library = await promoter.promote(obs.model_copy(update={"lane": "library"}))
+    assert library is not None and not fake.calls
+
+    record = await promoter.promote(obs)
+    assert record is not None and fake.calls
+    assert all("triage" in s.metadata for s in record.signals)
