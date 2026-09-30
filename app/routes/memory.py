@@ -78,7 +78,7 @@ class GraphStatsResponse(BaseModel):
     total_edges: int
     entity_counts: dict[str, int]
     total_documents: int
-    last_build: str | None
+    last_build: str | None = None
     connection_density: float
 
 
