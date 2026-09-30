@@ -26,6 +26,7 @@ import {
   Scale,
   Home,
   Settings,
+  CalendarDays,
 } from "lucide-react";
 
 /**
@@ -134,6 +135,12 @@ function useNavGroups(reviewCount: number | null) {
             href: "/feed",
             icon: Zap,
             description: "Live feed of decisions, action items, and insights",
+          },
+          {
+            name: getNavLabel("intelligence", "/meetings", "Meetings"),
+            href: "/meetings",
+            icon: CalendarDays,
+            description: "Meeting summaries, transcripts, and their signals",
           },
           {
             name: getNavLabel("intelligence", "/memory", "Memory"),

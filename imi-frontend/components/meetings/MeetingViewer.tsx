@@ -21,10 +21,28 @@ interface MeetingViewerProps {
   meetingTitle?: string;
   /** Optional custom trigger element. If not provided, renders an Eye icon button. */
   trigger?: React.ReactNode;
+  /** Controlled mode: the parent owns open state (no trigger is rendered). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingViewerProps) {
-  const [isOpen, setIsOpen] = useState<boolean>(false);
+const SIGNAL_SECTIONS: { type: string; label: string }[] = [
+  { type: "decision", label: "Decisions" },
+  { type: "action_item", label: "Action Items" },
+  { type: "key_point", label: "Key Points" },
+  { type: "insight", label: "Insights" },
+];
+
+export default function MeetingViewer({
+  botId,
+  meetingTitle,
+  trigger,
+  open,
+  onOpenChange,
+}: MeetingViewerProps) {
+  const controlled = open !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState<boolean>(false);
+  const isOpen = controlled ? open : uncontrolledOpen;
   const [meetingContent, setMeetingContent] = useState<MeetingContent | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +81,16 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
     }
   };
 
-  const handleOpenChange = (open: boolean) => {
-    setIsOpen(open);
-    if (open) {
-      loadContent();
-    }
+  const handleOpenChange = (next: boolean) => {
+    if (!controlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
   };
+
+  // Load whenever the sheet opens, whether the trigger or the parent opened it.
+  useEffect(() => {
+    if (isOpen) loadContent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, botId]);
 
   const formatDateTime = (dateString: string | null): string => {
     if (!dateString) return 'N/A';
@@ -182,6 +204,7 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
 
   return (
     <Sheet open={isOpen} onOpenChange={handleOpenChange}>
+      {!controlled && (
       <SheetTrigger asChild>
         {trigger || (
           <Button
@@ -195,6 +218,7 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
           </Button>
         )}
       </SheetTrigger>
+      )}
       <SheetContent className="w-[800px] sm:max-w-[800px] p-0 overflow-y-auto">
         <SheetHeader className="p-6 pb-4 border-b sticky top-0 bg-background z-10">
           <SheetTitle className="break-words">
@@ -202,11 +226,13 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
           </SheetTitle>
           {meetingContent && (
             <div className="flex gap-2 mt-2">
-              <Badge variant="outline">
-                {meetingContent.platform || 'Unknown'}
-              </Badge>
-              {meetingContent.is_finalized && (
-                <Badge variant="success">Processed</Badge>
+              {meetingContent.platform && (
+                <Badge variant="outline">{meetingContent.platform}</Badge>
+              )}
+              {meetingContent.summarized ? (
+                <Badge variant="success">Summarized</Badge>
+              ) : (
+                <Badge variant="outline">Transcript only</Badge>
               )}
             </div>
           )}
@@ -237,20 +263,22 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
                 <h3 className="text-sm font-semibold text-muted-foreground">📊 Meeting Details</h3>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-muted-foreground">Duration</div>
-                    <div className="font-medium">{formatDuration(meetingContent.duration)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">Participants</div>
-                    <div className="font-medium">{meetingContent.participants.length} attendees</div>
-                  </div>
-                  <div className="col-span-2">
                     <div className="text-muted-foreground">Date</div>
                     <div className="font-medium">{formatDateTime(meetingContent.start_time)}</div>
                   </div>
+                  {meetingContent.duration ? (
+                    <div>
+                      <div className="text-muted-foreground">Duration</div>
+                      <div className="font-medium">{formatDuration(meetingContent.duration)}</div>
+                    </div>
+                  ) : null}
                   <div className="col-span-2">
-                    <div className="text-muted-foreground">Platform</div>
-                    <div className="font-medium">{meetingContent.platform || 'Unknown'}</div>
+                    <div className="text-muted-foreground">
+                      Participants ({meetingContent.participants.length})
+                    </div>
+                    <div className="font-medium">
+                      {meetingContent.participants.join(', ') || 'Unknown'}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -332,9 +360,37 @@ export default function MeetingViewer({ botId, meetingTitle, trigger }: MeetingV
                 )}
               </div>
 
+              {/* Signals extracted from this meeting */}
+              {meetingContent.signals?.length > 0 && (
+                <div className="space-y-3 pt-4 border-t">
+                  <h3 className="text-sm font-semibold text-muted-foreground">
+                    Signals ({meetingContent.signals.length})
+                  </h3>
+                  {SIGNAL_SECTIONS.map(({ type, label }) => {
+                    const items = meetingContent.signals.filter((sig) => sig.type === type);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={type} className="text-sm">
+                        <div className="text-muted-foreground mb-1">{label}</div>
+                        <ul className="list-disc list-inside space-y-1">
+                          {items.map((sig) => (
+                            <li key={sig.id}>
+                              {sig.content}
+                              {sig.owner && (
+                                <span className="text-muted-foreground"> — {sig.owner}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Meeting Summary Section */}
               <div className="space-y-3 pt-4 border-t">
-                <h3 className="text-sm font-semibold text-muted-foreground"># Meeting Summary</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground">Meeting Summary</h3>
                 {meetingContent.body ? (
                   <div className="prose prose-sm max-w-none">
                     <MarkdownViewer content={meetingContent.body} />

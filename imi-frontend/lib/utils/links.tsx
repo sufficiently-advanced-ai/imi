@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 export const KNOWN_ROUTES = [
   '/feed', '/command', '/chat', '/explorer',
   '/domain-graph-enhanced', '/entities', '/signin', '/api', '/_next',
-  '/decisions', '/profile', '/overview',
+  '/decisions', '/profile', '/overview', '/meetings',
 ];
 
 /**
