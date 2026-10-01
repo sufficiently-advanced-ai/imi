@@ -159,6 +159,24 @@ def test_profile_rewrites_keep_verified_relationships_and_drop_invented_ones():
     assert "has_projects" not in fm
 
 
+def test_profile_rewrites_keep_relationship_assertions():
+    """A profile refresh must not strip the ADR-004 evidence of its edges, nor
+    let the model invent any."""
+    assertion = {"type": "managed_by", "target": "person-brian-vigilani",
+                 "source_id": "doc:meetings/meeting-x.md", "occurred_at": "2026-09-18T16:30:00+00:00",
+                 "time_source": "inferred"}
+    existing = {"id": "account-foley", "managed_by": ["person-brian-vigilani"],
+                "relationship_assertions": [assertion]}
+    generated = "---\nid: account-foley\nname: Foley\n---\n# Foley\n"
+    out = DomainAwareEntityProcessor._preserve_bookkeeping(
+        generated, existing, "", relationship_keys=("managed_by",))
+    assert yaml.safe_load(out.split("---", 2)[1])["relationship_assertions"] == [assertion]
+
+    invented = "---\nid: account-new\nrelationship_assertions:\n- type: managed_by\n  target: person-x\n---\n"
+    out = DomainAwareEntityProcessor._preserve_bookkeeping(invented, {"id": "account-new"}, "")
+    assert "relationship_assertions" not in yaml.safe_load(out.split("---", 2)[1])
+
+
 @pytest.mark.asyncio
 async def test_record_live_files_stamps_the_manifest(tmp_path):
     from app.services.corpus_manifest import CorpusReconciler, Manifest, load_manifest, save_manifest
