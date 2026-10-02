@@ -88,7 +88,8 @@ During ingestion, `SignalPromoter.promote(observation)`
 
 Then: `SignalStore.save` persists JSON (and indexes vectors on write),
 `SignalGraphWriter.write_meeting_signals` writes graph nodes and the
-`MENTIONS`/`ASSIGNED_TO`/`FOR_CLIENT` edges.
+`MENTIONS`/`ASSIGNED_TO`/`FOR_CLIENT` edges, plus `ATTRIBUTED_TO` for library claims whose
+source resolved to an entity (ADR-006 §5).
 
 ## Working with signals
 

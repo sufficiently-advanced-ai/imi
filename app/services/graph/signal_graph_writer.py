@@ -1,8 +1,8 @@
 """
 Signal Graph Writer — Write Signal nodes and entity relationships to Neo4j.
 
-Creates :Signal nodes and links them to :Entity nodes via :MENTIONS and
-:ASSIGNED_TO relationships. Signals are system-level objects (not domain
+Creates :Signal nodes and links them to :Entity nodes via :MENTIONS,
+:ASSIGNED_TO and (library claims, ADR-006) :ATTRIBUTED_TO relationships. Signals are system-level objects (not domain
 entities) that bridge meeting intelligence with the knowledge graph.
 """
 
@@ -38,7 +38,10 @@ SET s.signal_type = $signal_type,
     s.valid_from = $valid_from,
     s.valid_to = $valid_to,
     s.occurred_at = $occurred_at,
-    s.recorded_at = $recorded_at
+    s.recorded_at = $recorded_at,
+    s.lane = $lane,
+    s.stale_after = $stale_after,
+    s.attributed_to = $attributed_to
 """
 
 # Cypher for MENTIONS relationship (Signal -> Entity)
@@ -47,6 +50,15 @@ MATCH (s:Signal {id: $signal_id})
 MATCH (e:Entity {id: $entity_id})
 MERGE (s)-[r:MENTIONS]->(e)
 SET r.entity_role = $role
+"""
+
+# Cypher for ATTRIBUTED_TO relationship (library claim -> the Person /
+# Organization it is attributed to, ADR-006 §5). Read from the signal file's
+# metadata.attributed_to_ids, so a rebuild reproduces it.
+_UPSERT_ATTRIBUTED_TO = """
+MATCH (s:Signal {id: $signal_id})
+MATCH (e:Entity {id: $entity_id})
+MERGE (s)-[:ATTRIBUTED_TO]->(e)
 """
 
 # Cypher for ASSIGNED_TO relationship (Signal -> Entity, action item owners)
@@ -73,6 +85,19 @@ MERGE (d:Document {id: $doc_id})
 ON CREATE SET d.path = $path, d.name = $name
 MERGE (s)-[:FROM_DOCUMENT]->(d)
 """
+
+
+def attributed_to_ids(signal: Signal) -> list[str]:
+    """Entity ids a library claim is attributed to (ADR-006 §5). Only claims
+    carry attribution; anything malformed in the file reads as none."""
+    if signal.lane != "library":
+        return []
+    ids = (signal.metadata or {}).get("attributed_to_ids") or []
+    if isinstance(ids, str):
+        ids = [ids]
+    if not isinstance(ids, list):
+        return []
+    return [i for i in dict.fromkeys(ids) if isinstance(i, str) and i]
 
 
 def meeting_document_path(bot_id: str) -> str:
@@ -145,6 +170,7 @@ class SignalGraphWriter:
         - (:Signal) node per signal
         - (Signal)-[:MENTIONS]->(Entity) per entity ref
         - (Signal)-[:ASSIGNED_TO]->(Entity) for action item owners
+        - (Signal)-[:ATTRIBUTED_TO]->(Entity) for attributed library claims
         - (Signal)-[:FOR_CLIENT]->(Entity) for client-scoped signals (best-effort)
         - (Signal)-[:FROM_DOCUMENT]->(Document) for the source meeting
 
@@ -212,6 +238,11 @@ class SignalGraphWriter:
             "valid_to": to_utc(signal.valid_to),
             "occurred_at": signal_event_time(signal),
             "recorded_at": to_utc(signal.created_at),
+            # ADR-003/006: lane, library decay horizon (DATETIME) and the
+            # attribution string, so claim reads filter in the graph.
+            "lane": signal.lane,
+            "stale_after": to_utc(signal.stale_after),
+            "attributed_to": (signal.metadata or {}).get("attributed_to"),
         }
         await self._client.execute_write(_UPSERT_SIGNAL, params)
 
@@ -235,6 +266,21 @@ class SignalGraphWriter:
                     "[SIGNAL_GRAPH] Could not link signal %s -> entity %s: %s",
                     signal.id,
                     ref.id,
+                    e,
+                )
+
+        # ATTRIBUTED_TO for library claims whose source resolved to an entity
+        for entity_id in attributed_to_ids(signal):
+            try:
+                await self._client.execute_write(
+                    _UPSERT_ATTRIBUTED_TO,
+                    {"signal_id": signal.id, "entity_id": entity_id},
+                )
+            except Exception as e:
+                logger.debug(
+                    "[SIGNAL_GRAPH] Could not attribute signal %s -> %s: %s",
+                    signal.id,
+                    entity_id,
                     e,
                 )
 

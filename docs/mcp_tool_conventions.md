@@ -18,7 +18,7 @@ Tool names should follow this verb pattern. Pick the verb that matches what the 
 | Verb | Meaning | Examples |
 |---|---|---|
 | `search_*` | Fuzzy / keyword / semantic queries returning ranked results | `search_knowledge_graph`, `search_meeting_transcripts`, `search_signals` |
-| `list_*` | Bulk retrieval by deterministic criteria (type, ID set) | `list_entities`, `list_meetings`, `list_meeting_documents`, `list_entity_profiles` |
+| `list_*` | Bulk retrieval by deterministic criteria (type, ID set, time window) | `list_entities`, `list_meetings`, `list_meeting_documents`, `list_entity_profiles`, `list_claims` |
 | `get_*` | Single-item exact lookup | `get_entity_by_name`, `get_meeting_transcript`, `get_constitution` |
 | `find_*` | Graph traversal — neighbors, relationship inventories | `find_related_entities`, `find_decision_precedents`, `find_contradictions` |
 | `read_*` | Content I/O on a known file path | `read_document` |

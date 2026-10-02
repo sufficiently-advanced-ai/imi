@@ -39,3 +39,38 @@ mcp_trusted_sources: []
 # on top of the built-in automated-mail rule (DMARC reports, statements).
 drop_senders:
   - notifications@example-vendor.com
+
+# ---- Library and recall policy (ADR-006) ------------------------------------
+# Every key is optional; the values below are the defaults and reproduce
+# ADR-003 exactly. A bad value is logged and replaced by its default — it never
+# breaks intake. Fixed regardless of this policy: the lane is server-assigned,
+# library produces attributed `claim` signals only (never decisions or action
+# items), is never instruction-grade, never feeds entity profiles as fact, and
+# decay hides a record from recall without deleting it.
+library:
+  decay:
+    enabled: true                 # false: library never goes stale (stamped
+                                  # horizons are kept, just ignored)
+    horizons_days: [90, 180, 365] # low / medium / high durability; unjudged
+                                  # items get the middle one
+  entities:
+    mode: link_only               # link_only: link to existing entities only
+                                  # allowlist: may also create create_types,
+                                  #   through the resolver and entity admission
+    create_types: []              # e.g. [organization] — must be entity types
+                                  # of the active domain (case-insensitive)
+  infer_relationships: false      # true: infer entity relationships from
+                                  # library content too
+  # Types a claim's source (authors / publisher) resolves to, in order.
+  # Default: whichever of person, contact, organization, company the domain has.
+  # attribution_types: [person, organization]
+recall:
+  default_lanes: [record]         # e.g. [record, library]: library hits are
+                                  # ranked separately under `background`
+
+# A library-primary deployment (research firm, policy shop) might use:
+# library:
+#   decay: {enabled: false}
+#   entities: {mode: allowlist, create_types: [organization]}
+# recall:
+#   default_lanes: [record, library]

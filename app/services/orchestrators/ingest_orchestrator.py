@@ -649,6 +649,10 @@ class IngestOrchestrator(BaseOrchestrator):
         authors: list[str] = []
         if lane == "library":
             authors, participants = list(participants), []
+            # ADR-006 §5: a publisher is a claim source too.
+            publisher = (getattr(request, "metadata", None) or {}).get("publisher")
+            if isinstance(publisher, str) and publisher.strip() and publisher.strip() not in authors:
+                authors.append(publisher.strip())
 
         # Build entities_mentioned: start with participants, then enrich with
         # domain-aware NER so domain types (client, engagement, ...) are present
@@ -998,11 +1002,13 @@ class IngestOrchestrator(BaseOrchestrator):
             # ADR-003 §3: library content links to EXISTING entities only —
             # it never creates a node. Everything the resolver could not match
             # to a known node is dropped here, before admission's create path.
+            # ADR-006 §4: lanes.yaml library.entities.mode=allowlist lets the
+            # listed types through to the same admission gate record uses.
+            known_before = set(getattr(self._graph, "nodes", None) or {})
             if library:
-                known_nodes = getattr(self._graph, "nodes", None) or {}
-                not_known = {e["id"] for e in entities if e.get("id") and e["id"] not in known_nodes}
-                entities = [e for e in entities if e.get("id") in known_nodes]
-                admission_map, dropped_ids = {}, not_known
+                entities, admission_map, dropped_ids = await self._admit_library_entities(
+                    entities, observation, self._library_create_types()
+                )
             else:
                 # Decision-model admission for entities that would be NEW nodes:
                 # drop roles/placeholders/generic groups, fix the type (a company
@@ -1054,9 +1060,11 @@ class IngestOrchestrator(BaseOrchestrator):
             # on individual failures so a single bad entity doesn't drop the
             # whole batch's relationship inference.
             add_failures = 0
-            # Library links only to nodes that already exist: nothing to add,
-            # and add_node's MERGE would overwrite their properties.
-            for entity in ([] if library else entities):
+            # Library never writes nodes that already exist (add_node's MERGE
+            # would overwrite their properties); it adds only the new nodes
+            # an allowlist admitted (ADR-006 §4) — none in link_only mode.
+            to_add = [e for e in entities if e.get("id") not in known_before] if library else entities
+            for entity in to_add:
                 eid = entity.get("id", "")
                 etype = entity.get("type", "unknown")
                 ename = entity.get("name", "")
@@ -1098,6 +1106,12 @@ class IngestOrchestrator(BaseOrchestrator):
                     }
                 )
 
+            # ADR-006 §5: resolve a claim's source to an entity before the
+            # signals are written, so ATTRIBUTED_TO lands on an existing node
+            # and the resolved ids persist in the signal file for rebuilds.
+            if library and meeting_signals:
+                await self._attribute_claims(meeting_signals, observation)
+
         # Step 2 (B): Write signal nodes to Neo4j — entity nodes now exist so
         # MENTIONS/ASSIGNED_TO/FOR_CLIENT edges will resolve correctly.
         if meeting_signals and self._signal_writer:
@@ -1114,8 +1128,9 @@ class IngestOrchestrator(BaseOrchestrator):
 
         # Step 3 (C): Infer entity-to-entity relationships and write edges.
         # Never from library content (ADR-003 §3): third-party text must not
-        # assert relationships between our entities.
-        if self._graph and len(entities) >= 2 and getattr(observation, "lane", "record") != "library":
+        # assert relationships between our entities — unless the deployment
+        # opts in with lanes.yaml library.infer_relationships (ADR-006 §1).
+        if self._graph and len(entities) >= 2 and self._infers_relationships(observation):
             relationships = await self._infer_relationships(content, entities)
             logger.info(f"[INGEST] Inferred {len(relationships)} relationships")
             result["edge_count"] = await self._write_relationship_edges(
@@ -1132,6 +1147,136 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
 
         return result
+
+    @staticmethod
+    def _infers_relationships(observation) -> bool:
+        if getattr(observation, "lane", "record") != "library":
+            return True
+        from app.services.lane_admission import library_policy
+
+        return library_policy().infer_relationships
+
+    def _library_create_types(self) -> frozenset[str]:
+        """Entity types library content may create (lanes.yaml allowlist),
+        validated against the active domain. Empty in link_only mode."""
+        from app.services.lane_admission import library_create_types
+
+        try:
+            return library_create_types(set(self._entity_type_descriptions()) or None)
+        except Exception as e:  # config must never fail the ingest
+            logger.warning("[INGEST] Library create_types unavailable, linking only: %s", e)
+            return frozenset()
+
+    async def _admit_library_entities(
+        self, entities: list[dict], observation, create_types: frozenset[str]
+    ) -> tuple[list[dict], dict[str, str], set[str]]:
+        """Library entity policy (ADR-003 §3, ADR-006 §4).
+
+        Existing nodes are kept. A new entity is kept only when its type is in
+        ``create_types`` AND entity admission keeps it — the allowlist lifts
+        the blanket ban, not the gate. A retype onto a type library may not
+        create (and that is not an existing node) is dropped. With an empty
+        ``create_types`` (link_only, the default) this is exactly ADR-003:
+        admission is never consulted and every new entity is dropped.
+
+        Returns (entities, old_id->new_id for retypes, dropped ids)."""
+        known = getattr(self._graph, "nodes", None) or {}
+        kept = [e for e in entities if e.get("id") in known]
+        creatable = [
+            e for e in entities
+            if e.get("id") and e["id"] not in known and e.get("type") in create_types
+        ]
+        dropped = {
+            e["id"] for e in entities
+            if e.get("id") and e["id"] not in known and e.get("type") not in create_types
+        }
+        admission_map: dict[str, str] = {}
+        if creatable:
+            admitted, admission_map, refused = await self._admit_new_entities(creatable, observation)
+            dropped |= set(refused)
+            seen = {e["id"] for e in kept}
+            created = 0
+            for e in admitted:
+                if e["id"] in seen:
+                    continue
+                if e["id"] in known or e.get("type") in create_types:
+                    seen.add(e["id"])
+                    kept.append(e)
+                    created += e["id"] not in known
+                else:
+                    dropped.add(e["id"])
+            logger.info(
+                "[INGEST] Library allowlist (%s): %d of %d new entities admitted",
+                ", ".join(sorted(create_types)), created, len(creatable),
+            )
+        return kept, admission_map, dropped
+
+    async def _attribute_claims(self, meeting_signals, observation) -> list[str]:
+        """ADR-006 §5: resolve a library document's sources (authors /
+        publisher) to entities and record their ids on each claim as
+        ``metadata.attributed_to_ids`` — the signal file is the source of
+        truth for the ATTRIBUTED_TO edge, so a rebuild reproduces it.
+
+        Each source is matched against the attribution types (person-like then
+        organization-like, per the domain). When nothing matches, the source
+        becomes a new entity only if a fitting type is in the library
+        allowlist, and only through entity admission; otherwise the
+        ``attributed_to`` string stays the only attribution. Never raises."""
+        sources = [a.strip() for a in getattr(observation, "authors", None) or [] if a and a.strip()]
+        if not sources or not self._graph or not getattr(meeting_signals, "signals", None):
+            return []
+        try:
+            from app.services.entity_resolver import EntityResolver
+            from app.services.lane_admission import library_attribution_types
+
+            types = library_attribution_types(set(self._entity_type_descriptions()) or None)
+            if not types:
+                return []
+            create_types = self._library_create_types()
+            known = getattr(self._graph, "nodes", None) or {}
+            # Heuristic matching only: an author byline has no evidence quote
+            # for the decision model to weigh.
+            resolver = EntityResolver(knowledge_graph=self._graph, decisions=None)
+            ids: list[str] = []
+            unresolved: list[dict] = []
+            for name in sources:
+                hit = None
+                for etype in types:
+                    resolved = resolver.resolve(etype, name)
+                    if resolved.matched_via != "new" and resolved.id in known:
+                        hit = resolved.id
+                        break
+                if hit:
+                    ids.append(hit)
+                    continue
+                create_type = next((t for t in types if t in create_types), None)
+                if create_type:
+                    unresolved.append(
+                        {"id": ensure_entity_id_format(create_type, name), "type": create_type, "name": name}
+                    )
+            if unresolved:
+                admitted, _, _ = await self._admit_library_entities(unresolved, observation, create_types)
+                for e in admitted:
+                    if e["id"] not in known:
+                        try:
+                            await self._graph.add_node(
+                                entity_type=e["type"], name=e["name"], entity_id=e["id"],
+                                properties={"source": "ingest"},
+                            )
+                        except Exception as ex:
+                            logger.warning("[INGEST] Attribution add_node failed for %s: %s", e["id"], ex)
+                            continue
+                    ids.append(e["id"])
+            ids = list(dict.fromkeys(ids))
+            if ids:
+                for sig in meeting_signals.signals:
+                    if getattr(sig, "lane", None) == "library":
+                        sig.metadata = {**(sig.metadata or {}), "attributed_to_ids": ids}
+                logger.info("[INGEST] Claims attributed to %s", ", ".join(ids))
+            return ids
+        except Exception as e:  # attribution is best-effort; the string stays
+            logger.warning("[INGEST] Claim attribution failed (non-fatal): %s", e)
+            return []
 
     async def _resolve_collected_entities(
         self,
@@ -1454,10 +1599,13 @@ class IngestOrchestrator(BaseOrchestrator):
             if verdict.action == "unlink":
                 unlinked.add(e["id"])
                 continue
-            if link_only:
+            if link_only and (e["id"] in known or verdict.action == "reassign"):
                 # Library (ADR-003): third-party text only confirms or removes
-                # a link. A rename keeps our name; a split or a reassign (a
-                # different entity / a participant — library has none) unlinks.
+                # a link to OUR entities. A rename keeps our name; a split or a
+                # reassign (a different entity / a participant — library has
+                # none) unlinks. An entity the allowlist is creating in this
+                # ingest (ADR-006 §4) is not ours yet: a rename or split of it
+                # falls through to the record handling below.
                 if verdict.action == "rename" and e["id"] in known:
                     if e["id"] not in seen:
                         seen.add(e["id"])

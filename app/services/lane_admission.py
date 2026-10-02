@@ -61,8 +61,7 @@ PER_ITEM = "per_item"
 STATE_CHARS = 2500  # the head is enough to judge a lane; the model degrades on long noisy state
 
 # Library decay horizons by durability (ADR-003 §5).
-_HORIZONS = ((0.3, 90), (0.6, 180), (1.01, 365))
-_UNJUDGED_HORIZON_DAYS = 180
+_HORIZONS = ((0.3, 90), (0.6, 180), (1.01, 365))  # defaults; lanes.yaml library.decay
 
 SOURCE_DEFAULTS: dict[str, str] = {
     # we were party to it
@@ -312,18 +311,228 @@ class LaneDecision:
         return asdict(self)
 
 
-def library_stale_after(durable: float | None, now: datetime | None = None) -> str:
-    now = now or datetime.now(UTC)
-    if durable is None:
-        days = _UNJUDGED_HORIZON_DAYS
+# ---- per-deployment library policy (ADR-006) ---------------------------------
+#
+# ``library:`` and ``recall:`` in config/lanes.yaml. Every key is optional and
+# the defaults reproduce ADR-003 exactly. A bad value is logged and replaced by
+# its default — a config typo never breaks intake. What stays fixed regardless
+# (ADR-006 §2): the lane is server-assigned, library produces claims only, is
+# never instruction-grade, never feeds profiles as fact, and decay is never
+# deletion.
+
+LIBRARY_ENTITY_MODES = ("link_only", "allowlist")
+# Entity types a claim's source (authors / publisher) may resolve to, in order,
+# filtered to the active domain (domains name people and organizations
+# differently: person/contact, organization/company).
+DEFAULT_ATTRIBUTION_TYPES = ("person", "contact", "organization", "company")
+DEFAULT_RECALL_LANES = ("record",)
+
+
+@dataclass(frozen=True)
+class LibraryPolicy:
+    decay_enabled: bool = True
+    horizons_days: tuple[int, int, int] = tuple(d for _, d in _HORIZONS)
+    entity_mode: str = "link_only"
+    create_types: tuple[str, ...] = ()  # as configured; validated per domain
+    infer_relationships: bool = False
+    attribution_types: tuple[str, ...] | None = None  # None: the defaults
+
+    @property
+    def allowlist(self) -> bool:
+        return self.entity_mode == "allowlist"
+
+
+def _warn(message: str, *args: Any) -> None:
+    logger.warning("[LANES] lanes.yaml: " + message + "; using the default", *args)
+
+
+def _bool(section: dict, key: str, default: bool, where: str) -> bool:
+    value = section.get(key, default)
+    if isinstance(value, bool):
+        return value
+    _warn("%s.%s must be true or false (got %r)", where, key, value)
+    return default
+
+
+def _type_list(value: Any, where: str) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        _warn("%s must be a list of entity type names (got %r)", where, value)
+        return None
+    return tuple(dict.fromkeys(v.strip() for v in value))
+
+
+def _parse_library_policy(config: dict[str, Any]) -> LibraryPolicy:
+    default = LibraryPolicy()
+    library = config.get("library")
+    if library is None:
+        return default
+    if not isinstance(library, dict):
+        _warn("library must be a mapping (got %r)", library)
+        return default
+
+    decay = library.get("decay") or {}
+    if not isinstance(decay, dict):
+        _warn("library.decay must be a mapping (got %r)", decay)
+        decay = {}
+    decay_enabled = _bool(decay, "enabled", default.decay_enabled, "library.decay")
+    horizons = decay.get("horizons_days", list(default.horizons_days))
+    if (
+        isinstance(horizons, list)
+        and len(horizons) == len(_HORIZONS)
+        and all(isinstance(d, int) and not isinstance(d, bool) and d > 0 for d in horizons)
+        and list(horizons) == sorted(horizons)
+    ):
+        horizons_days = tuple(horizons)
     else:
-        days = next(d for bound, d in _HORIZONS if durable < bound)
+        _warn(
+            "library.decay.horizons_days must be %d ascending positive day counts "
+            "(low / medium / high durability), got %r",
+            len(_HORIZONS), horizons,
+        )
+        horizons_days = default.horizons_days
+
+    entities = library.get("entities") or {}
+    if not isinstance(entities, dict):
+        _warn("library.entities must be a mapping (got %r)", entities)
+        entities = {}
+    mode = entities.get("mode", default.entity_mode)
+    if mode not in LIBRARY_ENTITY_MODES:
+        _warn("library.entities.mode must be one of %s (got %r)", LIBRARY_ENTITY_MODES, mode)
+        mode = default.entity_mode
+    create_types = _type_list(entities.get("create_types"), "library.entities.create_types") or ()
+    if create_types and mode != "allowlist":
+        logger.info("[LANES] library.entities.create_types is ignored unless mode is allowlist")
+
+    return LibraryPolicy(
+        decay_enabled=decay_enabled,
+        horizons_days=horizons_days,
+        entity_mode=mode,
+        create_types=create_types,
+        infer_relationships=_bool(
+            library, "infer_relationships", default.infer_relationships, "library"
+        ),
+        attribution_types=_type_list(library.get("attribution_types"), "library.attribution_types"),
+    )
+
+
+# (config dict it was parsed from, policy). Holding the dict — not its id() —
+# means a reloaded config can never be mistaken for the cached one.
+_policy_cache: tuple[dict[str, Any], LibraryPolicy] | None = None
+
+
+def library_policy() -> LibraryPolicy:
+    """The validated ``library:`` policy, parsed once per loaded config."""
+    global _policy_cache
+    config = lanes_config()
+    if _policy_cache is None or _policy_cache[0] is not config:
+        try:
+            policy = _parse_library_policy(config)
+        except Exception as e:  # never break intake over config
+            logger.warning("[LANES] library policy unreadable, using defaults: %s", e)
+            policy = LibraryPolicy()
+        _policy_cache = (config, policy)
+    return _policy_cache[1]
+
+
+def _match_domain_types(
+    wanted: tuple[str, ...], domain_types: set[str] | None, where: str, *, warn: bool
+) -> tuple[str, ...]:
+    """``wanted`` mapped case-insensitively onto the active domain's types.
+
+    Unknown types are skipped (with a warning when they were configured).
+    Without a readable domain nothing can be validated, so nothing matches."""
+    if not wanted or not domain_types:
+        return ()
+    by_lower = {t.lower(): t for t in domain_types}
+    out = []
+    for t in wanted:
+        match = by_lower.get(t.lower())
+        if match:
+            out.append(match)
+        elif warn:
+            logger.warning(
+                "[LANES] lanes.yaml: %s names %r, which is not an entity type of the active "
+                "domain; ignoring it", where, t,
+            )
+    return tuple(dict.fromkeys(out))
+
+
+def library_create_types(domain_types: set[str] | None) -> frozenset[str]:
+    """Entity types library content may create (ADR-006 §4). Empty unless
+    ``library.entities.mode`` is ``allowlist``; creation still goes through
+    the resolver and entity admission — this lifts the ban, not the gate."""
+    policy = library_policy()
+    if not policy.allowlist:
+        return frozenset()
+    return frozenset(
+        _match_domain_types(
+            policy.create_types, domain_types, "library.entities.create_types", warn=True
+        )
+    )
+
+
+def library_attribution_types(domain_types: set[str] | None) -> tuple[str, ...]:
+    """Entity types a claim's source resolves to (ADR-006 §5), in order."""
+    configured = library_policy().attribution_types
+    if configured is None:
+        return _match_domain_types(
+            DEFAULT_ATTRIBUTION_TYPES, domain_types, "attribution", warn=False
+        )
+    return _match_domain_types(configured, domain_types, "library.attribution_types", warn=True)
+
+
+def recall_default_lanes() -> list[str]:
+    """``recall.default_lanes`` — the lanes recall searches when the caller
+    names none (ADR-006 §7). Default: record only (ADR-003)."""
+    default = list(DEFAULT_RECALL_LANES)
+    try:
+        recall = lanes_config().get("recall")
+        if recall is None:
+            return default
+        lanes = recall.get("default_lanes") if isinstance(recall, dict) else None
+        if lanes is None and isinstance(recall, dict):
+            return default
+        from app.models.lane import LANES
+
+        if (
+            isinstance(lanes, list)
+            and lanes
+            and all(isinstance(lane, str) and lane in LANES for lane in lanes)
+        ):
+            return list(dict.fromkeys(lanes))
+        _warn("recall.default_lanes must be a non-empty list of %s (got %r)", sorted(LANES), lanes)
+    except Exception as e:  # never break recall over config
+        logger.warning("[LANES] recall.default_lanes unreadable, using the default: %s", e)
+    return default
+
+
+def library_stale_after(durable: float | None, now: datetime | None = None) -> str | None:
+    """When a library record decays out of recall (ADR-003 §5), or None when
+    ``library.decay.enabled`` is false. Horizons by durability come from
+    ``library.decay.horizons_days``; an unjudged record gets the middle one."""
+    policy = library_policy()
+    if not policy.decay_enabled:
+        return None
+    now = now or datetime.now(UTC)
+    horizons = policy.horizons_days
+    if durable is None:
+        days = horizons[len(horizons) // 2]
+    else:
+        days = next(d for (bound, _), d in zip(_HORIZONS, horizons, strict=True) if durable < bound)
     return (now + timedelta(days=days)).isoformat()
+
+
+def library_decay_enabled() -> bool:
+    return library_policy().decay_enabled
 
 
 
 def library_claim_fields(
-    signal: Any, *, attributed_to: str | None, as_of: str | None, stale_after: str
+    signal: Any, *, attributed_to: str | None, as_of: str | None, stale_after: str | None
 ) -> dict[str, Any]:
     """ADR-003 §3: the field values that make a library-lane signal a claim —
     attributed to its source and dated, never our decision or action item.
