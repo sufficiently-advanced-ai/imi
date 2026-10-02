@@ -12,6 +12,7 @@
 | Entity types, attributes, relationships, NER steering, UI labels, intelligence patterns | `config/domains/<domain>.yaml` — the single highest-leverage file in the system | [Domain Schemas](domain-schemas.md) |
 | Which LLM serves which operation (local models, gateways, cost control) | `config/inference.yaml` | [Configuration](../getting-started/configuration.md#models--inference) |
 | Which intake sources are record vs library, extra senders to drop, whose knowledge base it is | `config/lanes.yaml` | [ADR-003](../adr/ADR-003-record-and-library-lanes.md), `config/lanes.yaml.example` |
+| Library policy for library-primary deployments: decay on/off and horizons, whether library may create entity types (through entity admission), library relationship inference, claim attribution types, default recall lanes | `config/lanes.yaml` (`library:`, `recall:`) | [ADR-006](../adr/ADR-006-library-primary-deployments.md), `config/lanes.yaml.example` |
 | Per-meeting-type processing (processors, thresholds, agent model) | `config/workflows/<id>.yaml` | [Configuration](../getting-started/configuration.md#workflows-config-optional) |
 | Backends, auth mode, models, telemetry | `.env` | [Configuration](../getting-started/configuration.md) |
 

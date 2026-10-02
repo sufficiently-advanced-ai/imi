@@ -88,6 +88,7 @@ place
 | `find_changes` | What was learned between two dates, plus `recorded_late` (material about an earlier time added during the window) |
 | `get_graph_at_time` | The entities and relationships around an entity as known at a past time |
 | `get_entity_provenance` | Every source that mentions an entity, in event order, with `recorded_at` and `time_source` |
+| `list_claims` | Library claims about (or attributed to) an entity, oldest first, within an optional `date_from`/`date_to` window: attribution (resolved entities + source text), `as_of`, supersession, decay state; `include_stale` to see decayed claims ([ADR-006](../adr/ADR-006-library-primary-deployments.md) §6) |
 
 Full parameter schemas: `app/services/mcp_tool_definitions.py`.
 

@@ -37,13 +37,17 @@ accepted from clients. Captures are admitted in `capture_and_persist`; ingested 
 the `ADMIT` phase. Records without a stored lane (written before lanes existed) read as
 `record`. Library records carry `stale_after`; once past it they drop out of recall (the
 file stays: decay is not deletion). `scripts/stamp_lanes.py` backfills lanes from
-`scripts/classify_memories.py` verdicts.
+`scripts/classify_memories.py` verdicts. Decay is per-deployment policy
+([ADR-006](../adr/ADR-006-library-primary-deployments.md)): `library.decay.enabled: false` in
+`config/lanes.yaml` stamps no new horizon and makes recall ignore existing ones (re-enabling
+restores them); `library.decay.horizons_days` sets the three durability horizons.
 
 ## Recall
 
 `recall(RecallRequest)` (`app/services/memory_recall.py`) is the single unified recall
 surface (schema `imi.memory.recall.v1`), exposed as the `memory_recall` MCP tool and
-`POST /api/agent-memory/recall`. `lanes` defaults to `["record"]`; each requested lane is a
+`POST /api/agent-memory/recall`. `lanes` defaults to `recall.default_lanes` in
+`config/lanes.yaml` (`["record"]` unless configured; an explicit `lanes` always wins); each requested lane is a
 separate store-side-filtered search (library outnumbers record ~3:1, so a post-hoc filter
 would starve record hits), and library hits come back under `background`, never merged
 into `memories`:
@@ -91,3 +95,4 @@ curl -X POST localhost:8080/api/admin/backfill-memory-index
 | Add a vector backend | Implement `store_vectors` / `search_vectors` / `delete` (contract: `SqliteVectorStore`), add a branch in `resolve_vector_store` (`signal_indexing.py:76`) |
 | Add a governed record kind | Model with the shared invariant, `index_*_one` + `backfill_*` in `signal_indexing.py`, resolver in `memory_recall.default_resolvers` (`:110`), store with `iter_all`/`get`. Audit generalizes via duck typing |
 | Tune recall ranking | recency/authority weighting in `memory_recall.py`; callers can pass `recency_weight` per request |
+| Search library by default, or stop library decay | `recall.default_lanes` and `library.decay` in `config/lanes.yaml` (ADR-006; see `config/lanes.yaml.example`) |

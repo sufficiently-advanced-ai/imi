@@ -55,16 +55,31 @@ list at `:72-84`). Each phase is tracked in the job store and emitted over SSE.
 Phases 5–10 are individually wrapped: a failure logs and continues rather than failing the job.
 Only phases 1–4 and 7 are load-bearing for a usable result.
 
-### Library lane (ADR-003 §3)
+### Library lane (ADR-003 §3, ADR-006)
 
-A `library` observation runs the same phases with these gates:
+A `library` observation runs the same phases with these gates. The defaults below are
+ADR-003's; a deployment changes them in the `library:` section of `config/lanes.yaml`
+([ADR-006](../adr/ADR-006-library-primary-deployments.md), `lane_admission.library_policy`).
 
-- **BUILD_MEETING**: no participants; named people become `authors` (text, never person nodes).
+- **BUILD_MEETING**: no participants; named people become `authors` (text, never person
+  nodes). An `IngestRequest.metadata.publisher` is appended to `authors`.
 - **PROMOTE_SIGNALS**: every signal becomes a `claim`: `metadata.attributed_to`, `as_of`,
-  `extracted_type`; owner/status/due cleared; `stale_after` set (library decay).
-- **ENRICH_GRAPH**: link only. Entities that don't resolve to an *existing* node are dropped;
-  no admission create path, no `add_node`, no fuller-name upgrades, `entity_link` verification
-  is link-only (renames keep our name, splits unlink), no relationship inference.
+  `extracted_type`; owner/status/due cleared; `stale_after` set (library decay; none when
+  `library.decay.enabled: false`, horizons from `library.decay.horizons_days`).
+- **ENRICH_GRAPH**: link only by default (`library.entities.mode: link_only`). Entities that
+  don't resolve to an *existing* node are dropped; no admission create path, no `add_node`,
+  no fuller-name upgrades, `entity_link` verification is link-only (renames keep our name,
+  splits unlink). With `mode: allowlist`, new entities of a `create_types` type go through the
+  same `entity_admission` gate as record content and are added if kept
+  (`_admit_library_entities`); existing nodes are still never renamed or re-written.
+  Relationship inference runs only with `library.infer_relationships: true`.
+- **Attribution** (ADR-006 §5, `_attribute_claims`): each author/publisher is resolved
+  (heuristic resolver) against the domain's person/organization-like types
+  (`library.attribution_types`); matches are stored on every claim as
+  `metadata.attributed_to_ids` and written as `(Signal)-[:ATTRIBUTED_TO]->(Entity)`.
+  An unmatched source is created only via the allowlist + admission; otherwise the
+  `attributed_to` string is the only attribution. Because the ids live in the signal file,
+  a rebuild reproduces the edges, and entity merges rewrite them (`remap_entity_refs`).
 - **ENRICH_PROFILES**: skipped (signals are still saved).
 - **PERSIST**: the meeting file carries `lane: library` and `authors:`; a rebuild
   (`neo4j_graph._extract_entity_references`) links such a file only to its recorded
@@ -129,6 +144,7 @@ If you're adding a new source, prefer the front door (`/api/ingest`) over clonin
 | Add a pull connector | Subclass `BaseConnector` (`app/connectors/base.py:7`): `list_recordings`, `fetch_recording`, `to_ingest_request`. See `GrainConnector` (`app/connectors/grain.py:153`) |
 | Change what gets extracted | Edit the prompt XML in `app/prompts/` — no code change |
 | Change which lane a source lands in, or drop a sender | `config/lanes.yaml` (see `config/lanes.yaml.example`); turn model judgment on with `decisions.modes.lane_admission: on` in `config/inference.yaml` |
+| Run a library-primary deployment (research, policy, analyst teams) | `library:` / `recall:` in `config/lanes.yaml` ([ADR-006](../adr/ADR-006-library-primary-deployments.md)): `decay.enabled` / `decay.horizons_days`, `entities.mode: allowlist` + `entities.create_types` (through entity admission), `infer_relationships`, `attribution_types`, `recall.default_lanes`. Bad values warn and fall back to the defaults (= ADR-003). Read claims over time with the `list_claims` MCP tool |
 | Route inference to other models/providers | Create `config/inference.yaml` (see `config/inference.yaml.example`); per-operation routing to Anthropic / vLLM / Bedrock / OpenAI-compatible endpoints |
 | Change which entity/relationship types are persisted | Edit the active domain schema — the graph-enrichment phase validates against it. See [Domain Schemas](../customization/domain-schemas.md) |
 | Add a pipeline stage | Add a phase name to `PHASES` (`ingest_orchestrator.py:72`), write a `_phase_*` coroutine, insert a `_run_phase(...)` call in `_run_observation_phases` (`:240`). Status tracking and SSE come for free |
