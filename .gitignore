@@ -37,6 +37,7 @@ wheels/
 
 # Virtual Environment
 venv/
+.venv-packs/
 ENV/
 
 # IDE
