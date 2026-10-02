@@ -431,7 +431,8 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "report which memories you actually used via record_memory_usage. "
             "Use search_signals_semantic for signals-only search; this tool is the "
             "cross-kind recall surface. By default only the record lane (what we "
-            "were party to: meetings, business mail, own notes) is searched; pass "
+            "were party to: meetings, business mail, own notes) is searched, unless "
+            "this deployment configures other default lanes; pass "
             'lanes=["record", "library"] to also get third-party watched content '
             "(articles, newsletters, videos), ranked separately under background."
         ),
@@ -462,10 +463,11 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "lanes": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["record", "library"]},
-                    "default": ["record"],
                     "description": (
                         "record = we were party to it; library = third-party content "
-                        "we watch. Library hits are returned under background."
+                        "we watch. Library hits are returned under background. "
+                        'Default: the deployment\'s configured lanes (["record"] '
+                        "unless configured)."
                     ),
                 },
                 "limit": {"type": "integer", "default": 10},
@@ -1067,6 +1069,52 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "entity_id": {
                     "type": "string",
                     "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+            },
+            "required": ["entity_id"],
+        },
+    },
+    # --- Claims timeline (ADR-006 §6) ---
+    "list_claims": {
+        "name": "list_claims",
+        "description": (
+            "List the claims third-party sources (articles, reports, newsletters, feeds) made "
+            "about one entity, oldest first, so you can see how a position changed over time "
+            "and who said what first. Each claim gives what was claimed, when it was made "
+            "(as_of), who it is attributed to (resolved people/organizations plus the source "
+            "text), whether a later claim superseded it, and whether it is stale (past this "
+            "deployment's decay horizon). Also lists claims attributed to the entity when it "
+            "is a source. Exact and complete within the window — not a similarity search; use "
+            "memory_recall for fuzzy questions, get_entity_provenance for every source that "
+            "mentions an entity."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'technology-direct-air-capture') or exact name",
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Only claims made on or after this date (YYYY-MM-DD or ISO-8601)",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Only claims made on or before this date (inclusive; YYYY-MM-DD or ISO-8601)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum claims to return (default 50, maximum 200)",
+                    "default": 50,
+                },
+                "include_stale": {
+                    "type": "boolean",
+                    "description": (
+                        "Also return claims past their decay horizon (default false). "
+                        "Stale claims are hidden, never deleted."
+                    ),
+                    "default": False,
                 },
             },
             "required": ["entity_id"],

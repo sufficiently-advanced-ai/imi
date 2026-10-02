@@ -14,6 +14,8 @@ validity windows on entity nodes.
 - temporal_blast_radius: the same traversal with hop distances
 - provenance: every piece of evidence about an entity, in event order
 - find_contradictions: reviewed and pending conflicts between signals
+- claims: library claims about an entity in event order, with attribution and
+  supersession (ADR-006 §6)
 
 All comparisons are on Neo4j ``DATETIME`` values in UTC. Backfilled content is
 placed by its event time, so it appears in every point-in-time query from the
@@ -192,6 +194,31 @@ _CONTRADICTION_SIGNALS = (
     "s.occurred_at AS timestamp, "
     "coalesce(s.signal_type, s.type) AS type "
     "ORDER BY timestamp ASC"
+)
+
+# ADR-006 §6: the claims timeline. Library claims about an entity (MENTIONS)
+# or attributed to it (ATTRIBUTED_TO), in event order, with their attribution
+# and supersession. Window and decay bounds are typed DATETIME parameters.
+_CLAIM_EDGES = ["MENTIONS", "ATTRIBUTED_TO"]
+
+_CLAIMS = (
+    "MATCH (s:Signal)-[r]->(e:Entity {id: $id}) "
+    "WHERE type(r) IN $claim_edges AND s.signal_type = 'claim' "
+    "AND ($start IS NULL OR s.occurred_at >= $start) "
+    "AND ($end IS NULL OR s.occurred_at < $end) "
+    "AND ($include_stale OR s.stale_after IS NULL OR s.stale_after > $now) "
+    "WITH s, collect(DISTINCT toLower(type(r))) AS links "
+    "OPTIONAL MATCH (s)-[:ATTRIBUTED_TO]->(a:Entity) "
+    "WITH s, links, collect(DISTINCT a {.id, .name, .entity_type}) AS attributed "
+    "OPTIONAL MATCH (n:Signal)-[:SUPERSEDES]->(s) "
+    "WITH s, links, attributed, collect(DISTINCT n.id) AS successors "
+    "RETURN s.id AS id, s.content AS content, s.occurred_at AS occurred_at, "
+    "s.recorded_at AS recorded_at, s.valid_to AS valid_to, "
+    "s.attributed_to AS attributed_to, coalesce(s.lane, 'library') AS lane, "
+    "s.stale_after AS stale_after, s.review_status AS review_status, "
+    "s.source_meeting_id AS source_id, s.source_meeting_title AS source_title, "
+    "links, attributed, successors "
+    "ORDER BY occurred_at ASC, id ASC LIMIT $max_results"
 )
 
 # Most entities a point-in-time traversal will evaluate. Each costs a handful
@@ -527,6 +554,88 @@ class TemporalQueryService:
             for r in rows
         ]
         return {"entity_id": node["id"], "history": history}
+
+    # ------------------------------------------------------------------
+    # claims (ADR-006 §6)
+    # ------------------------------------------------------------------
+
+    async def claims(
+        self,
+        entity_id: str,
+        start: Any = None,
+        end: Any = None,
+        *,
+        include_stale: bool = False,
+        decay_enabled: bool = True,
+        max_results: int = 50,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Library claims about (or attributed to) an entity, oldest first.
+
+        ``start`` is inclusive and ``end`` exclusive, both on the claims' event
+        time. Stale claims (past their decay horizon) are left out unless
+        ``include_stale``; with ``decay_enabled`` false nothing is stale.
+        Returns None when the entity does not exist.
+        """
+        node = await self._resolve(entity_id)
+        if node is None:
+            return None
+        now = to_utc(now) or datetime.now(UTC)
+        rows = await self._read(
+            _CLAIMS,
+            {
+                "id": node["id"],
+                "claim_edges": _CLAIM_EDGES,
+                "start": to_utc(start),
+                "end": to_utc(end),
+                "include_stale": bool(include_stale or not decay_enabled),
+                "now": now,
+                "max_results": int(max_results),
+            },
+        )
+        claims = []
+        for r in rows:
+            stale_after = r.get("stale_after")
+            successors = [sid for sid in r.get("successors") or [] if sid]
+            claims.append(
+                {
+                    "id": r.get("id"),
+                    "content": r.get("content"),
+                    "as_of": r.get("occurred_at"),
+                    "recorded_at": r.get("recorded_at"),
+                    "attribution": {
+                        "entities": [
+                            {"id": a.get("id"), "name": a.get("name"), "entity_type": a.get("entity_type")}
+                            for a in r.get("attributed") or []
+                            if a and a.get("id")
+                        ],
+                        "text": r.get("attributed_to"),
+                    },
+                    "supersession": {
+                        "superseded": bool(successors or r.get("valid_to")),
+                        "superseded_by": successors,
+                        "valid_to": r.get("valid_to"),
+                    },
+                    "lane": r.get("lane") or "library",
+                    "stale": bool(
+                        decay_enabled and stale_after is not None and to_utc(stale_after) <= now
+                    ),
+                    "stale_after": stale_after,
+                    "review_status": r.get("review_status"),
+                    "source": {"id": r.get("source_id"), "title": r.get("source_title")},
+                    "links": sorted(r.get("links") or []),
+                }
+            )
+        return {
+            "entity": {
+                "id": node["id"],
+                "name": node.get("name"),
+                "entity_type": node.get("entity_type"),
+            },
+            "claims": claims,
+            "count": len(claims),
+            "truncated": len(claims) >= int(max_results),
+        }
 
     # ------------------------------------------------------------------
     # find_contradictions

@@ -2354,6 +2354,59 @@ async def get_entity_provenance(
         return {"error": str(e)}
 
 
+LIST_CLAIMS_MAX_RESULTS = 200
+
+
+def _window_end(value: str) -> datetime:
+    """Exclusive upper bound for an inclusive ``date_to``: the day after a
+    bare date, the instant itself (plus a microsecond) for a timestamp."""
+    from datetime import timedelta
+
+    parsed = _parse_iso_timestamp(value)
+    bare_date = len(value.strip()) == 10
+    return parsed + (timedelta(days=1) if bare_date else timedelta(microseconds=1))
+
+
+async def list_claims(
+    entity_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    max_results: int = 50,
+    include_stale: bool = False,
+) -> dict[str, Any]:
+    """ADR-006 §6: library claims about an entity, in the order they were
+    made, with attribution and supersession. Reads the graph, not recall."""
+    svc = _get_temporal_query_service()
+    if not svc:
+        return {"error": _NO_GRAPH}
+    try:
+        from app.services.lane_admission import library_decay_enabled
+
+        start = _parse_iso_timestamp(date_from) if date_from else None
+        end = _window_end(date_to) if date_to else None
+        if start and end and end <= start:
+            return {"error": "date_to must not be before date_from"}
+        limit = max(1, min(int(max_results or 50), LIST_CLAIMS_MAX_RESULTS))
+        result = await svc.claims(
+            entity_id,
+            start,
+            end,
+            include_stale=bool(include_stale),
+            decay_enabled=library_decay_enabled(),
+            max_results=limit,
+        )
+        if result is None:
+            return {"error": f"Entity '{entity_id}' not found"}
+        result.update({"date_from": date_from, "date_to": date_to, "include_stale": bool(include_stale)})
+        logger.info(f"[LIST_CLAIMS] {result['count']} claims for {entity_id}")
+        return _serialize_for_json(result)
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"Error in list_claims: {e}")
+        return {"error": str(e)}
+
+
 async def decision_influence(
     decision_id: str,
 ) -> dict[str, Any]:

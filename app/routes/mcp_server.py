@@ -334,6 +334,8 @@ TOOLS = [
     build_mcp_tool("find_changes"),
     build_mcp_tool("get_graph_at_time"),
     build_mcp_tool("get_entity_provenance"),
+    # --- Claims timeline (ADR-006) ---
+    build_mcp_tool("list_claims"),
 ]
 
 
@@ -857,6 +859,23 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             failed = result[0] if isinstance(result, list) and result else result
             if isinstance(failed, dict) and failed.get("error"):
                 return _error(str(failed["error"]))
+            return _text(result)
+
+        elif name == "list_claims":
+            from app.services.chat_tools import list_claims
+
+            entity_id = args.get("entity_id")
+            if not entity_id:
+                return _error("entity_id is required")
+            result = await list_claims(
+                entity_id,
+                date_from=args.get("date_from"),
+                date_to=args.get("date_to"),
+                max_results=args.get("max_results", 50),
+                include_stale=bool(args.get("include_stale", False)),
+            )
+            if result.get("error"):
+                return _error(str(result["error"]))
             return _text(result)
 
         elif name == "ask_kb":
