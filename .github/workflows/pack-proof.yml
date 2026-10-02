@@ -1,0 +1,181 @@
+name: Pack Proof
+
+# Use-case packs (ADR-005): validate every pack and the core skills, then run each
+# pack's proof — ingest its synthetic sample into a fresh stack and score proof.yaml.
+#
+# - validate: always. No API key, no services, ~1 minute.
+# - proof: only when the ANTHROPIC_API_KEY secret is configured (skipped on fork PRs,
+#   where secrets are absent). A proof ingest makes many non-deterministic model calls,
+#   so this runs nightly and on changes to what a proof depends on — not on every PR.
+#   Proofs run with every optional feature off (no decision-model endpoint).
+#
+# Not a required check: a proof failure is a quality signal to investigate, not a merge gate.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # nightly, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      pack:
+        description: "Pack id to prove (default: all)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "app/prompts/**"
+      - "app/services/entity_resolver.py"
+      - "use-cases/**"
+      - "skills/**"
+      - "scripts/validate_packs.py"
+      - "scripts/check_pack_proof.py"
+      - "scripts/install_pack.py"
+      - "scripts/build_plugin.py"
+      - "scripts/pack_common.py"
+      - ".github/workflows/pack-proof.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/prompts/**"
+      - "app/services/entity_resolver.py"
+      - "use-cases/**"
+      - "skills/**"
+      - "scripts/validate_packs.py"
+      - "scripts/check_pack_proof.py"
+      - "scripts/install_pack.py"
+      - "scripts/build_plugin.py"
+      - "scripts/pack_common.py"
+      - ".github/workflows/pack-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pack-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      packs: ${{ steps.packs.outputs.packs }}
+      has_key: ${{ steps.key.outputs.has_key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install script dependencies
+        run: pip install "pydantic>=2.10.4" "pyyaml==6.0.1" "httpx>=0.28.1" pytest
+
+      - name: Validate packs and core skills
+        run: python scripts/validate_packs.py
+
+      - name: Unit tests for the pack tooling
+        # --noconftest: tests/conftest.py imports the backend; these tests don't need it.
+        run: python -m pytest tests/test_use_case_packs.py -q --noconftest -p no:cacheprovider
+
+      - name: Build the skills plugin for every pack
+        run: |
+          python scripts/build_plugin.py
+          for p in use-cases/*/pack.yaml; do
+            python scripts/build_plugin.py --pack "$(basename "$(dirname "$p")")"
+          done
+
+      - name: List packs to prove
+        id: packs
+        env:
+          INPUT_PACK: ${{ github.event.inputs.pack }}
+        run: |
+          if [ -n "$INPUT_PACK" ]; then
+            packs="[\"$INPUT_PACK\"]"
+          else
+            packs=$(python -c 'import json,pathlib; print(json.dumps(sorted(p.parent.name for p in pathlib.Path("use-cases").glob("*/pack.yaml"))))')
+          fi
+          echo "packs=$packs" >> "$GITHUB_OUTPUT"
+          echo "Packs: $packs"
+
+      - name: Check for an API key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then echo "has_key=true" >> "$GITHUB_OUTPUT";
+          else echo "has_key=false" >> "$GITHUB_OUTPUT"; echo "::notice::ANTHROPIC_API_KEY not configured — skipping pack proofs"; fi
+
+  proof:
+    needs: validate
+    if: needs.validate.outputs.has_key == 'true' && needs.validate.outputs.packs != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: ${{ fromJSON(needs.validate.outputs.packs) }}
+    env:
+      PACK: ${{ matrix.pack }}
+      NEO4J_PASSWORD: pack-proof-ci
+      PORT: "8080"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install script dependencies
+        run: pip install "pydantic>=2.10.4" "pyyaml==6.0.1" "httpx>=0.28.1" "mcp>=1.27.2,<2"
+
+      - name: Install the pack's domain and lanes into config/
+        run: |
+          python scripts/install_pack.py install "$PACK"
+          domain=$(python -c 'import os,yaml; d=yaml.safe_load(open("use-cases/"+os.environ["PACK"]+"/pack.yaml"))["domain"]; print(d.get("id") or d["shipped"])')
+          echo "ACTIVE_DOMAIN=$domain" >> "$GITHUB_ENV"
+          echo "ACTIVE_DOMAIN=$domain"
+
+      - name: Boot the stack (stock config, no decision model)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: docker compose up -d --build
+
+      - name: Wait for the app to become healthy
+        run: |
+          for i in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' imi-app 2>/dev/null || echo starting)
+            if [ "$state" = "healthy" ]; then echo "healthy after ~$((i*10))s"; break; fi
+            if [ "$i" = "60" ]; then echo "app never became healthy"; docker logs imi-app 2>&1 | tail -50; exit 1; fi
+            sleep 10
+          done
+          active=$(curl -fsS http://127.0.0.1:8080/api/domain/config | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          echo "active domain: $active"
+          [ "$active" = "$ACTIVE_DOMAIN" ] || { echo "expected $ACTIVE_DOMAIN"; exit 1; }
+
+      - name: Run the proof
+        env:
+          NO_PROXY: localhost,127.0.0.1
+        run: |
+          python scripts/check_pack_proof.py "$PACK" --url http://127.0.0.1:8080 \
+            --report "build/pack-proof/report-$PACK.json"
+
+      - name: Upload the proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pack-proof-${{ matrix.pack }}
+          path: build/pack-proof/report-${{ matrix.pack }}.json
+          if-no-files-found: ignore
+
+      - name: App logs on failure
+        if: failure()
+        run: docker logs imi-app 2>&1 | tail -200
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v --remove-orphans
