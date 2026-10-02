@@ -1,0 +1,45 @@
+# Inbound recipe: client email from Gmail -> imi (ADR-007 intake contract).
+id: gmail
+connector: gmail
+title: Client email from Gmail
+needs: [claude_connectors, scheduled_tasks]
+schedule: "0 7-19/2 * * 1-5"      # every two hours, working hours, weekdays
+tiers: [local, relayed]
+window: "newer_than:2d"            # overlaps the previous run on purpose; dedup makes it free
+query: >-
+  newer_than:2d -category:promotions -category:social -category:updates -in:chats
+  (from:<client domain> OR to:<client domain>)
+writes:
+  - tool: capture_thought
+    when: one call per message (not per thread)
+    source: gmail
+    source_id: "gmail:{message_id}"
+    event_time:
+      field: source_date
+      from: "the message's Date header (when it was sent) — never the time this task ran"
+prompt: |
+  You are filing my client email into imi, my knowledge base. Use the Gmail connector to
+  read and the imi MCP server to write. Do not reply to, label, archive or delete anything.
+
+  1. Search Gmail with:
+       newer_than:2d -category:promotions -category:social -category:updates -in:chats
+     plus (from:<domain> OR to:<domain>) for each client domain listed here:
+       CLIENT_DOMAINS: <fill in when you schedule this, e.g. client-a.example client-b.example>
+     If no domains are listed, search without that clause and use judgment in step 2.
+  2. For each message (not thread) in the results:
+     - Skip automated mail: newsletters, receipts, calendar notifications, anything from a
+       no-reply address, and anything not about client or prospect work.
+     - Build the content as plain text: From, To, Cc, Date and Subject lines exactly as in
+       the headers, a blank line, then the body with quoted reply history and signatures
+       removed. Keep attachments out; name them in one line at the end if they matter.
+     - Call capture_thought with:
+         content     = that text
+         source      = "gmail"
+         source_id   = "gmail:" + the Gmail message id
+         source_date = the Date header converted to ISO-8601 UTC (when it was sent — never
+                       the time you fetched it)
+         tags        = the client name, if obvious
+     - A result with deduped=true means imi already has it. That is expected: this
+       window overlaps the previous run.
+  3. Finish with one line: messages seen, captured, deduped, skipped (and why, in a few
+     words). If a capture failed, list the message id and the error.

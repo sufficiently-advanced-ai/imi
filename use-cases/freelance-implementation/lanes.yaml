@@ -1,0 +1,37 @@
+# Lanes for a freelance implementation practice (ADR-003; copied to config/lanes.yaml).
+#   record   — we were party to it: client calls, client email, our own docs
+#   library  — third-party content we watch: articles, vendor blogs, newsletters
+#   per_item — mixed; judged per item by the decision model when one is
+#              configured, otherwise treated as record (the pre-lanes behaviour)
+#
+# Without a decision-model endpoint every per_item source below lands in record.
+# That is the stock behaviour and the proof assumes it; the cost is that vendor
+# newsletters reaching Gmail become memory instead of background. Narrow the
+# Gmail recipe's query (inbound/gmail.yaml) if that bothers you.
+
+# Whose knowledge base this is — used in the decision model's lane questions.
+# owner: Your Name
+
+sources:
+  # Connector names used by the inbound recipes (ADR-007).
+  gmail: per_item      # client threads and vendor newsletters share an inbox
+  gcal: record         # our own calendar
+  gdrive: record       # the recipe only reads client/engagement folders
+  # REST source names (Zapier, the sample ingest).
+  email: per_item
+  mail: per_item
+  document: record
+  # Watched content.
+  web: library
+  rss: library
+
+# On the MCP channel, record-default sources are judged unless trusted here
+# (ADR-007 §2). This is a single-user instance: notes I capture by hand and my
+# own calendar are first-party. Ignored by servers without ADR-007.
+mcp_trusted_sources: [manual, gcal]
+
+# Automated senders to drop before they reach the graph (substring of From:).
+drop_senders:
+  - no-reply@
+  - noreply@
+  - notifications@

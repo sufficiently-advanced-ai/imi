@@ -1,0 +1,41 @@
+# Inbound recipe: client meetings from Google Calendar -> imi (ADR-007 intake contract).
+# Captures the meeting itself (who, when, agenda) so briefs and "what changed" can see
+# meetings that had no recording. Transcripts come in through the Drive recipe.
+id: gcal
+connector: gcal
+title: Client meetings from Google Calendar
+needs: [claude_connectors, scheduled_tasks]
+schedule: "0 6 * * 1-5"            # each weekday morning
+tiers: [local, relayed]
+window: "events starting from 2 days ago to 7 days ahead"
+query: events with at least one attendee outside my own domain, excluding declined events
+writes:
+  - tool: capture_thought
+    when: one call per event occurrence
+    source: gcal
+    source_id: "gcal:{event_id}:{start}"
+    event_time:
+      field: source_date
+      from: "the event's start time (when the meeting happens) — never the time this task ran"
+prompt: |
+  You are filing my client meetings from Google Calendar into imi, my knowledge base. Use
+  the Google Calendar connector to read and the imi MCP server to write. Do not create,
+  change or respond to any event.
+
+  1. List events from 2 days ago to 7 days ahead. Keep events with at least one attendee
+     outside my own email domain; skip declined events, all-day blocks, focus time and
+     personal appointments.
+  2. For each kept event occurrence:
+     - Build the content as plain text: a first line "Meeting: <title>", then "When:"
+       with start and end in ISO-8601 UTC, "Attendees:" with names and email addresses,
+       "Organizer:", and the event description / agenda if any. Leave out conference links
+       and dial-in numbers.
+     - Call capture_thought with:
+         content     = that text
+         source      = "gcal"
+         source_id   = "gcal:" + the event id + ":" + the occurrence start in ISO-8601 UTC
+                       (a moved meeting is a new occurrence and gets a new capture)
+         source_date = the event start in ISO-8601 UTC (when it happens — never the time
+                       you fetched it)
+     - deduped=true means imi already has this occurrence; that is expected.
+  3. Finish with one line: events seen, captured, deduped, skipped.

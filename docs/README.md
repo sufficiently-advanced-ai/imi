@@ -8,6 +8,7 @@ AI agents. Every architecture doc cites `file:line` so claims are verifiable aga
 **"I'm setting up an instance"** (operator — human, or an agent using the
 [`imi-onboarding`](../.claude/skills/imi-onboarding/SKILL.md) skill)
 1. [Onboarding](getting-started/onboarding.md) — zero to working instance, with verification at every step
+   — or start from a [use-case pack](../use-cases/README.md) (domain, lanes, inbound recipes, skills and a proof for one kind of work)
 2. [Configuration](getting-started/configuration.md) — every knob, and which of the four config systems owns it
 3. [Git corpus](getting-started/git-corpus.md) — optional: back the corpus with a GitHub repo (do this before the corpus grows)
 4. [Day-to-day usage](getting-started/daily-usage.md) — the feed → review → query loop, and light maintenance

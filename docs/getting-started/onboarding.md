@@ -35,6 +35,10 @@ Everything else has working defaults. The full reference is in
 
 ## Step 2 — Choose a domain (the decision that matters)
 
+> **Starting from a use case?** A [use-case pack](../../use-cases/README.md) ships a domain,
+> lanes, inbound recipes, skills and a sample corpus for one kind of work. Ask Claude Code to
+> "set up imi with the `<pack>` pack" and the `imi-onboarding` skill does Steps 2–6 for you.
+
 The `ACTIVE_DOMAIN` variable selects which schema in `config/domains/` shapes your entire
 instance — what entity types exist, what the extraction pipeline looks for, what the UI calls
 things. Six ship:

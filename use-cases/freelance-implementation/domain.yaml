@@ -1,0 +1,233 @@
+# Domain schema for a freelance consultant doing technical implementations.
+# Derived from config/domains/solo_consulting.yaml: same client / engagement /
+# stakeholder spine, plus `system` (the platforms an implementation touches) and
+# a `consultant` type that also covers subcontractors. Validated against
+# app/model_schemas/domain_config.py by scripts/validate_packs.py.
+domain:
+  id: freelance_implementation
+  name: "Freelance Implementation Practice"
+  version: "1.0.0"
+  client_entity_types: [client]
+  ui:
+    app_name: "Practice Brain"
+    entity_label: "Clients & Engagements"
+    graph_label: "Practice Map"
+    nav_groups:
+      knowledge_base:
+        label: "Practice"
+        items:
+          /entities:
+            label: "Clients & Engagements"
+            description: "Clients, engagements, stakeholders and the systems you work in"
+      intelligence:
+        label: "Intelligence"
+        items:
+          /feed:
+            label: "Open Items"
+            description: "Commitments, decisions and scope changes across engagements"
+    terminology:
+      entity: "record"
+      signal: "commitment"
+  entities:
+    client:
+      name: client
+      label: Client
+      icon: building-2
+      description: >-
+        Organizations that hire the consultant (or are being scoped as prospects). Name the
+        company, not a department or product.
+      plural: clients
+      plural_label: Clients
+      ner_labels: ["ORG", "ORGANIZATION"]
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: industry
+          type: string
+        - name: relationship_status
+          type: enum
+          enum: ["prospect", "active", "paused", "former"]
+      relationships:
+        - type: has_engagements
+          target: engagement
+          cardinality: one_to_many
+          inverse_name: for_client
+          description: "The client has hired, or is scoping, this engagement"
+        - type: has_stakeholders
+          target: stakeholder
+          cardinality: one_to_many
+          inverse_name: works_at
+          description: "The person works at this client"
+    engagement:
+      name: engagement
+      label: Engagement
+      icon: briefcase
+      description: >-
+        A bounded piece of paid work for one client, usually defined by a statement of work
+        (SOW) or proposal: a migration, an integration, a build-out. Name it after the work
+        ("Order data migration"), not the client.
+      plural: engagements
+      plural_label: Engagements
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: status
+          type: enum
+          enum: ["proposed", "scoping", "active", "hypercare", "on_hold", "completed"]
+        - name: pricing
+          type: enum
+          enum: ["fixed_fee", "time_and_materials", "retainer"]
+        - name: fee
+          type: string
+        - name: target_date
+          type: date
+        - name: scope
+          type: string
+      relationships:
+        - type: for_client
+          target: client
+          cardinality: many_to_one
+          inverse_name: has_engagements
+          description: "The engagement is work for this client"
+        - type: has_participants
+          target: stakeholder
+          cardinality: many_to_many
+          inverse_name: involved_in
+          description: "The client-side person is involved in this engagement"
+        - type: touches_systems
+          target: system
+          cardinality: many_to_many
+          inverse_name: used_in
+          description: "The engagement builds, migrates, integrates or retires this system"
+        - type: delivered_by
+          target: consultant
+          cardinality: many_to_many
+          inverse_name: delivers
+          description: "The consultant or subcontractor does the work on this engagement"
+    stakeholder:
+      name: stakeholder
+      label: Stakeholder
+      icon: user
+      description: >-
+        People on the client side: sponsors, technical leads, finance and operations staff,
+        end users. Not the consultant and not subcontractors.
+      plural: stakeholders
+      plural_label: Stakeholders
+      ner_labels: ["PERSON", "PER"]
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: role
+          type: string
+        - name: email
+          type: string
+        - name: authority
+          type: enum
+          enum: ["sponsor", "approver", "technical_lead", "contributor", "end_user"]
+      relationships:
+        - type: works_at
+          target: client
+          cardinality: many_to_one
+          inverse_name: has_stakeholders
+          description: "The person works at this client"
+        - type: involved_in
+          target: engagement
+          cardinality: many_to_many
+          inverse_name: has_participants
+          description: "The person is involved in this engagement"
+    system:
+      name: system
+      label: System
+      icon: server
+      description: >-
+        Software platforms, databases, tools and internal applications an engagement works in
+        or on (e.g. a legacy order system, a PostgreSQL warehouse, a BI tool). Not companies.
+      plural: systems
+      plural_label: Systems
+      ner_labels: ["PRODUCT"]
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: category
+          type: enum
+          enum: ["source_system", "target_system", "integration", "reporting", "infrastructure", "other"]
+      relationships:
+        - type: used_in
+          target: engagement
+          cardinality: many_to_many
+          inverse_name: touches_systems
+          description: "The system is built, migrated, integrated or retired in this engagement"
+    consultant:
+      name: consultant
+      label: Consultant
+      icon: badge-check
+      description: >-
+        The practice owner and any subcontractors they bring onto an engagement.
+      plural: consultants
+      plural_label: Consultants
+      attributes:
+        - name: name
+          type: string
+          required: true
+        - name: role
+          type: string
+      relationships:
+        - type: delivers
+          target: engagement
+          cardinality: many_to_many
+          inverse_name: delivered_by
+          description: "The consultant does the work on this engagement"
+  intelligence_patterns:
+    scope_creep:
+      name: "Scope Creep"
+      pattern_type: risk
+      triggers:
+        - entity: engagement
+          condition: request_outside_statement_of_work
+          weight: 0.9
+      priority: high
+      actions:
+        - "Compare the request with the SOW's scope and exclusions"
+        - "Draft a change request before doing the work"
+    client_dependency_blocked:
+      name: "Blocked on a Client Dependency"
+      pattern_type: escalation
+      triggers:
+        - entity: engagement
+          condition: client_side_access_or_input_late
+          weight: 0.8
+      priority: high
+      actions:
+        - "Record the dependency and its owner"
+        - "Re-baseline dates in writing"
+    timeline_change:
+      name: "Timeline Change"
+      pattern_type: decision
+      triggers:
+        - entity: engagement
+          condition: milestone_or_cutover_date_moved
+          weight: 0.8
+      priority: medium
+      actions:
+        - "Note what the date replaced and why"
+    proposal_due:
+      name: "Proposal or Estimate Owed"
+      pattern_type: commitment
+      triggers:
+        - entity: client
+          condition: consultant_promised_proposal_or_estimate
+          weight: 0.7
+      priority: medium
+      actions:
+        - "Surface before the due date"
+  extraction_priorities:
+    meetings:
+      pattern: entity_extraction
+      priority: high
+    documents:
+      pattern: project_analysis
+      priority: medium

@@ -1,0 +1,61 @@
+# Use-case pack manifest (ADR-005). Schema: use-cases/README.md#pack-manifest
+id: freelance-implementation
+name: Freelance implementation consultant
+version: 0.1.0
+status: stable
+description: >-
+  A solo consultant delivering technical implementations — migrations, integrations,
+  data platforms — on fixed-fee or SOW-bound engagements for a handful of clients at a time.
+audience: >-
+  Independent consultants and very small practices who live in Gmail, Google Calendar and
+  Google Drive, run several client engagements in parallel, and need to walk into every
+  call knowing what was promised, what changed and what is out of scope.
+
+domain:
+  file: domain.yaml
+  id: freelance_implementation
+
+lanes: lanes.yaml
+
+inbound:
+  - inbound/gmail.yaml
+  - inbound/gcal.yaml
+  - inbound/gdrive.yaml
+
+skills:
+  - skills/scope-check
+
+sample: sample/manifest.yaml
+proof: proof.yaml
+
+# Stock features only: the pack, its sample ingest and its proof work on a community
+# install with every optional feature off.
+requires: [rest_ingest, mcp_local]
+
+optional:
+  - id: decision_model
+    used_for: >-
+      Judging per_item sources (Gmail) into record vs library, and verifying inferred
+      relationships, via config/inference.yaml.
+    without: >-
+      per_item sources fall back to record, so newsletters that slip past the Gmail query
+      become memory instead of background. Narrow the Gmail query to client domains.
+  - id: claude_connectors
+    used_for: The Gmail, Google Calendar and Google Drive inbound recipes.
+    without: >-
+      No automatic inbound. Ingest by hand (POST /api/ingest, the web UI upload) or through
+      the shipped Zapier adapter.
+  - id: scheduled_tasks
+    used_for: Running the inbound recipes on their schedule.
+    without: Run a recipe's prompt by hand when you want imi caught up.
+  - id: mcp_relayed
+    used_for: >-
+      Running the recipes from a cloud Claude session (claude.ai, the mobile app) through
+      the desktop app's relay to a local imi.
+    without: >-
+      Run the recipes in a Claude client on the machine that can reach imi (Local tier).
+  - id: mcp_remote
+    used_for: >-
+      Scheduled cloud tasks that run while your machine is off (ADR-008, Remote tier).
+    without: >-
+      Recipes run only while the machine running the Local or Relayed client is awake.
