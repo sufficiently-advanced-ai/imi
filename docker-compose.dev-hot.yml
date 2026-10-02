@@ -82,6 +82,7 @@ services:
 
       # MCP
       - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
 
       # Decision models (config/inference.yaml `decisions:`); empty is fine
       # when no decisions endpoint is configured.

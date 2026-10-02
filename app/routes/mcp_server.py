@@ -1,5 +1,9 @@
 """
-MCP Server — Exposes knowledge graph tools via Model Context Protocol (SSE transport).
+MCP Server — Exposes knowledge graph tools via Model Context Protocol.
+
+Two transports serve the same tool set behind the same DNS-rebinding / Host
+allowlist (ADR-008): legacy HTTP+SSE at ``/api/mcp/sse`` and Streamable HTTP
+at ``/api/mcp/http``. Neither is authenticated — see docs/mcp_access_tiers.md.
 
 Wraps existing query tools (chat_tools.py) and mutation tools (graph_node_tools.py,
 graph_edge_tools.py) so Claude Code can call them natively from the CLI.
@@ -9,10 +13,13 @@ Mutation tools handle the full lifecycle: Neo4j operations + source file archiva
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import SplitResult, urlsplit
 
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import TextContent, Tool
 from starlette.applications import Starlette
@@ -29,38 +36,87 @@ logger = logging.getLogger(__name__)
 server = Server("kb-graph")
 
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+
+
+def _parse_allowed_hosts(raw: str) -> list[str]:
+    """Split the comma-separated ``MCP_ALLOWED_HOSTS`` value into host entries."""
+    configured: list[str] = []
+    for raw_host in (raw or "").split(","):
+        host = raw_host.strip().lower()
+        if not host:
+            continue
+        # Reject obviously-malformed entries: URL schemes, path segments,
+        # or internal whitespace. The allowlist must be plain host or
+        # host:port values for the SDK's Host-header check to make sense.
+        if "://" in host or "/" in host or any(c.isspace() for c in host):
+            logger.warning("Ignoring invalid MCP_ALLOWED_HOSTS entry: %r", raw_host)
+            continue
+        configured.append(host)
+    return configured
+
+
+def _parse_public_url(raw: str | None) -> SplitResult | None:
+    """Parse ``MCP_PUBLIC_URL``; None when unset or not an http(s) URL with a host."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        parts.port  # noqa: B018 — raises ValueError on a malformed port
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        return None
+    return parts
+
+
+def _public_url_host(parts: SplitResult) -> str:
+    """The Host header value clients send for ``MCP_PUBLIC_URL`` (host[:port])."""
+    host = parts.hostname.lower()
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    default_port = {"http": 80, "https": 443}[parts.scheme.lower()]
+    # Clients omit the default port from the Host header.
+    return f"{host}:{parts.port}" if parts.port and parts.port != default_port else host
+
+
+def _is_loopback_host(entry: str) -> bool:
+    """True for allowlist entries (host or host:port) that name the loopback interface."""
+    if entry.startswith("["):
+        host = entry.split("]", 1)[0] + "]"
+    elif entry.count(":") == 1:
+        host = entry.split(":", 1)[0]
+    else:
+        host = entry
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+
+
 def _build_allowed_hosts() -> list[str]:
     """Build the SDK DNS-rebinding-protection Host allowlist.
 
-    Always includes localhost variants so loopback Tailscale-internal access
-    works out of the box. Two config sources are supported:
+    Always includes localhost variants so loopback access works out of the
+    box. Two config sources contribute additional Host header values:
 
     - ``MCP_ALLOWED_HOSTS`` setting (comma-separated): explicit list of
-      additional Host header values to accept.
+      additional host or host:port values to accept.
+    - ``MCP_PUBLIC_URL`` (ADR-008 remote tier): the host[:port] of the URL
+      remote clients use is added automatically.
 
-    The IP allowlist in nginx (loopback + Tailscale CGNAT) is the primary
-    access control. This list just has to match the hostnames legitimate
-    callers actually use; without it, Tailscale users reaching the MCP SSE
-    endpoint via the public hostname see HTTP 421 "Invalid Host header"
-    from the SDK middleware.
+    imi has no MCP authentication; network-level access control (loopback
+    binding, VPN/tailnet, an authenticating proxy) is the operator's job.
+    This list just has to match the hostnames legitimate callers actually
+    use; otherwise they see HTTP 421 "Invalid Host header" from the SDK.
     """
     base = ["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*"]
     configured: list[str] = []
     try:
         from app.config import settings
 
-        raw = settings.MCP_ALLOWED_HOSTS or ""
-        for raw_host in raw.split(","):
-            host = raw_host.strip().lower()
-            if not host:
-                continue
-            # Reject obviously-malformed entries: URL schemes, path segments,
-            # or internal whitespace. The allowlist must be plain host or
-            # host:port values for the SDK's Host-header check to make sense.
-            if "://" in host or "/" in host or any(c.isspace() for c in host):
-                logger.warning("Ignoring invalid MCP_ALLOWED_HOSTS entry: %r", raw_host)
-                continue
-            configured.append(host)
+        configured = _parse_allowed_hosts(settings.MCP_ALLOWED_HOSTS)
+        public = _parse_public_url(getattr(settings, "MCP_PUBLIC_URL", ""))
+        if public is not None:
+            configured.append(_public_url_host(public))
     except Exception:
         logger.warning(
             "Failed to load MCP_ALLOWED_HOSTS; falling back to localhost-only allowlist",
@@ -70,6 +126,50 @@ def _build_allowed_hosts() -> list[str]:
     # Preserve order, drop duplicates.
     seen: set[str] = set()
     return [h for h in base + configured if not (h in seen or seen.add(h))]
+
+
+def log_mcp_access_tier() -> None:
+    """Log, once at startup, which ADR-008 access tier the config implies."""
+    from app.config import settings
+
+    raw_url = (getattr(settings, "MCP_PUBLIC_URL", "") or "").strip()
+    public = _parse_public_url(raw_url)
+    if raw_url and public is None:
+        logger.error(
+            "Ignoring invalid MCP_PUBLIC_URL %r (expected http(s)://host[:port][/path]); "
+            "remote MCP tier stays off.",
+            raw_url,
+        )
+    if public is not None:
+        logger.warning(
+            "MCP remote tier enabled: MCP_PUBLIC_URL=%s. imi has NO MCP authentication — "
+            "anyone who can reach this URL can call every tool, including graph mutations "
+            "and delete_signal. Keep it on a private network (VPN/tailnet) or behind an "
+            "authenticating proxy. See docs/mcp_access_tiers.md.",
+            raw_url,
+        )
+        if public.scheme.lower() == "http":
+            logger.warning(
+                "MCP_PUBLIC_URL uses plain http:// — accepted (a tailnet/VPN already "
+                "encrypts traffic), but imi adds no MCP auth or TLS of its own."
+            )
+        return
+
+    remote = [
+        h for h in _parse_allowed_hosts(settings.MCP_ALLOWED_HOSTS) if not _is_loopback_host(h)
+    ]
+    if remote:
+        # Backward compatibility (ADR-008 amendment): deployments that predate
+        # MCP_PUBLIC_URL reach imi via MCP_ALLOWED_HOSTS alone. Keep serving them.
+        logger.warning(
+            "MCP_ALLOWED_HOSTS allows non-loopback host(s) %s but MCP_PUBLIC_URL is unset. "
+            "Those hosts keep working; set MCP_PUBLIC_URL to the URL clients use to declare "
+            "the remote tier explicitly. imi has NO MCP authentication. "
+            "See docs/mcp_access_tiers.md.",
+            ", ".join(remote),
+        )
+    else:
+        logger.info("MCP access: local tier (loopback Host allowlist only).")
 
 
 _security = TransportSecuritySettings(
@@ -906,20 +1006,62 @@ class _MessageHandler:
         await sse.handle_post_message(scope, receive, send)
 
 
-# Build the Starlette app.
-#
+class _StreamableHTTPHandler:
+    """ASGI handler for the MCP Streamable HTTP transport (GET/POST/DELETE)."""
+
+    def __init__(self, session_manager: StreamableHTTPSessionManager):
+        self.session_manager = session_manager
+
+    async def __call__(self, scope, receive, send):
+        await self.session_manager.handle_request(scope, receive, send)
+
+
 # Path layout when mounted at /api/mcp by FastAPI:
 #   GET  /api/mcp/sse       → SSE event stream (connect_sse)
 #   POST /api/mcp/messages/ → Client messages (handle_post_message)
+#   GET|POST|DELETE /api/mcp/http → Streamable HTTP (ADR-008)
 #
 # The SSE transport computes the message URL as:
 #   scope["root_path"] + sse._endpoint
-# When starlette_app is mounted at /api/mcp, root_path = "/api/mcp",
+# When the app is mounted at /api/mcp, root_path = "/api/mcp",
 # so the client gets: "/api/mcp/messages/?session_id=..."
-starlette_app = Starlette(
-    debug=False,
-    routes=[
-        Route("/sse", endpoint=_SseHandler(), methods=["GET"]),
-        Route("/messages/", endpoint=_MessageHandler(), methods=["POST"]),
-    ],
-)
+def build_mcp_app() -> tuple[Starlette, StreamableHTTPSessionManager]:
+    """Build the MCP Starlette app and its Streamable HTTP session manager.
+
+    The session manager's ``run()`` must wrap the host app's lifespan (Starlette
+    does not run a mounted sub-app's lifespan) and can run only once, so every
+    app gets a fresh one — use :func:`mount_mcp`.
+    """
+    session_manager = StreamableHTTPSessionManager(
+        app=server, security_settings=_security
+    )
+    http_handler = _StreamableHTTPHandler(session_manager)
+    http_methods = ["GET", "POST", "DELETE"]
+    app = Starlette(
+        debug=False,
+        routes=[
+            Route("/sse", endpoint=_SseHandler(), methods=["GET"]),
+            Route("/messages/", endpoint=_MessageHandler(), methods=["POST"]),
+            Route("/http", endpoint=http_handler, methods=http_methods),
+            Route("/http/", endpoint=http_handler, methods=http_methods),
+        ],
+    )
+    return app, session_manager
+
+
+def mount_mcp(app, path: str = "/api/mcp") -> None:
+    """Mount both MCP transports on *app* and tie the session manager to its lifespan."""
+    mcp_app, session_manager = build_mcp_app()
+    app.mount(path, mcp_app)
+    inner_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def _lifespan_with_mcp(asgi_app):
+        # App startup handlers first, then MCP sessions; MCP sessions are
+        # cancelled before shutdown handlers close shared services.
+        async with inner_lifespan(asgi_app) as state:
+            log_mcp_access_tier()
+            async with session_manager.run():
+                yield state
+
+    app.router.lifespan_context = _lifespan_with_mcp
