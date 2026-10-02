@@ -131,7 +131,7 @@ async def test_link_only_default_creates_nothing_and_never_asks_admission():
     graph = _Graph(_node("technology-dac", "technology", "DAC"))
     orch = _orch(graph)
     ms = MeetingSignals(meeting_id="m1", bot_id="b1", signals=[
-        _claim(entities=_refs(("technology", "DAC"), ("organization", "Climeworks")))
+        _claim(entities=_refs(("technology", "DAC"), ("organization", "Aircap Labs")))
     ])
 
     _, judge = await _enrich(orch, ms, _state())
@@ -147,7 +147,7 @@ async def test_allowlist_creates_listed_types_through_admission(use):
     graph = _Graph(_node("technology-dac", "technology", "DAC"))
     orch = _orch(graph)
     ms = MeetingSignals(meeting_id="m1", bot_id="b1", signals=[
-        _claim(entities=_refs(("technology", "DAC"), ("organization", "Climeworks"), ("person", "Jo Analyst")))
+        _claim(entities=_refs(("technology", "DAC"), ("organization", "Aircap Labs"), ("person", "Jo Analyst")))
     ])
     state = _state(authors=[])
 
@@ -156,10 +156,10 @@ async def test_allowlist_creates_listed_types_through_admission(use):
     # Only the listed type reaches the gate; the person is dropped unasked
     judge.assert_awaited_once()
     mentions = judge.await_args.args[0]
-    assert [(m["type"], m["name"]) for m in mentions] == [("organization", "Climeworks")]
-    assert graph.added == ["organization-climeworks"]  # existing DAC not re-written
-    assert sorted(e.id for e in ms.signals[0].entities) == ["organization-climeworks", "technology-dac"]
-    assert state.entity_ids == ["organization-climeworks", "technology-dac"]
+    assert [(m["type"], m["name"]) for m in mentions] == [("organization", "Aircap Labs")]
+    assert graph.added == ["organization-aircap-labs"]  # existing DAC not re-written
+    assert sorted(e.id for e in ms.signals[0].entities) == ["organization-aircap-labs", "technology-dac"]
+    assert state.entity_ids == ["organization-aircap-labs", "technology-dac"]
 
 
 @pytest.mark.asyncio
@@ -198,7 +198,7 @@ async def test_allowlist_create_types_outside_the_domain_create_nothing(use):
     graph = _Graph()
     orch = _orch(graph)
     ms = MeetingSignals(meeting_id="m1", bot_id="b1", signals=[
-        _claim(entities=_refs(("organization", "Climeworks")))
+        _claim(entities=_refs(("organization", "Aircap Labs")))
     ])
 
     _, judge = await _enrich(orch, ms, _state(authors=[]))
@@ -216,19 +216,19 @@ async def test_allowlist_verification_resolves_a_new_entitys_fuller_name():
     orch = _orch(graph)
     verdicts = {
         "organization-acme": SimpleNamespace(action="rename", name="Acme Holdings"),
-        "organization-clime": SimpleNamespace(action="rename", name="Climeworks"),
+        "organization-aircap": SimpleNamespace(action="rename", name="Aircap Labs"),
     }
     entities = [
         {"id": "organization-acme", "type": "organization", "name": "Acme"},
-        {"id": "organization-clime", "type": "organization", "name": "Clime"},
+        {"id": "organization-aircap", "type": "organization", "name": "Aircap"},
     ]
     with patch("app.services.entity_linking.judge_links", AsyncMock(return_value=verdicts)):
         kept, remap, unlinked = await orch._verify_links(entities, _state(), "text", link_only=True)
 
     assert {e["id"]: e["name"] for e in kept} == {
-        "organization-acme": "Acme", "organization-climeworks": "Climeworks",
+        "organization-acme": "Acme", "organization-aircap-labs": "Aircap Labs",
     }
-    assert remap == {"organization-clime": "organization-climeworks"} and unlinked == set()
+    assert remap == {"organization-aircap": "organization-aircap-labs"} and unlinked == set()
     graph.upgrade_entity_name.assert_not_called()
 
 
