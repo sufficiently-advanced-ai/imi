@@ -22,6 +22,14 @@ With no model available, per-item sources fall back to ``record`` — the
 pre-lanes behaviour — so an outage degrades to the old system, never hides
 first-party content.
 
+Intake channel (ADR-007): agent-mediated intake (MCP) names the connector
+the content came from as ``source`` — but the source is the client's claim.
+The transport stamps ``channel`` (``"mcp"``); on that channel a record-default
+source is judged per item unless ``config/lanes.yaml`` lists it under
+``mcp_trusted_sources``. ``channel`` never comes from tool arguments or a
+request body. With no model configured the per-item fallback above still
+applies, so an instance without a judge behaves as before.
+
 Library items get ``stale_after`` (ADR-003 §5), scaled by the durability
 judgment.
 
@@ -37,7 +45,7 @@ import logging
 import os
 import re
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -68,6 +76,7 @@ SOURCE_DEFAULTS: dict[str, str] = {
     "local_recording": "record",
     "littlebird": "record",
     "slack": "record",
+    "gcal": "record",
     "lcars": "record",
     "ai-circle-inbox": "record",
     "ai-circle-brief": "record",
@@ -79,11 +88,17 @@ SOURCE_DEFAULTS: dict[str, str] = {
     # mixed: judged per item
     "mail": PER_ITEM,
     "email": PER_ITEM,
+    "gmail": PER_ITEM,
+    "gdrive": PER_ITEM,
     "openbrain-import": PER_ITEM,
     "document": PER_ITEM,
     "other": PER_ITEM,
 }
 UNKNOWN_SOURCE_DEFAULT = PER_ITEM
+UNKNOWN_SOURCE = "unknown"  # stored when an MCP caller names no source (ADR-007 §3)
+
+# Intake channels (ADR-007). Stamped by the transport, never client-supplied.
+MCP_CHANNEL = "mcp"
 
 _AUTOMATED_SENDERS = re.compile(
     r"dmarc|mimecastreport|no\.reply\.alerts@chase|noreply@\S*(statement|billing)",
@@ -134,6 +149,35 @@ def source_default(source: str | None) -> str:
     sources = {**SOURCE_DEFAULTS, **(lanes_config().get("sources") or {})}
     value = sources.get((source or "").lower(), UNKNOWN_SOURCE_DEFAULT)
     return value if value in ("record", "library", PER_ITEM) else UNKNOWN_SOURCE_DEFAULT
+
+
+def mcp_trusted_sources() -> frozenset[str]:
+    """lanes.yaml ``mcp_trusted_sources``: record-default sources an MCP caller
+    may assert without judgment (ADR-007 §2). Empty by default."""
+    raw = lanes_config().get("mcp_trusted_sources") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        logger.warning("[LANES] mcp_trusted_sources must be a list; ignoring")
+        return frozenset()
+    return frozenset(str(s).strip().lower() for s in raw if str(s).strip())
+
+
+def effective_default(source: str | None, channel: str | None = None) -> str:
+    """The source default once the intake channel is known (ADR-007 §2).
+
+    On the MCP channel the source is the agent's claim, so a record-default
+    source is judged per item unless it is listed in ``mcp_trusted_sources``.
+    Other channels (REST, connectors, migrations) keep the source default.
+    """
+    default = source_default(source)
+    if (
+        channel == MCP_CHANNEL
+        and default == "record"
+        and (source or "").lower() not in mcp_trusted_sources()
+    ):
+        return PER_ITEM
+    return default
 
 
 def owner_name() -> str:
@@ -232,9 +276,10 @@ def mail_sender(content: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def drop_rule(content: str, source: str | None) -> str | None:
-    """Reason to drop outright, or None. Never fires for record-default sources."""
-    if source_default(source) == "record":
+def drop_rule(content: str, source: str | None, channel: str | None = None) -> str | None:
+    """Reason to drop outright, or None. Never fires for record-default sources
+    (as admitted on ``channel`` — see ``effective_default``)."""
+    if effective_default(source, channel) == "record":
         return None
     sender = mail_sender(content)
     extra = lanes_config().get("drop_senders") or []
@@ -261,6 +306,7 @@ class LaneDecision:
     p_junk: float | None = None
     durable: float | None = None
     stale_after: str | None = None
+    channel: str | None = None  # intake channel (ADR-007), stamped by the transport
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -340,13 +386,35 @@ async def admit(
     *,
     source_id: str | None = None,
     summary: str | None = None,
+    channel: str | None = None,
     client: Any = None,
     now: datetime | None = None,
 ) -> LaneDecision:
-    """Decide lane or drop for one item. Never raises."""
-    default = source_default(source)
+    """Decide lane or drop for one item. Never raises.
+
+    ``channel`` is the intake transport (ADR-007) — set by the server-side
+    handler, never taken from client input. It is recorded on the decision.
+    """
+    decision = await _admit(
+        content, source, source_id=source_id, summary=summary,
+        channel=channel, client=client, now=now,
+    )
+    return replace(decision, channel=channel) if channel else decision
+
+
+async def _admit(
+    content: str,
+    source: str | None,
+    *,
+    source_id: str | None = None,
+    summary: str | None = None,
+    channel: str | None = None,
+    client: Any = None,
+    now: datetime | None = None,
+) -> LaneDecision:
+    default = effective_default(source, channel)
     try:
-        rule = drop_rule(content, source)
+        rule = drop_rule(content, source, channel)
         if rule:
             return LaneDecision(lane="library", drop=True, reason=f"rule: {rule}", source_default=default)
 
