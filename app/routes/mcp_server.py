@@ -461,9 +461,12 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             content = args.get("content")
             if not isinstance(content, str) or not content.strip():
                 return _error("Invalid 'content': expected a non-empty string")
+            source = args.get("source")
+            if source is not None and not isinstance(source, str):
+                return _error("Invalid 'source': expected a string")
             result = await capture_thought(
                 content,
-                source=args.get("source"),
+                source=source,
                 source_id=args.get("source_id"),
                 tags=args.get("tags"),
                 source_date=args.get("source_date"),
