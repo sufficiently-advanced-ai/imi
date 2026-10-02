@@ -35,8 +35,16 @@ curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies
    policy and `authority="evidence"` for context — and treat them differently. Policy hits
    from `judge_recall` carry a `required_behavior` (allow/block/revise/escalate): honor it.
 3. **Always pass a stable `source_id` when ingesting.** It's the idempotency key; without it,
-   retries create duplicates.
-4. **Mutations are heavyweight.** `graph_*` write tools touch three stores (Neo4j + markdown
+   retries create duplicates. Use `<connector>:<native id>` (Gmail message id, Drive file id +
+   revision, Slack channel + ts) so overlapping re-runs are free.
+4. **Say where content came from; don't try to pick its lane.** Set `source` to the connector
+   (`gmail`, `gdrive`, `gcal`, `slack`, `web`, `rss`, or `manual` for something the user
+   typed). There is no `manual` default any more: an omitted source is `unknown`, and over
+   MCP the server judges record vs library itself — even for record-default sources, unless
+   the operator trusts them in `config/lanes.yaml` (ADR-007). Take `source_date` /
+   `start_time` from the content (sent, published, meeting start), never the fetch time
+   (ADR-004).
+5. **Mutations are heavyweight.** `graph_*` write tools touch three stores (Neo4j + markdown
    file + git commit). Prefer `graph_merge_nodes` over delete+create; use `preview` on merges
    where offered; never bulk-mutate without checking counts first.
 

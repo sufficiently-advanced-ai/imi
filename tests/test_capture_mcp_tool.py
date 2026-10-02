@@ -74,6 +74,7 @@ async def test_capture_thought_delegates_to_capture_service():
             "Remember: prefer bun over npm.",
             source="manual",
             tags=["tooling"],
+            channel="mcp",
         )
 
     assert result["success"] is True
@@ -92,7 +93,7 @@ async def test_capture_thought_returns_error_shape_on_failure():
     ):
         from app.services.chat_tools import capture_thought
 
-        result = await capture_thought("A thought.")
+        result = await capture_thought("A thought.", channel="mcp")
     assert result["success"] is False
     assert "store exploded" in result["error"]
 

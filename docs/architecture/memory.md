@@ -39,6 +39,18 @@ the `ADMIT` phase. Records without a stored lane (written before lanes existed) 
 file stays: decay is not deletion). `scripts/stamp_lanes.py` backfills lanes from
 `scripts/classify_memories.py` verdicts.
 
+**Intake channel** ([ADR-007](../adr/ADR-007-agent-mediated-intake.md)). Content arriving
+over MCP (`capture_thought`, `add_call_transcript`) names its `source` itself — the
+connector it came from (`gmail`, `gdrive`, `gcal`, `slack`, `web`, `rss`, `manual`) — so
+the MCP handler stamps `channel: mcp` (never read from tool arguments, and not the
+client-settable `actor`). On that channel a record-default source is judged per item
+unless `config/lanes.yaml` lists it under `mcp_trusted_sources` (default empty), and a
+`capture_thought` without a `source` is stored as `unknown` (per item). Captures persist
+`channel` on the record; ingest carries it on `IngestRequest._channel` (a private attribute
+no request body can set) into the admission decision. REST intake is unchanged. Judgment
+needs a decision model (`lane_admission` routed in `config/inference.yaml`); **without
+one, per-item still falls back to `record`**, so MCP intake behaves exactly as before.
+
 ## Recall
 
 `recall(RecallRequest)` (`app/services/memory_recall.py`) is the single unified recall
