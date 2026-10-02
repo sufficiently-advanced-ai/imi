@@ -66,7 +66,9 @@ class RecallRequest(BaseModel):
     record_kinds: list[str] | None = None
     # ADR-003: default recall is the record lane. Library results, when
     # requested, are ranked separately and returned under "background".
-    lanes: list[Lane] = Field(default_factory=lambda: ["record"])
+    # ADR-006 §7: a deployment changes the default with recall.default_lanes
+    # in config/lanes.yaml; an explicit ``lanes`` always wins.
+    lanes: list[Lane] = Field(default_factory=lambda: _default_lanes())
     limit: int = Field(10, ge=1, le=100)
     recency_weight: float = Field(0.0, ge=0.0, le=1.0)
     half_life_days: float = 90
@@ -184,6 +186,24 @@ def _metadata_filter(kinds: list[str], lane: str):
     return mf.eq("lane", lane)
 
 
+def _default_lanes() -> list[str]:
+    from app.services.lane_admission import recall_default_lanes
+
+    return recall_default_lanes()
+
+
+def _decay_enabled() -> bool:
+    """lanes.yaml ``library.decay.enabled``. Off, a stamped ``stale_after`` is
+    ignored rather than rewritten — decay is never deletion (ADR-003 §5), so
+    turning it back on restores the same horizons."""
+    try:
+        from app.services.lane_admission import library_decay_enabled
+
+        return library_decay_enabled()
+    except Exception:
+        return True
+
+
 def _is_stale(stale_after: str | None) -> bool:
     if not stale_after:
         return False
@@ -263,6 +283,7 @@ async def recall(
             "warnings": ["vector stack unavailable"],
         }
     resolvers = resolvers or default_resolvers()
+    decay = _decay_enabled()
 
     embedding = embedder.generate_embeddings(request.query, data_type="text")
     if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
@@ -311,7 +332,7 @@ async def recall(
             hydrated["confidence"] = getattr(record, "confidence", None)
             if hydrated["lane"] != lane:
                 continue  # vector metadata is stale; the record is authoritative
-            if lane == "library" and _is_stale(hydrated.get("stale_after")):
+            if lane == "library" and decay and _is_stale(hydrated.get("stale_after")):
                 continue  # ADR-003 §5: decayed library is out of recall, not deleted
             if not _passes_governance(
                 hydrated, request.authority, request.include_rejected
