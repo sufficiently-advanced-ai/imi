@@ -1,0 +1,67 @@
+# Inbound recipe: engagement documents and meeting transcripts from Google Drive -> imi
+# (ADR-007 intake contract). Reads only the client/engagement folders you name.
+id: gdrive
+connector: gdrive
+title: Engagement documents and meeting transcripts from Google Drive
+needs: [claude_connectors, scheduled_tasks]
+schedule: "30 6 * * 1-5"           # each weekday morning, after the calendar recipe
+tiers: [local, relayed]
+window: "files modified in the last 3 days inside the named client folders"
+query: Google Docs and PDFs under the client folders listed for this recipe
+writes:
+  - tool: capture_thought
+    when: documents — SOWs, proposals, change requests, specs, status reports
+    source: gdrive
+    source_id: "gdrive:{file_id}:{revision_id}"
+    event_time:
+      field: source_date
+      from: >-
+        the date the document states (effective date, signature date, report date); if it
+        states none, the revision's modifiedTime — never the time this task ran
+  - tool: add_call_transcript
+    when: meeting transcripts — Meet transcripts, recorder exports saved to Drive
+    source: gdrive
+    source_id: "gdrive:{file_id}:{revision_id}"
+    event_time:
+      field: start_time
+      from: >-
+        the meeting start written in the transcript header, or the start of the matching
+        calendar event — never the file's creation time or the time this task ran
+prompt: |
+  You are filing engagement documents and meeting transcripts from Google Drive into imi,
+  my knowledge base. Use the Google Drive connector to read (and Google Calendar only to
+  look up meeting times) and the imi MCP server to write. Do not edit, move, share or
+  delete anything.
+
+  1. In these client folders:
+       CLIENT_FOLDERS: <fill in when you schedule this — Drive folder names or ids>
+     (if none are listed, say so and stop), find Google Docs and PDFs modified in the last
+     3 days. Skip spreadsheets,
+     images, drafts whose title starts with "DRAFT" and anything over ~150 KB of text.
+  2. For each file, read its text and the current revision id, then decide what it is.
+
+     A meeting transcript (speaker turns, a meeting header, "Transcript" in the title):
+       Call add_call_transcript with:
+         transcript   = the full text, keeping "[mm:ss] Speaker:" markers if present
+         start_time   = the meeting start from the transcript header, or from the matching
+                        calendar event, in ISO-8601 UTC — never the file's creation time
+         participants = the attendee names (required)
+         title        = the meeting title
+         source       = "gdrive" — if the tool's `source` parameter does not list "gdrive"
+                        yet (servers without ADR-007), leave `source` out; the source_id
+                        below still records the connector
+         source_id    = "gdrive:" + file id + ":" + revision id
+
+     Any other document (SOW, proposal, change request, spec, status report):
+       Call capture_thought with:
+         content     = "Document: <title>" on the first line, then the text
+         source      = "gdrive"
+         source_id   = "gdrive:" + file id + ":" + revision id
+         source_date = the date the document states (effective, signature or report
+                       date) in ISO-8601 UTC; if it states none, the revision's
+                       modifiedTime — never the time you fetched it
+
+     A new revision of a file is a new source_id on purpose: imi keeps both, dated by
+     what each revision says. Re-reading an unchanged revision is deduplicated (deduped=true).
+  3. Finish with one line: files seen, transcripts ingested, documents captured,
+     deduplicated, skipped (and why).

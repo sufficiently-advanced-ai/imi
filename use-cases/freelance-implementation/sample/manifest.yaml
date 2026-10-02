@@ -1,0 +1,52 @@
+# Synthetic sample corpus for the proof ingest (ADR-005). Every person, company and
+# address here is fictional; the `.example` domains are reserved and never resolve.
+#
+# Ingested through POST /api/ingest by scripts/check_pack_proof.py (and by the
+# imi-onboarding skill). Fields map one-to-one onto IngestRequest:
+#   source     REST ContentSource value (email | document | local_recording | ...)
+#   source_id  stable idempotency key, sample:<pack>:<doc>
+#   timestamp  when it happened, taken from the document itself (ADR-004)
+documents:
+  - file: 01-email-kickoff-logistics.md
+    title: "Order data migration — kickoff logistics"
+    source: email
+    source_id: sample:freelance-implementation:01-email-kickoff-logistics
+    timestamp: "2026-03-02T15:10:00+00:00"
+  - file: 02-sow-brightwater-order-migration.md
+    title: "Statement of Work — Brightwater Outfitters Order Data Migration"
+    source: document
+    source_id: sample:freelance-implementation:02-sow-brightwater-order-migration
+    timestamp: "2026-03-04T17:00:00+00:00"
+  - file: 03-transcript-kickoff.md
+    title: "Brightwater Outfitters — Order Data Migration kickoff"
+    source: local_recording
+    source_id: sample:freelance-implementation:03-transcript-kickoff
+    timestamp: "2026-03-06T18:00:00+00:00"
+    participants: [Riley Okafor, Maya Lindqvist, Tomás Reyes, Priya Nandakumar]
+  - file: 04-email-vpn-delay.md
+    title: "VPN access for the migration — delayed"
+    source: email
+    source_id: sample:freelance-implementation:04-email-vpn-delay
+    timestamp: "2026-03-11T16:45:00+00:00"
+  - file: 05-transcript-weekly-checkin.md
+    title: "Brightwater Outfitters — weekly check-in"
+    source: local_recording
+    source_id: sample:freelance-implementation:05-transcript-weekly-checkin
+    timestamp: "2026-03-20T17:00:00+00:00"
+    participants: [Riley Okafor, Maya Lindqvist, Tomás Reyes, Priya Nandakumar]
+  - file: 06-email-change-request.md
+    title: "Change request CR-01 — returns data in revenue reporting"
+    source: email
+    source_id: sample:freelance-implementation:06-email-change-request
+    timestamp: "2026-03-23T14:30:00+00:00"
+  - file: 07-email-cr-approved.md
+    title: "Re: Change request CR-01 — returns data in revenue reporting"
+    source: email
+    source_id: sample:freelance-implementation:07-email-cr-approved
+    timestamp: "2026-03-25T09:05:00+00:00"
+  - file: 08-transcript-kestrel-discovery.md
+    title: "Kestrel Dental Group — discovery call"
+    source: local_recording
+    source_id: sample:freelance-implementation:08-transcript-kestrel-discovery
+    timestamp: "2026-03-27T17:00:00+00:00"
+    participants: [Riley Okafor, Hana Sato, Leo Brandt]

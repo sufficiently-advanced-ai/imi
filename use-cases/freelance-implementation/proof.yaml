@@ -1,0 +1,61 @@
+# Questions the sample corpus must answer (ADR-005 §2), scored by
+# scripts/check_pack_proof.py. Each fact passes when ANY listed alternative appears in
+# the answer (case- and punctuation-insensitive, whole words). A question passes when at
+# least `min_facts` of its facts match (default: all). The proof passes when the share of
+# passing questions reaches `min_pass_rate`.
+#
+# Runs with every optional feature off: no decision-model endpoint, Local MCP tier, stock
+# ACTIVE_DOMAIN=freelance_implementation. Questions are asked through ask_kb.
+pack: freelance-implementation
+min_pass_rate: 0.75
+questions:
+  - id: sow-fixed-fee
+    ask: "What is the total fixed fee in the Brightwater Outfitters statement of work?"
+    facts:
+      - any: ["48,000", "48000", "48k", "48 000", "forty-eight thousand"]
+
+  - id: cutover-date-and-reason
+    ask: "What is the current production cutover date for the Brightwater order data migration, and why did it change?"
+    facts:
+      - any: ["April 28", "28 April", "2026-04-28", "Apr 28"]
+      - any: ["VPN", "security review", "access"]
+
+  - id: change-approver
+    ask: "Who has to approve change requests on the Brightwater engagement, and how?"
+    facts:
+      - any: ["Maya", "Lindqvist"]
+      - any: ["writing", "written", "email"]
+
+  - id: cr-01
+    ask: "What was change request CR-01 for, what does it cost, and was it approved?"
+    facts:
+      - any: ["returns", "net revenue", "refunds"]
+      - any: ["3,500", "3500", "3.5k"]
+      - any: ["approved", "approval granted", "accepted"]
+    min_facts: 2
+
+  - id: it-lead-dependency
+    ask: "Who is the IT lead at Brightwater Outfitters, and what dependency did they own?"
+    facts:
+      - any: ["Tomás Reyes", "Tomas Reyes", "Tomás", "Tomas"]
+      - any: ["VPN", "read-only", "database login", "OrderDesk login"]
+
+  - id: out-of-scope
+    ask: "What is explicitly out of scope in the Brightwater statement of work?"
+    facts:
+      - any: ["returns portal", "returns"]
+      - any: ["storefront", "ongoing data engineering", "after hypercare"]
+    min_facts: 1
+
+  - id: kestrel-commitment
+    ask: "What did Riley Okafor promise to send Kestrel Dental Group, and by when?"
+    facts:
+      - any: ["proposal"]
+      - any: ["April 3", "3 April", "2026-04-03", "Apr 3"]
+
+  - id: target-system
+    ask: "Which database is the Brightwater warehouse being built on, and where will it run?"
+    facts:
+      - any: ["PostgreSQL", "Postgres"]
+      - any: ["existing cloud account", "their cloud account", "Brightwater's cloud", "cloud account"]
+    min_facts: 1
