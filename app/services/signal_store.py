@@ -63,6 +63,14 @@ def remap_entity_refs(
         if sig.client_id and sig.client_id in id_map:
             sig.client_id = id_map[sig.client_id]
             changed = True
+        # ADR-006 §5: a claim's resolved attribution follows merges too.
+        attributed = (sig.metadata or {}).get("attributed_to_ids")
+        if isinstance(attributed, list) and any(a in id_map for a in attributed):
+            sig.metadata = {
+                **sig.metadata,
+                "attributed_to_ids": list(dict.fromkeys(id_map.get(a, a) for a in attributed)),
+            }
+            changed = True
     return changed
 
 
