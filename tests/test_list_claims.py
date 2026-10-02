@@ -220,10 +220,21 @@ async def test_claims_query_uses_typed_parameters():
     assert params["claim_edges"] == ["MENTIONS", "ATTRIBUTED_TO"]
     for key in ("start", "end", "now"):
         assert isinstance(params[key], datetime) and params[key].tzinfo is not None
-    assert params["include_stale"] is False and params["max_results"] == 10
+    # One row beyond max_results is fetched to detect truncation.
+    assert params["include_stale"] is False and params["max_results"] == 11
     assert "s.signal_type = 'claim'" in query
     assert "ORDER BY occurred_at ASC" in query
     assert "s.stale_after > $now" in query
+
+
+@pytest.mark.asyncio
+async def test_claims_truncated_only_when_more_rows_exist():
+    exact = await TemporalQueryService(_Neo4j(ROWS)).claims("technology-dac", max_results=2, now=NOW)
+    assert exact["count"] == 2 and exact["truncated"] is False
+
+    over = await TemporalQueryService(_Neo4j(ROWS)).claims("technology-dac", max_results=1, now=NOW)
+    assert over["count"] == 1 and over["truncated"] is True
+    assert [c["id"] for c in over["claims"]] == ["c1"]
 
 
 @pytest.mark.asyncio

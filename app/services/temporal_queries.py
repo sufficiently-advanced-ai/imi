@@ -590,11 +590,12 @@ class TemporalQueryService:
                 "end": to_utc(end),
                 "include_stale": bool(include_stale or not decay_enabled),
                 "now": now,
-                "max_results": int(max_results),
+                "max_results": int(max_results) + 1,  # one extra row detects truncation
             },
         )
+        truncated = len(rows) > int(max_results)
         claims = []
-        for r in rows:
+        for r in rows[: int(max_results)]:
             stale_after = r.get("stale_after")
             successors = [sid for sid in r.get("successors") or [] if sid]
             claims.append(
@@ -634,7 +635,7 @@ class TemporalQueryService:
             },
             "claims": claims,
             "count": len(claims),
-            "truncated": len(claims) >= int(max_results),
+            "truncated": truncated,
         }
 
     # ------------------------------------------------------------------
