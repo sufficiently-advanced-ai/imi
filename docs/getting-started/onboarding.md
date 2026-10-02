@@ -120,8 +120,13 @@ Any MCP client (Claude Code, Claude Desktop, Cursor) can now call
 `search_knowledge_graph`, `memory_recall`, `add_call_transcript`, and ~30 other tools —
 catalog in [MCP & API](../architecture/mcp-and-api.md).
 
+Streamable HTTP clients can use `http://localhost:8080/api/mcp/http` instead
+(`{ "type": "http", ... }`); both transports serve the same tools.
+
 > **Security note:** the MCP endpoint has no auth in the community edition. Ports bind to
 > loopback by default; keep it that way or put a proxy in front before exposing anything.
+> Reaching imi from cloud sessions or other machines on a private network:
+> [MCP access tiers](../mcp_access_tiers.md).
 
 ## Step 6 — Wire up real inputs
 

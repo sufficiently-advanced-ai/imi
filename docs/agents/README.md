@@ -11,8 +11,9 @@ into them for depth. Everything here is verifiable — run the checks, don't ass
 
 Two surfaces, use both:
 
-- **MCP** (preferred for knowledge operations): SSE endpoint at
-  `http://<host>:8080/api/mcp/sse`. Config snippet in `.mcp.json.example`. ~30 tools —
+- **MCP** (preferred for knowledge operations): Streamable HTTP at
+  `http://<host>:8080/api/mcp/http`, or SSE at `http://<host>:8080/api/mcp/sse`; no auth —
+  see [MCP access tiers](../mcp_access_tiers.md). Config snippet in `.mcp.json.example`. ~30 tools —
   catalog in [MCP & API](../architecture/mcp-and-api.md).
 - **REST** (for operations MCP doesn't cover: health, admin, job status): base
   `http://<host>:8080`. No auth in community mode (`AUTH_MODE=none`).
