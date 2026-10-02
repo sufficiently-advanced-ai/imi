@@ -276,7 +276,16 @@ class Settings(JSONConfigSettings):
     MCP_ALLOWED_HOSTS: str = Field(
         "",
         env="MCP_ALLOWED_HOSTS",
-        description="Comma-separated Host header allowlist for the MCP SSE endpoint",
+        description="Comma-separated Host header allowlist for the MCP endpoints (SSE + Streamable HTTP)",
+    )
+    # ADR-008 remote tier. Unset = remote tier off. When set (e.g.
+    # http://imi.example.ts.net:8080/api/mcp/http), its host[:port] joins the
+    # allowlist and startup logs that MCP is reachable without authentication.
+    # Community edition has no MCP auth: keep this on a private network.
+    MCP_PUBLIC_URL: str = Field(
+        "",
+        env="MCP_PUBLIC_URL",
+        description="URL remote MCP clients use (remote tier); unset keeps MCP local-only",
     )
 
     # Demo Mode Settings (Epic #783)

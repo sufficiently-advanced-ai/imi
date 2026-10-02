@@ -95,7 +95,9 @@ Setup walkthrough — repo creation, token scopes, webhook wiring, migration war
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP collector (4318; gRPC 4317 unsupported) |
 | `OTEL_ENABLED` | `true` | master telemetry switch |
 | `CLIENT_NAME` | `unknown` | label on LLM/document/entity metrics |
-| `MCP_ALLOWED_HOSTS` | — | extra Host-header allowlist entries for the MCP SSE endpoint |
+| `MCP_ALLOWED_HOSTS` | — | extra Host-header allowlist entries for the MCP endpoints (SSE + Streamable HTTP) |
+| `MCP_PUBLIC_URL` | — | remote MCP tier: the URL clients use; its host joins the allowlist; logs an "unauthenticated" warning ([MCP access tiers](../mcp_access_tiers.md)) |
+| `BIND_ADDRESS` | `127.0.0.1` | compose-only: interface the app port binds to; a private-network IP for the remote tier, never public |
 | `DEMO_MODE` | `false` | demo-data routes |
 | `ENCRYPTION_KEY` | — | AES key for sensitive data |
 
