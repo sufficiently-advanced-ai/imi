@@ -59,7 +59,7 @@ against).
 | `get_constitution` | The full decision "constitution" rendered as markdown |
 | `update_signal` | Update signal fields **or** run a governance transition (`review_action`) — the only governance entry point |
 | `delete_signal` | Permanently remove a signal (JSON + git + Neo4j) |
-| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed) |
+| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed). `source` is the connector it came from; omitted = `unknown`, judged per item; the handler stamps `channel: mcp` (ADR-007) |
 | `memory_writeback` | Batch write typed operational memories after a task (idempotent, safety-gated) |
 | `memory_recall` | Unified governed recall across signals + captures + agent memories |
 | `record_memory_usage` | Close the recall feedback loop (which memories were used/ignored) |

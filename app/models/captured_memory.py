@@ -80,6 +80,11 @@ class CapturedMemory(BaseModel):
         description="Library decay horizon (ISO); a stale library record is "
         "excluded from recall until a record cites it (ADR-003 §5)",
     )
+    channel: str | None = Field(
+        None,
+        description="Intake channel (ADR-007), e.g. 'mcp'. Stamped by the transport "
+        "that received the capture; never accepted from clients",
+    )
     tenant_id: str | None = Field(None)
     created_at: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat(),

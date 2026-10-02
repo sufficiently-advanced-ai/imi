@@ -389,19 +389,28 @@ async def search_signals_semantic(
 
 async def capture_thought(
     content: str,
-    source: str = "manual",
+    source: str | None = None,
     source_id: str | None = None,
     tags: list[str] | None = None,
     source_date: str | None = None,
+    *,
+    channel: str,
 ) -> dict[str, Any]:
     """Capture a thought into the general memory layer (G4 wiring).
 
     Thin delegate to capture_service.capture_and_persist — persist-first, then
     enrichment/indexing/git best-effort. Governance fields are server-injected
     (ADR-002): captures enter as imported, evidence-grade memory.
+
+    ``source`` is the connector the content came from (ADR-007); omitted, it
+    is stored as ``unknown`` and judged per item. ``channel`` is the intake
+    transport, passed by the server-side handler and never forwarded from
+    tool arguments.
     """
     from app.services import capture_service
+    from app.services.lane_admission import UNKNOWN_SOURCE
 
+    source = (source or "").strip().lower() or UNKNOWN_SOURCE
     return await capture_service.capture_and_persist(
         content,
         source=source,
@@ -409,6 +418,7 @@ async def capture_thought(
         tags=tags,
         source_date=source_date,
         actor="mcp",
+        channel=channel,
     )
 
 
@@ -1655,6 +1665,8 @@ async def add_call_transcript(
     conversation_id: str | None = None,
     source_id: str | None = None,
     wait_timeout_seconds: int = 30,
+    *,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """Ingest a call transcript and run the full enrichment pipeline on it.
 
@@ -1684,6 +1696,9 @@ async def add_call_transcript(
             the same call; passed through as metadata for future reconciliation.
         source_id: Optional external ID for idempotency (exact-dup suppression).
         wait_timeout_seconds: Max seconds to block (default 30, clamped 1..60).
+        channel: Intake transport (ADR-007), set by the server-side handler and
+            never taken from tool arguments. On "mcp" the recorder source is
+            judged per item at admission unless lanes.yaml trusts it.
 
     Returns:
         On completion: dict with status="completed", bot_id, content_type, and
@@ -1751,6 +1766,7 @@ async def add_call_transcript(
         timestamp=parsed_start,
         metadata=metadata or None,
     )
+    request._channel = channel  # private attr: never settable from a body
 
     outcome = await submit_and_wait(request, timeout_s=timeout_s)
     state = outcome.get("state")

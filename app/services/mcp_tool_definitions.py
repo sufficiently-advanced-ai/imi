@@ -300,7 +300,17 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "they only become instruction-grade after human review (ADR-002); "
             "provenance and authority are server-injected and never parameters. "
             "Use add_call_transcript for meeting transcripts — this tool is for "
-            "everything else (quick notes, web content, decisions worth remembering)."
+            "everything else (quick notes, web content, decisions worth remembering).\n\n"
+            "Intake contract (ADR-007) when relaying content from a connector:\n"
+            "  - source: the connector the content came from — gmail, gdrive, gcal, "
+            "slack, web, rss, or manual (typed by the user). Omit it if unsure; an "
+            "omitted source is treated as unknown and the server judges the lane. "
+            "The server decides record vs library; a source never forces it.\n"
+            "  - source_id: '<connector>:<native id>' (Gmail message id, Drive file id + "
+            "revision, Slack channel + ts), so re-runs over an overlapping window "
+            "dedup instead of duplicating.\n"
+            "  - source_date: when the content was sent/published/happened, taken from "
+            "the content — never the time you fetched it."
         ),
         "inputSchema": {
             "type": "object",
@@ -312,14 +322,16 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "source": {
                     "type": "string",
                     "description": (
-                        "Capture source: manual (default), web, mail, or rss"
+                        "Connector the content came from: gmail, gdrive, gcal, slack, "
+                        "web, rss, or manual. Optional — omitted means unknown, and "
+                        "the server judges the lane"
                     ),
-                    "default": "manual",
                 },
                 "source_id": {
                     "type": "string",
                     "description": (
-                        "External id (URL, message id) for idempotent re-capture"
+                        "Stable id for idempotent re-capture: '<connector>:<native id>' "
+                        "(e.g. 'gmail:<message id>'), or the URL for web content"
                     ),
                 },
                 "tags": {
@@ -329,7 +341,10 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "source_date": {
                     "type": "string",
-                    "description": "Original publish/sent date (ISO), if known",
+                    "description": (
+                        "Original publish/sent date (ISO) from the content itself — "
+                        "never the fetch time"
+                    ),
                 },
             },
             "required": ["content"],
@@ -771,8 +786,13 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "Blocks until enrichment finishes (usually a few seconds) and returns a "
             "summary (bot_id + extracted signal/entity counts). If it exceeds "
             "wait_timeout_seconds it returns {status:'processing', job_id, poll_url} "
-            "instead — poll that job, then use list_meetings / get_meeting_transcript. "
-            "Pass source_id (a stable external ID) to make re-ingestion idempotent."
+            "instead — poll that job, then use list_meetings / get_meeting_transcript.\n\n"
+            "Intake contract (ADR-007): source names the recorder that produced the "
+            "transcript; source_id is '<connector>:<native id>' (e.g. 'fireflies:<id>', "
+            "'gdrive:<file id>:<revision>') so re-runs dedup; start_time comes from the "
+            "meeting itself, never the time you fetched it. The server decides the "
+            "lane — over MCP a transcript is judged like any other item unless the "
+            "operator trusts its source."
         ),
         "inputSchema": {
             "type": "object",
@@ -783,7 +803,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "start_time": {
                     "type": "string",
-                    "description": "REQUIRED. ISO 8601 timestamp when the call started (e.g. '2026-06-04T14:30:00Z').",
+                    "description": "REQUIRED. ISO 8601 timestamp when the call started (e.g. '2026-06-04T14:30:00Z'), from the meeting itself — never the fetch time.",
                 },
                 "participants": {
                     "type": "array",
@@ -817,7 +837,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "source_id": {
                     "type": "string",
-                    "description": "Optional external ID for idempotency — re-ingesting the same source_id is suppressed as a duplicate.",
+                    "description": "Stable external ID, '<connector>:<native id>', for idempotency — re-ingesting the same source_id is suppressed as a duplicate.",
                 },
                 "wait_timeout_seconds": {
                     "type": "integer",

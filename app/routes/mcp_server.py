@@ -556,16 +556,21 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
         elif name == "capture_thought":
             from app.services.chat_tools import capture_thought
+            from app.services.lane_admission import MCP_CHANNEL
 
             content = args.get("content")
             if not isinstance(content, str) or not content.strip():
                 return _error("Invalid 'content': expected a non-empty string")
+            source = args.get("source")
+            if source is not None and not isinstance(source, str):
+                return _error("Invalid 'source': expected a string")
             result = await capture_thought(
                 content,
-                source=args.get("source", "manual"),
+                source=source,
                 source_id=args.get("source_id"),
                 tags=args.get("tags"),
                 source_date=args.get("source_date"),
+                channel=MCP_CHANNEL,  # ADR-007: stamped here, never from args
             )
             return _text(result)
 
@@ -829,6 +834,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
         elif name == "add_call_transcript":
             from app.services.chat_tools import add_call_transcript
+            from app.services.lane_admission import MCP_CHANNEL
 
             result = await add_call_transcript(
                 transcript=args["transcript"],
@@ -840,6 +846,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 conversation_id=args.get("conversation_id"),
                 source_id=args.get("source_id"),
                 wait_timeout_seconds=args.get("wait_timeout_seconds", 30),
+                channel=MCP_CHANNEL,  # ADR-007: stamped here, never from args
             )
             if "error" in result:
                 return _error(result["error"])
