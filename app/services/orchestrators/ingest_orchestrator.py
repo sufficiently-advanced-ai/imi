@@ -572,6 +572,7 @@ class IngestOrchestrator(BaseOrchestrator):
             source,
             source_id=getattr(request, "source_id", None),
             summary=request.title,
+            channel=getattr(request, "_channel", None),  # ADR-007; server-set only
         )
         logger.info(
             "[INGEST] Admission: source=%s lane=%s drop=%s (%s)",

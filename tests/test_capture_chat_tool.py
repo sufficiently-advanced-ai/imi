@@ -49,3 +49,20 @@ async def test_capture_thought_tool_error_shape():
     ):
         result = await _call_tool(capture_thought_tool, {"content": "x"})
     assert result.get("isError") or "boom" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_capture_thought_tool_stamps_channel_and_drops_client_channel():
+    """ADR-007: the channel is stamped by the surface, never taken from args."""
+    with patch(
+        "app.services.chat_tools.capture_thought",
+        new_callable=AsyncMock,
+        return_value={"success": True, "id": "cap-1"},
+    ) as mock_fn:
+        await _call_tool(
+            capture_thought_tool, {"content": "x", "channel": "rest", "lane": "record"}
+        )
+    kwargs = mock_fn.await_args.kwargs
+    assert kwargs["channel"] == "mcp"
+    assert kwargs["source"] is None
+    assert "lane" not in kwargs

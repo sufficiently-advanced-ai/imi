@@ -6,6 +6,10 @@
 #   per_item  — mixed; the decision model (op `lane_admission`) judges each item
 # Unknown sources are per_item. With the model off or failing, per_item falls
 # back to record (the pre-lanes behaviour).
+#
+# Built-in connector names for agent intake (ADR-007): gmail and gdrive are
+# per_item, gcal and slack are record, web and rss are library. mail / email
+# stay per_item alongside gmail.
 
 # Whose knowledge base this is — used in the model's lane questions.
 # Defaults to the KB_OWNER_NAME setting.
@@ -16,6 +20,20 @@ sources:
   ai-circle-inbox: record
   mail: per_item
   web: library
+
+# Agent-mediated intake (ADR-007). Content that arrives over MCP
+# (capture_thought, add_call_transcript) names its source itself, so on that
+# channel a record-default source is judged per item instead of trusted —
+# unless it is listed here. Default: empty (nothing trusted).
+#
+# A judged first-party note still lands in record (the model files it as
+# memory); what this list changes is that an agent can't *assert* record.
+# Only takes effect with a judge configured: with `lane_admission` off in
+# config/inference.yaml, per_item falls back to record anyway.
+#
+# A single-user instance where "remember this" is always first-party might use:
+# mcp_trusted_sources: [manual]
+mcp_trusted_sources: []
 
 # Extra senders to drop at admission (substring match on the From: line),
 # on top of the built-in automated-mail rule (DMARC reports, statements).

@@ -596,8 +596,18 @@ async def capture_thought_tool(args: dict[str, Any]) -> dict[str, Any]:
     await _emit_tool_start(tool_name, args)
     try:
         from app.services.chat_tools import capture_thought
+        from app.services.lane_admission import MCP_CHANNEL
 
-        result = await capture_thought(**args)
+        # Named args only: channel is stamped here (ADR-007), so a tool
+        # argument can never set it.
+        result = await capture_thought(
+            args["content"],
+            source=args.get("source"),
+            source_id=args.get("source_id"),
+            tags=args.get("tags"),
+            source_date=args.get("source_date"),
+            channel=MCP_CHANNEL,
+        )
         duration = time.time() - start
         if result.get("success"):
             summary = (

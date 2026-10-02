@@ -52,8 +52,13 @@ Three supported access tiers, documented as such in every pack guide:
   | `MCP_PUBLIC_URL` | unset → remote tier off | the URL clients use; `http://` is accepted (a tailnet is already encrypted) with a startup warning that imi has no auth |
 
   Nothing beyond loopback answers until the operator sets all three.
+
+  *Amendment (2026-10-02, implementation):* for backward compatibility, a non-loopback
+  `MCP_ALLOWED_HOSTS` without `MCP_PUBLIC_URL` keeps working (deployments that predate this
+  ADR) and logs a startup warning recommending `MCP_PUBLIC_URL`; `MCP_PUBLIC_URL` declares
+  the tier and adds its host to the allowlist, but is not a gate.
 - Pack guides document this as "how I run it", not a hardened recipe: the reader owns the
-  exposure.
+  exposure. Operator guide: [`docs/mcp_access_tiers.md`](../mcp_access_tiers.md).
 
 ### Hosted edition
 

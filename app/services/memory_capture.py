@@ -120,11 +120,13 @@ def capture_memory(
     source_date: str | None = None,
     lane: str = "record",
     stale_after: str | None = None,
+    channel: str | None = None,
 ) -> CapturedMemory:
     """Build a CapturedMemory (imported, evidence-grade) with its fingerprint.
 
-    ``lane`` / ``stale_after`` come from server-side admission (ADR-003),
-    never from client input."""
+    ``lane`` / ``stale_after`` come from server-side admission (ADR-003) and
+    ``channel`` from the receiving transport (ADR-007), never from client
+    input."""
     return CapturedMemory(
         content=content,
         source=source,
@@ -137,6 +139,7 @@ def capture_memory(
         provenance_status="imported",
         lane=lane,
         stale_after=stale_after,
+        channel=channel,
     )
 
 
@@ -279,6 +282,7 @@ class CaptureStore:
         source_date: str | None = None,
         lane: str = "record",
         stale_after: str | None = None,
+        channel: str | None = None,
     ) -> CaptureResult:
         """Capture content, returning the existing record if it is a duplicate."""
         fingerprint = content_fingerprint(content)
@@ -297,6 +301,7 @@ class CaptureStore:
                 source_date=source_date,
                 lane=lane,
                 stale_after=stale_after,
+                channel=channel,
             )
             self._save(memory)
         return CaptureResult(deduped=False, memory=memory)
