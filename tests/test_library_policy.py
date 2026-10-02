@@ -42,6 +42,25 @@ def use(monkeypatch, tmp_path):
     return write
 
 
+@pytest.fixture
+def warned(monkeypatch):
+    """Warnings lane_admission logged, captured on its own logger so other
+    tests' global logging configuration cannot hide them."""
+    lines: list[str] = []
+
+    class _Recorder:
+        def warning(self, msg, *args, **kw):
+            lines.append(msg % args if args else msg)
+
+        def info(self, *a, **kw):
+            pass
+
+        debug = info
+
+    monkeypatch.setattr(la, "logger", _Recorder())
+    return lines
+
+
 def _days(stale_after: str) -> int:
     return (datetime.fromisoformat(stale_after) - NOW).days
 
@@ -142,7 +161,7 @@ def test_create_types_are_ignored_in_link_only_mode(use):
         "library:\n  infer_relationships: maybe\n",
     ],
 )
-def test_bad_library_values_fall_back_to_defaults(use, caplog, text):
+def test_bad_library_values_fall_back_to_defaults(use, warned, text):
     use(text)
     policy = la.library_policy()
     assert policy.decay_enabled is True
@@ -150,19 +169,19 @@ def test_bad_library_values_fall_back_to_defaults(use, caplog, text):
     assert policy.entity_mode == "link_only"
     assert policy.infer_relationships is False
     assert _days(la.library_stale_after(None, NOW)) == 180
-    assert "lanes.yaml" in caplog.text
+    assert any("lanes.yaml" in w for w in warned)
 
 
-def test_unknown_mode_with_create_types_still_creates_nothing(use, caplog):
+def test_unknown_mode_with_create_types_still_creates_nothing(use, warned):
     use("library:\n  entities:\n    mode: allow_list\n    create_types: [organization]\n")
     assert la.library_create_types(DOMAIN) == frozenset()
-    assert "library.entities.mode" in caplog.text
+    assert any("library.entities.mode" in w for w in warned)
 
 
-def test_create_types_outside_the_domain_are_dropped_with_a_warning(use, caplog):
+def test_create_types_outside_the_domain_are_dropped_with_a_warning(use, warned):
     use("library:\n  entities:\n    mode: allowlist\n    create_types: [organization, spaceship]\n")
     assert la.library_create_types(DOMAIN) == {"organization"}
-    assert "spaceship" in caplog.text
+    assert any("spaceship" in w for w in warned)
 
 
 def test_create_types_without_a_readable_domain_create_nothing(use):
@@ -179,10 +198,11 @@ def test_create_types_without_a_readable_domain_create_nothing(use):
         "recall: [record]\n",
     ],
 )
-def test_bad_recall_default_lanes_fall_back_to_record(use, caplog, text):
+def test_bad_recall_default_lanes_fall_back_to_record(use, warned, text):
     use(text)
     assert la.recall_default_lanes() == ["record"]
     assert RecallRequest(query="q").lanes == ["record"]
+    assert any("recall.default_lanes" in w for w in warned)
 
 
 def test_unreadable_yaml_never_breaks_intake(use):
