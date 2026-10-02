@@ -389,19 +389,28 @@ async def search_signals_semantic(
 
 async def capture_thought(
     content: str,
-    source: str = "manual",
+    source: str | None = None,
     source_id: str | None = None,
     tags: list[str] | None = None,
     source_date: str | None = None,
+    *,
+    channel: str,
 ) -> dict[str, Any]:
     """Capture a thought into the general memory layer (G4 wiring).
 
     Thin delegate to capture_service.capture_and_persist — persist-first, then
     enrichment/indexing/git best-effort. Governance fields are server-injected
     (ADR-002): captures enter as imported, evidence-grade memory.
+
+    ``source`` is the connector the content came from (ADR-007); omitted, it
+    is stored as ``unknown`` and judged per item. ``channel`` is the intake
+    transport, passed by the server-side handler and never forwarded from
+    tool arguments.
     """
     from app.services import capture_service
+    from app.services.lane_admission import UNKNOWN_SOURCE
 
+    source = (source or "").strip().lower() or UNKNOWN_SOURCE
     return await capture_service.capture_and_persist(
         content,
         source=source,
@@ -409,6 +418,7 @@ async def capture_thought(
         tags=tags,
         source_date=source_date,
         actor="mcp",
+        channel=channel,
     )
 
 
@@ -1655,6 +1665,8 @@ async def add_call_transcript(
     conversation_id: str | None = None,
     source_id: str | None = None,
     wait_timeout_seconds: int = 30,
+    *,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """Ingest a call transcript and run the full enrichment pipeline on it.
 
@@ -1684,6 +1696,9 @@ async def add_call_transcript(
             the same call; passed through as metadata for future reconciliation.
         source_id: Optional external ID for idempotency (exact-dup suppression).
         wait_timeout_seconds: Max seconds to block (default 30, clamped 1..60).
+        channel: Intake transport (ADR-007), set by the server-side handler and
+            never taken from tool arguments. On "mcp" the recorder source is
+            judged per item at admission unless lanes.yaml trusts it.
 
     Returns:
         On completion: dict with status="completed", bot_id, content_type, and
@@ -1751,6 +1766,7 @@ async def add_call_transcript(
         timestamp=parsed_start,
         metadata=metadata or None,
     )
+    request._channel = channel  # private attr: never settable from a body
 
     outcome = await submit_and_wait(request, timeout_s=timeout_s)
     state = outcome.get("state")
@@ -2351,6 +2367,59 @@ async def get_entity_provenance(
         return _serialize_for_json(result)
     except Exception as e:
         logger.error(f"Error in get_entity_provenance: {e}")
+        return {"error": str(e)}
+
+
+LIST_CLAIMS_MAX_RESULTS = 200
+
+
+def _window_end(value: str) -> datetime:
+    """Exclusive upper bound for an inclusive ``date_to``: the day after a
+    bare date, the instant itself (plus a microsecond) for a timestamp."""
+    from datetime import timedelta
+
+    parsed = _parse_iso_timestamp(value)
+    bare_date = len(value.strip()) == 10
+    return parsed + (timedelta(days=1) if bare_date else timedelta(microseconds=1))
+
+
+async def list_claims(
+    entity_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    max_results: int = 50,
+    include_stale: bool = False,
+) -> dict[str, Any]:
+    """ADR-006 §6: library claims about an entity, in the order they were
+    made, with attribution and supersession. Reads the graph, not recall."""
+    svc = _get_temporal_query_service()
+    if not svc:
+        return {"error": _NO_GRAPH}
+    try:
+        from app.services.lane_admission import library_decay_enabled
+
+        start = _parse_iso_timestamp(date_from) if date_from else None
+        end = _window_end(date_to) if date_to else None
+        if start and end and end <= start:
+            return {"error": "date_to must not be before date_from"}
+        limit = max(1, min(int(max_results or 50), LIST_CLAIMS_MAX_RESULTS))
+        result = await svc.claims(
+            entity_id,
+            start,
+            end,
+            include_stale=bool(include_stale),
+            decay_enabled=library_decay_enabled(),
+            max_results=limit,
+        )
+        if result is None:
+            return {"error": f"Entity '{entity_id}' not found"}
+        result.update({"date_from": date_from, "date_to": date_to, "include_stale": bool(include_stale)})
+        logger.info(f"[LIST_CLAIMS] {result['count']} claims for {entity_id}")
+        return _serialize_for_json(result)
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"Error in list_claims: {e}")
         return {"error": str(e)}
 
 

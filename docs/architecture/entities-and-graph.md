@@ -110,6 +110,7 @@ startup and is idempotent.
 | `MENTIONED_IN` | Entity→Document | provenance |
 | `CO_OCCURRENCE` | Entity–Entity | entities sharing a document; a current-state cache, never read by point-in-time queries |
 | `MENTIONS` / `ASSIGNED_TO` / `FOR_CLIENT` | Signal→Entity | signal attribution, ownership, client scoping |
+| `ATTRIBUTED_TO` | Signal→Entity | library claim → the person/organization it is attributed to (ADR-006 §5), from the signal file's `metadata.attributed_to_ids` |
 | `SUPERSEDES` / `CONFLICTS_WITH` | Signal→Signal | decision lineage (see [Signals & Governance](signals-and-governance.md)) |
 
 ### Time belongs to evidence

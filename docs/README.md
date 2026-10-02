@@ -12,7 +12,8 @@ AI agents. Every architecture doc cites `file:line` so claims are verifiable aga
 2. [Configuration](getting-started/configuration.md) — every knob, and which of the four config systems owns it
 3. [Git corpus](getting-started/git-corpus.md) — optional: back the corpus with a GitHub repo (do this before the corpus grows)
 4. [Day-to-day usage](getting-started/daily-usage.md) — the feed → review → query loop, and light maintenance
-5. [Domain Schemas](customization/domain-schemas.md) — fit the system to your business
+5. [MCP access tiers](mcp_access_tiers.md) — connect MCP clients locally, via a desktop relay, or remotely over a private network (unauthenticated — read the warning)
+6. [Domain Schemas](customization/domain-schemas.md) — fit the system to your business
 
 **"I want to understand how it works"** (developer, evaluator)
 1. [System Overview](architecture/overview.md) — the five-minute mental model + code map
@@ -43,6 +44,7 @@ the docs. After editing a source: `node scripts/export_diagrams.mjs`.
 - [`adr/`](adr/) — Architecture Decision Records. [ADR-002](adr/ADR-002-evidence-instruction-authority-gate.md) (evidence/instruction authority gate) is load-bearing across the whole memory system
 - [`prd/`](prd/) — product requirement docs for the memory-governance and decision-state systems
 - [`mcp_tool_conventions.md`](mcp_tool_conventions.md) — the contract for adding/consuming MCP tools
+- [`mcp_access_tiers.md`](mcp_access_tiers.md) — MCP transports (SSE + Streamable HTTP) and the Local / Relayed / Remote access tiers ([ADR-008](adr/ADR-008-remote-mcp-access.md))
 - [`world-model-concept.md`](world-model-concept.md) — the concept behind the graph
 
 ## Accuracy notes

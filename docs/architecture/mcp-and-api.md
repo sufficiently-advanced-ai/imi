@@ -11,9 +11,12 @@ against).
 
 ## MCP server
 
-- Implementation: `app/routes/mcp_server.py` — an MCP `Server("kb-graph")` over SSE transport,
-  mounted at `/api/mcp` (`app/main.py:218-220`).
-- Connect: `GET /api/mcp/sse` (stream) + `POST /api/mcp/messages/`. Copy `.mcp.json.example`
+- Implementation: `app/routes/mcp_server.py` — one MCP `Server("kb-graph")` served over two
+  transports, mounted at `/api/mcp` by `mount_mcp()` (called from `_configure()` in
+  `app/main.py`), which also wires the Streamable HTTP session manager into the app lifespan.
+- Connect: **Streamable HTTP** at `/api/mcp/http` (GET/POST/DELETE), or legacy **SSE** at
+  `GET /api/mcp/sse` (stream) + `POST /api/mcp/messages/`. Access tiers (local / relayed /
+  remote) are in [MCP access tiers](../mcp_access_tiers.md). Copy `.mcp.json.example`
   to `.mcp.json`:
 
 ```json
@@ -56,7 +59,7 @@ against).
 | `get_constitution` | The full decision "constitution" rendered as markdown |
 | `update_signal` | Update signal fields **or** run a governance transition (`review_action`) — the only governance entry point |
 | `delete_signal` | Permanently remove a signal (JSON + git + Neo4j) |
-| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed) |
+| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed). `source` is the connector it came from; omitted = `unknown`, judged per item; the handler stamps `channel: mcp` (ADR-007) |
 | `memory_writeback` | Batch write typed operational memories after a task (idempotent, safety-gated) |
 | `memory_recall` | Unified governed recall across signals + captures + agent memories |
 | `record_memory_usage` | Close the recall feedback loop (which memories were used/ignored) |
@@ -88,6 +91,7 @@ place
 | `find_changes` | What was learned between two dates, plus `recorded_late` (material about an earlier time added during the window) |
 | `get_graph_at_time` | The entities and relationships around an entity as known at a past time |
 | `get_entity_provenance` | Every source that mentions an entity, in event order, with `recorded_at` and `time_source` |
+| `list_claims` | Library claims about (or attributed to) an entity, oldest first, within an optional `date_from`/`date_to` window: attribution (resolved entities + source text), `as_of`, supersession, decay state; `include_stale` to see decayed claims ([ADR-006](../adr/ADR-006-library-primary-deployments.md) §6) |
 
 Full parameter schemas: `app/services/mcp_tool_definitions.py`.
 
@@ -142,8 +146,10 @@ top of imi.
 Health, auth, docs, static, and the GitHub webhook are on a public allowlist
 (`auth.py:172-190`). The **MCP endpoint has no bearer auth in community edition** — access
 control is network-level (bind to loopback / nginx allowlist) plus a DNS-rebinding Host-header
-allowlist seeded from `MCP_ALLOWED_HOSTS` (`mcp_server.py:34-80`). Do not expose port 8080 to
-untrusted networks without a proxy in front.
+allowlist seeded from `MCP_ALLOWED_HOSTS` and the host of `MCP_PUBLIC_URL`
+(`_build_allowed_hosts()` in `mcp_server.py`), shared by both transports. Do not expose port
+8080 to untrusted networks without a proxy in front; see
+[MCP access tiers](../mcp_access_tiers.md) (ADR-008).
 
 The hosted edition layers SSO/multi-tenant auth on the `create_app(extra_routers=...)` seam
 (`app/main.py:1116`) and the tenant-context middleware.
@@ -157,3 +163,4 @@ The hosted edition layers SSO/multi-tenant auth on the `create_app(extra_routers
 | Build a policy-aware agent | Use `POST /api/judge/recall` → act → `POST /api/judge/decisions`; see `app/services/judge_service.py` |
 | Add an in-process agent | Subclass `AgentBase` (`app/agents/base.py`); register with `AgentRegistry` |
 | Restrict MCP access | Set `MCP_ALLOWED_HOSTS`; keep 8080 behind nginx/Tailscale |
+| Reach MCP from other machines on a private network | Set `MCP_PUBLIC_URL` (+ `MCP_ALLOWED_HOSTS`, `BIND_ADDRESS`); see [MCP access tiers](../mcp_access_tiers.md) |

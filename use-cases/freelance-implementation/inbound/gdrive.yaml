@@ -47,9 +47,8 @@ prompt: |
                         calendar event, in ISO-8601 UTC — never the file's creation time
          participants = the attendee names (required)
          title        = the meeting title
-         source       = "gdrive" — if the tool's `source` parameter does not list "gdrive"
-                        yet (servers without ADR-007), leave `source` out; the source_id
-                        below still records the connector
+         source       = leave it out: add_call_transcript's `source` lists recorders only,
+                        not connectors; the source_id below records that it came from Drive
          source_id    = "gdrive:" + file id + ":" + revision id
 
      Any other document (SOW, proposal, change request, spec, status report):

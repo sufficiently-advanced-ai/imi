@@ -300,7 +300,17 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "they only become instruction-grade after human review (ADR-002); "
             "provenance and authority are server-injected and never parameters. "
             "Use add_call_transcript for meeting transcripts — this tool is for "
-            "everything else (quick notes, web content, decisions worth remembering)."
+            "everything else (quick notes, web content, decisions worth remembering).\n\n"
+            "Intake contract (ADR-007) when relaying content from a connector:\n"
+            "  - source: the connector the content came from — gmail, gdrive, gcal, "
+            "slack, web, rss, or manual (typed by the user). Omit it if unsure; an "
+            "omitted source is treated as unknown and the server judges the lane. "
+            "The server decides record vs library; a source never forces it.\n"
+            "  - source_id: '<connector>:<native id>' (Gmail message id, Drive file id + "
+            "revision, Slack channel + ts), so re-runs over an overlapping window "
+            "dedup instead of duplicating.\n"
+            "  - source_date: when the content was sent/published/happened, taken from "
+            "the content — never the time you fetched it."
         ),
         "inputSchema": {
             "type": "object",
@@ -312,14 +322,16 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "source": {
                     "type": "string",
                     "description": (
-                        "Capture source: manual (default), web, mail, or rss"
+                        "Connector the content came from: gmail, gdrive, gcal, slack, "
+                        "web, rss, or manual. Optional — omitted means unknown, and "
+                        "the server judges the lane"
                     ),
-                    "default": "manual",
                 },
                 "source_id": {
                     "type": "string",
                     "description": (
-                        "External id (URL, message id) for idempotent re-capture"
+                        "Stable id for idempotent re-capture: '<connector>:<native id>' "
+                        "(e.g. 'gmail:<message id>'), or the URL for web content"
                     ),
                 },
                 "tags": {
@@ -329,7 +341,10 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "source_date": {
                     "type": "string",
-                    "description": "Original publish/sent date (ISO), if known",
+                    "description": (
+                        "Original publish/sent date (ISO) from the content itself — "
+                        "never the fetch time"
+                    ),
                 },
             },
             "required": ["content"],
@@ -431,7 +446,8 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "report which memories you actually used via record_memory_usage. "
             "Use search_signals_semantic for signals-only search; this tool is the "
             "cross-kind recall surface. By default only the record lane (what we "
-            "were party to: meetings, business mail, own notes) is searched; pass "
+            "were party to: meetings, business mail, own notes) is searched, unless "
+            "this deployment configures other default lanes; pass "
             'lanes=["record", "library"] to also get third-party watched content '
             "(articles, newsletters, videos), ranked separately under background."
         ),
@@ -462,10 +478,11 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "lanes": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["record", "library"]},
-                    "default": ["record"],
                     "description": (
                         "record = we were party to it; library = third-party content "
-                        "we watch. Library hits are returned under background."
+                        "we watch. Library hits are returned under background. "
+                        'Default: the deployment\'s configured lanes (["record"] '
+                        "unless configured)."
                     ),
                 },
                 "limit": {"type": "integer", "default": 10},
@@ -771,8 +788,13 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "Blocks until enrichment finishes (usually a few seconds) and returns a "
             "summary (bot_id + extracted signal/entity counts). If it exceeds "
             "wait_timeout_seconds it returns {status:'processing', job_id, poll_url} "
-            "instead — poll that job, then use list_meetings / get_meeting_transcript. "
-            "Pass source_id (a stable external ID) to make re-ingestion idempotent."
+            "instead — poll that job, then use list_meetings / get_meeting_transcript.\n\n"
+            "Intake contract (ADR-007): source names the recorder that produced the "
+            "transcript; source_id is '<connector>:<native id>' (e.g. 'fireflies:<id>', "
+            "'gdrive:<file id>:<revision>') so re-runs dedup; start_time comes from the "
+            "meeting itself, never the time you fetched it. The server decides the "
+            "lane — over MCP a transcript is judged like any other item unless the "
+            "operator trusts its source."
         ),
         "inputSchema": {
             "type": "object",
@@ -783,7 +805,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "start_time": {
                     "type": "string",
-                    "description": "REQUIRED. ISO 8601 timestamp when the call started (e.g. '2026-06-04T14:30:00Z').",
+                    "description": "REQUIRED. ISO 8601 timestamp when the call started (e.g. '2026-06-04T14:30:00Z'), from the meeting itself — never the fetch time.",
                 },
                 "participants": {
                     "type": "array",
@@ -817,7 +839,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "source_id": {
                     "type": "string",
-                    "description": "Optional external ID for idempotency — re-ingesting the same source_id is suppressed as a duplicate.",
+                    "description": "Stable external ID, '<connector>:<native id>', for idempotency — re-ingesting the same source_id is suppressed as a duplicate.",
                 },
                 "wait_timeout_seconds": {
                     "type": "integer",
@@ -1067,6 +1089,52 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "entity_id": {
                     "type": "string",
                     "description": "Entity slug ID (e.g. 'person-alice') or exact name",
+                },
+            },
+            "required": ["entity_id"],
+        },
+    },
+    # --- Claims timeline (ADR-006 §6) ---
+    "list_claims": {
+        "name": "list_claims",
+        "description": (
+            "List the claims third-party sources (articles, reports, newsletters, feeds) made "
+            "about one entity, oldest first, so you can see how a position changed over time "
+            "and who said what first. Each claim gives what was claimed, when it was made "
+            "(as_of), who it is attributed to (resolved people/organizations plus the source "
+            "text), whether a later claim superseded it, and whether it is stale (past this "
+            "deployment's decay horizon). Also lists claims attributed to the entity when it "
+            "is a source. Exact and complete within the window — not a similarity search; use "
+            "memory_recall for fuzzy questions, get_entity_provenance for every source that "
+            "mentions an entity."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity slug ID (e.g. 'technology-direct-air-capture') or exact name",
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Only claims made on or after this date (YYYY-MM-DD or ISO-8601)",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Only claims made on or before this date (inclusive; YYYY-MM-DD or ISO-8601)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum claims to return (default 50, maximum 200)",
+                    "default": 50,
+                },
+                "include_stale": {
+                    "type": "boolean",
+                    "description": (
+                        "Also return claims past their decay horizon (default false). "
+                        "Stale claims are hidden, never deleted."
+                    ),
+                    "default": False,
                 },
             },
             "required": ["entity_id"],

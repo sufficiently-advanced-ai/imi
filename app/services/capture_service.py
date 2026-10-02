@@ -12,7 +12,11 @@ point, routing through the shared audited state machine.
 
 Lane admission (ADR-003) runs after dedup and before persist: it assigns the
 lane (record / library) or drops the item into the admission log. It never
-raises, and record-default sources (manual thoughts) are never dropped.
+raises, and record-default sources (manual thoughts) are never dropped —
+except that on the MCP channel (ADR-007) a record-default source is judged
+per item unless ``lanes.yaml`` trusts it. ``channel`` is passed by the
+transport-side caller, never taken from the client, and persisted on the
+capture.
 """
 
 from __future__ import annotations
@@ -77,6 +81,7 @@ async def capture_and_persist(
     tags: list[str] | None = None,
     source_date: str | None = None,
     actor: str | None = None,
+    channel: str | None = None,
     claude_client=None,
     store: CaptureStore | None = None,
     repo_root: Path = REPO_ROOT,
@@ -103,7 +108,8 @@ async def capture_and_persist(
                 content = raw_content  # so store.capture dedups onto it
         if existing is None:
             decision = await admit(
-                content, source, source_id=source_id, client=decision_client
+                content, source, source_id=source_id, channel=channel,
+                client=decision_client,
             )
             if decision.drop:
                 return await _record_drop(decision, content, source, source_id, repo_root)
@@ -120,6 +126,7 @@ async def capture_and_persist(
             source_date=source_date,
             lane=lane,
             stale_after=stale_after,
+            channel=channel,
         )
         memory = result.memory
         if result.deduped:
@@ -169,7 +176,9 @@ async def capture_and_persist(
             action="capture",
             actor=actor,
             tenant_id=memory.tenant_id,
-            reasoning=f"captured from source={source}; lane={memory.lane} ({decision.reason if decision else 'deduped'})",
+            reasoning=f"captured from source={source}"
+            + (f" via {channel}" if channel else "")
+            + f"; lane={memory.lane} ({decision.reason if decision else 'deduped'})",
             before={},
             after=_governance_snapshot(memory),
         )

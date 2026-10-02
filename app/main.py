@@ -220,9 +220,10 @@ def _configure(app: "FastAPI") -> None:
     app.add_event_handler("startup", startup_event)
     app.add_event_handler("shutdown", shutdown_event)
 
-    # Mount MCP server for Claude Code graph access (SSE transport)
-    from .routes.mcp_server import starlette_app as mcp_app
-    app.mount("/api/mcp", mcp_app)
+    # Mount MCP server (SSE + Streamable HTTP, ADR-008); also wires the
+    # Streamable HTTP session manager into the app lifespan.
+    from .routes.mcp_server import mount_mcp
+    mount_mcp(app, "/api/mcp")
 
     # Mount static files for the Next.js UI at the root path
     # With output: 'export', Next.js builds to the 'out' directory

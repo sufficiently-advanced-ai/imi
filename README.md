@@ -148,7 +148,10 @@ equivalent to Claude Desktop / Cursor):
 Your agent can now call `ask_kb`, `search_knowledge_graph`, `memory_recall`,
 `add_call_transcript`, and ~30 other tools — catalog in
 [MCP & API](docs/architecture/mcp-and-api.md), agent etiquette in the
-[agent operating guide](docs/agents/README.md).
+[agent operating guide](docs/agents/README.md). Newer clients can use the Streamable HTTP
+endpoint (`/api/mcp/http`) instead of SSE; to reach imi from other machines on a private
+network, see [MCP access tiers](docs/mcp_access_tiers.md) — the MCP server has no
+authentication.
 
 **Wire up real inputs:**
 

@@ -36,7 +36,10 @@ services:
         - NEXT_PUBLIC_API_URL=/api
         - NEXT_PUBLIC_AUTH_MODE=none
     ports:
-      - "127.0.0.1:${PORT:-8080}:8080"
+      # Loopback only by default. Remote MCP tier (docs/mcp_access_tiers.md):
+      # set BIND_ADDRESS to a private-network interface (VPN/tailnet IP) —
+      # imi has no MCP authentication, never bind a public interface.
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -80,6 +83,10 @@ services:
       # when no decisions endpoint is configured.
       - DIGITALOCEAN_MODEL_ACCESS_KEY=${DIGITALOCEAN_MODEL_ACCESS_KEY:-}
       - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+
+      # MCP access tiers (docs/mcp_access_tiers.md). Empty = local tier only.
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
 
       # Optional observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}

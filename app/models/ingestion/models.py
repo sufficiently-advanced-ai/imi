@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class ContentSource(str, Enum):
@@ -55,6 +55,10 @@ class IngestRequest(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Passthrough metadata"
     )
+    # Intake channel (ADR-007), e.g. "mcp". A private attribute so it can never
+    # be populated from a request body: only server-side code sets it, after
+    # construction (``request._channel = ...``). Admission reads it.
+    _channel: str | None = PrivateAttr(default=None)
 
 
 class IngestResponse(BaseModel):

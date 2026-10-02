@@ -596,8 +596,18 @@ async def capture_thought_tool(args: dict[str, Any]) -> dict[str, Any]:
     await _emit_tool_start(tool_name, args)
     try:
         from app.services.chat_tools import capture_thought
+        from app.services.lane_admission import MCP_CHANNEL
 
-        result = await capture_thought(**args)
+        # Named args only: channel is stamped here (ADR-007), so a tool
+        # argument can never set it.
+        result = await capture_thought(
+            args["content"],
+            source=args.get("source"),
+            source_id=args.get("source_id"),
+            tags=args.get("tags"),
+            source_date=args.get("source_date"),
+            channel=MCP_CHANNEL,
+        )
         duration = time.time() - start
         if result.get("success"):
             summary = (
@@ -1175,6 +1185,27 @@ async def temporal_blast_radius_tool(args: dict[str, Any]) -> dict[str, Any]:
         return _err(str(e))
 
 
+@tool(*chat_tool_args("list_claims"))
+async def list_claims_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR-006 §6: claims timeline for an entity."""
+    start = time.time()
+    tool_name = "list_claims"
+    await _emit_tool_start(tool_name, args)
+    try:
+        from app.services.chat_tools import list_claims
+
+        result = await list_claims(**args)
+        duration = time.time() - start
+        if result.get("error"):
+            await _emit_tool_error(tool_name, duration, result["error"])
+            return _err(result["error"])
+        await _emit_tool_complete(tool_name, duration, f"Found {result.get('count', 0)} claims")
+        return _ok(json.dumps(result, default=str))
+    except Exception as e:
+        await _emit_tool_error(tool_name, time.time() - start, str(e))
+        return _err(str(e))
+
+
 _TEMPORAL_TOOLS = [
     entity_at_time_tool,
     active_relationships_at_time_tool,
@@ -1183,6 +1214,7 @@ _TEMPORAL_TOOLS = [
     graph_as_of_tool,
     find_contradictions_tool,
     temporal_blast_radius_tool,
+    list_claims_tool,
 ]
 
 
@@ -1569,4 +1601,5 @@ __all__ = [
     "graph_as_of_tool",
     "find_contradictions_tool",
     "temporal_blast_radius_tool",
+    "list_claims_tool",
 ]
