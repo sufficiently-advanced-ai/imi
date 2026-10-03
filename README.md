@@ -33,9 +33,9 @@ knowledge graph, and serves the result to humans (web UI) and AI agents (MCP) in
   your knowledge base.
 - **Domain-agnostic** — one YAML schema defines your entity types, extraction steering, and UI
   labels. Six ready-made domains ship in `config/domains/`; write your own to fit your business.
-- **Use-case packs** — a whole setup for one kind of work (schema, lanes, inbound recipes,
-  skills, a sample corpus with proof questions) in [`use-cases/`](use-cases/), installable by
-  Claude in one sentence ([ADR-005](docs/adr/ADR-005-use-case-packs.md)).
+- **Use-case packs** — a whole setup for one kind of work in [`use-cases/`](use-cases/): a
+  domain schema and a sample corpus with proof questions, plus lanes, inbound recipes and
+  skills where the use case needs them — installable by Claude in one sentence ([ADR-005](docs/adr/ADR-005-use-case-packs.md)).
 
 ## 1 · Install
 
@@ -96,9 +96,9 @@ own, and the `domain-config-advisor` skill can draft one from a description of y
 
 **Or start from a use-case pack.** A [pack](use-cases/) answers the domain question and the
 rest of the setup for one kind of work. In a checkout, ask Claude Code *"Set up imi with the
-freelance-implementation pack"*: the `imi-onboarding` skill installs the pack's domain and
-lanes, walks you through its inbound recipes, installs its skills, ingests a sample corpus and
-checks the result. Packs work on a stock install; optional extras (a decision-model endpoint
+freelance-implementation pack"*: the `imi-onboarding` skill installs the pack's domain (and
+its lanes, inbound recipes and skills, when it has them), ingests its sample corpus and checks
+the result against the pack's proof questions. Packs work on a stock install; optional extras (a decision-model endpoint
 for lane judgment, remote MCP access) are named where they apply.
 
 **Lanes** decide whether a source is first-party *record* or watched *library*. The defaults
