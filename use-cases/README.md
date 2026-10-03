@@ -15,7 +15,7 @@ knowledge.
 | Pack | For | Status |
 |---|---|---|
 | [`freelance-implementation`](freelance-implementation/) | a solo consultant doing technical implementations on SOW-bound engagements | stable |
-| `climate-advisory` | a climate advisory firm tracking how positions shift across hundreds of sources | **planned** — blocked on [ADR-006](../docs/adr/ADR-006-library-primary-deployments.md) (library-primary lane policy) |
+| `climate-advisory` | a climate advisory firm tracking how positions shift across hundreds of sources | **planned** — its platform support, [ADR-006](../docs/adr/ADR-006-library-primary-deployments.md) library-primary lane policy, has shipped; the pack itself is not written yet |
 
 ## Using a pack
 
