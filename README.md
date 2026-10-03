@@ -5,10 +5,15 @@
 [![Tests](https://github.com/sufficiently-advanced-ai/imi/actions/workflows/tests.yml/badge.svg)](https://github.com/sufficiently-advanced-ai/imi/actions/workflows/tests.yml)
 [![Smoke Test](https://github.com/sufficiently-advanced-ai/imi/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/sufficiently-advanced-ai/imi/actions/workflows/smoke-test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/website-sufficiently--advanced.ai%2Fimi-4ade80)](https://sufficiently-advanced.ai/imi/)
 
 imi is a self-hosted knowledge engine. Feed it documents, call transcripts, and commits — it
 classifies them with Claude, extracts entities, decisions, and action items into a Neo4j
 knowledge graph, and serves the result to humans (web UI) and AI agents (MCP) in real time.
+
+Project page: **[sufficiently-advanced.ai/imi](https://sufficiently-advanced.ai/imi/)**. imi is
+built by [Sufficiently Advanced AI](https://sufficiently-advanced.ai), which also runs a hosted
+edition with live meeting capture.
 
 ![System overview](docs/diagrams/system-overview.svg)
 
