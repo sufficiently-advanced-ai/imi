@@ -23,10 +23,19 @@ knowledge graph, and serves the result to humans (web UI) and AI agents (MCP) in
 - **Governed memory** — observations are promoted into typed signals with a trust/authority
   axis and a full audit trail. Agents write evidence; only humans grant instruction grade
   ([ADR-002](docs/adr/ADR-002-evidence-instruction-authority-gate.md)).
-- **MCP server** — ~30 tools over the Model Context Protocol, so Claude Code, Claude Desktop,
-  Cursor, or any MCP client can search, recall, and write back to your knowledge base.
+- **Record vs library lanes** — what you were party to (meetings, your notes) is kept apart from
+  what you watch (newsletters, feeds, the web): watched sources become attributed, dated claims
+  instead of your decisions. Per-deployment policy lives in `config/lanes.yaml`
+  ([ADR-003](docs/adr/ADR-003-record-and-library-lanes.md),
+  [ADR-006](docs/adr/ADR-006-library-primary-deployments.md)).
+- **MCP server** — 35+ tools over the Model Context Protocol (SSE and Streamable HTTP), so
+  Claude Code, Claude Desktop, Cursor, or any MCP client can search, recall, and write back to
+  your knowledge base.
 - **Domain-agnostic** — one YAML schema defines your entity types, extraction steering, and UI
   labels. Six ready-made domains ship in `config/domains/`; write your own to fit your business.
+- **Use-case packs** — a whole setup for one kind of work in [`use-cases/`](use-cases/): a
+  domain schema and a sample corpus with proof questions, plus lanes, inbound recipes and
+  skills where the use case needs them — installable by Claude in one sentence ([ADR-005](docs/adr/ADR-005-use-case-packs.md)).
 
 ## 1 · Install
 
@@ -84,6 +93,18 @@ entity types exist, what extraction looks for, and what the UI calls things:
 Pick the closest and set it in `.env` — switching later is an env change + restart. When none
 fit, the [domain schema guide](docs/customization/domain-schemas.md) walks through writing your
 own, and the `domain-config-advisor` skill can draft one from a description of your business.
+
+**Or start from a use-case pack.** A [pack](use-cases/) answers the domain question and the
+rest of the setup for one kind of work. In a checkout, ask Claude Code *"Set up imi with the
+freelance-implementation pack"*: the `imi-onboarding` skill installs the pack's domain (and
+its lanes, inbound recipes and skills, when it has them), ingests its sample corpus and checks
+the result against the pack's proof questions. Packs work on a stock install; optional extras (a decision-model endpoint
+for lane judgment, remote MCP access) are named where they apply.
+
+**Lanes** decide whether a source is first-party *record* or watched *library*. The defaults
+work without configuration; copy `config/lanes.yaml.example` to `config/lanes.yaml` to change
+which sources land where, which sources MCP agents may file as record, or to run a
+library-primary deployment (research and advisory work where watched sources are the point).
 
 Everything else — models, vector backend, auth, git corpus, telemetry — is covered in the
 [configuration reference](docs/getting-started/configuration.md). The knobs most people touch:
@@ -146,7 +167,7 @@ equivalent to Claude Desktop / Cursor):
 ```
 
 Your agent can now call `ask_kb`, `search_knowledge_graph`, `memory_recall`,
-`add_call_transcript`, and ~30 other tools — catalog in
+`add_call_transcript`, and 30+ other tools — catalog in
 [MCP & API](docs/architecture/mcp-and-api.md), agent etiquette in the
 [agent operating guide](docs/agents/README.md). Newer clients can use the Streamable HTTP
 endpoint (`/api/mcp/http`) instead of SSE; to reach imi from other machines on a private
@@ -158,6 +179,15 @@ authentication.
 - **Call recorders** — point a Zapier zap (or the recorder's webhook) at `POST /api/ingest/zapier`
 - **A git knowledge repo** — back the corpus with a GitHub repo for offsite history and human edits ([setup guide](docs/getting-started/git-corpus.md))
 - **Ad-hoc thoughts** — `POST /api/captures` or the `capture_thought` MCP tool
+- **Claude with your connectors** — a scheduled Claude task reads Gmail, Calendar, or Drive and
+  writes through `capture_thought` / `add_call_transcript`. The server, not the agent, decides
+  the lane ([ADR-007](docs/adr/ADR-007-agent-mediated-intake.md)); packs ship ready-made
+  recipes under `use-cases/<pack>/inbound/`
+
+**Turn it into work.** The consumption skills in [`skills/core/`](skills/) — `brief`,
+`constitution-review`, `what-changed`, `memory-wrap` — ship as a Claude plugin:
+`python3 scripts/build_plugin.py [--pack <pack>]`, then install it from
+`build/plugins/imi-marketplace` ([details](skills/README.md)).
 
 **Review and govern.** The Overview page surfaces what needs review; confirming a signal is
 what promotes it from *evidence* to *instruction* — the grade agents are allowed to treat as
@@ -178,6 +208,8 @@ The full suite — with reading paths for operators, developers, and AI agents �
 | Understand how the machine works | [System overview](docs/architecture/overview.md) + the [architecture docs](docs/architecture/) |
 | Customize it — config to code | [Customization map](docs/customization/README.md) |
 | Fit the schema to your business | [Domain schemas](docs/customization/domain-schemas.md) |
+| Start from a ready-made setup for your kind of work | [Use-case packs](use-cases/README.md) |
+| Reach imi from other machines or cloud sessions | [MCP access tiers](docs/mcp_access_tiers.md) |
 | Operate it as an AI agent | [Agent operating guide](docs/agents/README.md) |
 | Change the source code | [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) |
 
