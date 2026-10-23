@@ -116,7 +116,7 @@ export function IngestProgress({
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [, setDone] = useState(false);
+  const [done, setDone] = useState(false);
   // Per-phase outcomes; a "failed" outcome on a completed phase means the
   // phase degraded and the job ends completed_with_warnings.
   const [outcomes, setOutcomes] = useState<Record<string, PhaseOutcome>>({});
@@ -285,7 +285,7 @@ export function IngestProgress({
             ) : (
               <ChevronRight className="h-3.5 w-3.5" />
             )}
-            Completed with warnings ({Math.max(warnings.length, degraded.length)})
+            {done ? "Completed with warnings" : "Warnings"} ({Math.max(warnings.length, degraded.length)})
           </button>
           {showWarnings && (
             <ul className="mt-1 space-y-1 pl-5">
