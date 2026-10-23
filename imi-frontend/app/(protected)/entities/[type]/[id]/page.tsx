@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { use, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useNavigation } from '@/lib/hooks/useNavigation';
 import { EntityForm } from '@/components/entities/EntityForm';
@@ -39,10 +39,11 @@ import { useToast } from '@/components/ui/use-toast';
 import { PageContainer } from '@/components/ui/page-container';
 
 interface EditEntityPageProps {
-  params: {
+  // Next.js 15 passes route params as a Promise; unwrap with React.use().
+  params: Promise<{
     type: string;
     id: string;
-  };
+  }>;
 }
 
 /**
@@ -101,7 +102,7 @@ function EditEntitySkeleton() {
 }
 
 export default function EditEntityPage({ params }: EditEntityPageProps) {
-  const { type: entityType, id: entityId } = params;
+  const { type: entityType, id: entityId } = use(params);
   const { navigate } = useNavigation();
   const searchParams = useSearchParams();
   const { schema, loading: schemaLoading, error: schemaError, refreshSchema } = useDomainSchema();
@@ -211,9 +212,9 @@ export default function EditEntityPage({ params }: EditEntityPageProps) {
 
   const handleAddRelationship = async (relationshipType: string, targetEntityId: string) => {
     try {
-      await addRelationship(params.id, relationshipType, targetEntityId);
+      await addRelationship(entityId, relationshipType, targetEntityId);
       // Refresh entity to get updated relationships
-      const updated = await getEntity(params.id);
+      const updated = await getEntity(entityId);
       setEntity(updated);
     } catch (error) {
       console.error('Failed to add relationship:', error);
@@ -223,9 +224,9 @@ export default function EditEntityPage({ params }: EditEntityPageProps) {
 
   const handleRemoveRelationship = async (relationshipType: string, targetEntityId: string) => {
     try {
-      await removeRelationship(params.id, relationshipType, targetEntityId);
+      await removeRelationship(entityId, relationshipType, targetEntityId);
       // Refresh entity to get updated relationships
-      const updated = await getEntity(params.id);
+      const updated = await getEntity(entityId);
       setEntity(updated);
     } catch (error) {
       console.error('Failed to remove relationship:', error);

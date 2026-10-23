@@ -6,11 +6,11 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { use, useState } from 'react';
 import { useNavigation } from '@/lib/hooks/useNavigation';
 import { EntityForm } from '@/components/entities/EntityForm';
 import { useDomainSchema } from '@/lib/hooks/useDomainSchema';
-import { createEntity, CreateEntityData } from '@/lib/api/entities';
+import { createEntity, CreateEntityData, UpdateEntityData } from '@/lib/api/entities';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,9 +19,10 @@ import { useToast } from '@/components/ui/use-toast';
 import { PageContainer } from '@/components/ui/page-container';
 
 interface CreateEntityPageProps {
-  params: {
+  // Next.js 15 passes route params as a Promise; unwrap with React.use().
+  params: Promise<{
     type: string;
-  };
+  }>;
 }
 
 /**
@@ -71,7 +72,7 @@ function CreateEntitySkeleton() {
 }
 
 export default function CreateEntityPage({ params }: CreateEntityPageProps) {
-  const { type: entityType } = params;
+  const { type: entityType } = use(params);
   const { navigate, back } = useNavigation();
   const { schema, loading: schemaLoading, error: schemaError, refreshSchema } = useDomainSchema();
   const { toast } = useToast();
@@ -82,12 +83,19 @@ export default function CreateEntityPage({ params }: CreateEntityPageProps) {
   // Check if entity type is valid
   const isValidEntityType = schema?.entities && entityType in schema.entities;
 
-  const handleSubmit = async (data: CreateEntityData) => {
+  const handleSubmit = async (data: CreateEntityData | UpdateEntityData) => {
     try {
       setLoading(true);
       setError(null);
 
-      const newEntity = await createEntity(data);
+      // EntityForm types its submission as a create/update union. With no
+      // `entity` prop it submits create data; entity_type comes from the route.
+      const createData: CreateEntityData = {
+        ...data,
+        entity_type: entityType,
+        attributes: data.attributes ?? {},
+      };
+      const newEntity = await createEntity(createData);
 
       toast({
         title: "Entity Created",

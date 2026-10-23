@@ -23,6 +23,7 @@ deployments extend it through documented seams.
 docker exec imi-dev pytest tests/ -q      # backend tests (needs the dev env's Neo4j)
 docker exec imi-dev ruff check app/       # lint
 cd imi-frontend && npx jest               # frontend tests
+cd imi-frontend && npm run typecheck      # frontend type check (tsc --noEmit; CI gate)
 scripts/check_evals.sh                    # extraction-quality evals — REQUIRED after
                                           # changing app/prompts/*.xml or entity_resolver.py
 scripts/smoke_test.sh                     # end-to-end smoke

@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Entity, CreateEntityData, UpdateEntityData, validateEntity, DomainSchema } from '@/lib/api/entities';
+import { Entity, CreateEntityData, UpdateEntityData, validateEntity, DomainSchema, EntityTypeSchema } from '@/lib/api/entities';
 
 export interface UseEntityFormOptions {
   domainConfig: DomainSchema | null;
@@ -46,14 +46,14 @@ export interface UseEntityFormReturn {
   
   // Computed properties
   requiredFields: string[];
-  entitySchema: any;
+  entitySchema: EntityTypeSchema | null;
 }
 
 export const useEntityForm = (options: UseEntityFormOptions): UseEntityFormReturn => {
   const { domainConfig, entityType, entity, onSubmit, onCancel } = options;
 
   // Get entity schema from domain config
-  const entitySchema = useMemo(() => {
+  const entitySchema = useMemo((): EntityTypeSchema | null => {
     return domainConfig?.entities?.[entityType] || null;
   }, [domainConfig, entityType]);
 

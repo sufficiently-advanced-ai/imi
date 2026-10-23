@@ -726,9 +726,10 @@ function EnhancedDomainGraphContent() {
           const connectedNodes = graphData.nodes.filter(node =>
             connectedNodeIds.has(node.id)
           );
-          const entityTypes = [...new Set(connectedNodes.map(node =>
-            node.entityType || node.entity_type
-          ))];
+          const entityTypes = [...new Set(connectedNodes
+            .map(node => node.entityType || node.entity_type)
+            .filter((type): type is string => Boolean(type))
+          )];
 
           setEntityTypeFilter(entityTypes);
           // Clear search to show all connected nodes
@@ -867,7 +868,7 @@ function EnhancedDomainGraphContent() {
     }
   };
 
-  const handleExport = async (format: 'png' | 'svg') => {
+  const handleExport = async (format: 'png') => {
     if (!cyRef.current) {
       console.error('Cytoscape instance not available');
       return;
@@ -895,24 +896,6 @@ function EnhancedDomainGraphContent() {
         const a = document.createElement('a');
         a.href = url;
         a.download = `graph-${currentDomain}-${new Date().toISOString().split('T')[0]}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } else if (format === 'svg') {
-        // For SVG, we need to use a different approach
-        // Create SVG data from the current graph view
-        const svgContent = cy.svg({
-          full: true,
-          scale: 1,
-          bg: exportBg
-        });
-
-        const blob = new Blob([svgContent], { type: 'image/svg+xml' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `graph-${currentDomain}-${new Date().toISOString().split('T')[0]}.svg`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

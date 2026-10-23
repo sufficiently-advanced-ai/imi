@@ -20,7 +20,6 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
-  Download,
   Layout,
   Image as ImageIcon,
   Eye,
@@ -32,7 +31,7 @@ interface GraphControlsProps {
   onZoomOut: () => void;
   onFitToScreen: () => void;
   onLayoutChange: (layout: string) => void;
-  onExport: (format: 'png' | 'svg') => void;
+  onExport: (format: 'png') => void;
   currentLayout?: string;
   /** Whether the floating overlays (toolbar/inspector/stats/etc.) are hidden. */
   overlaysHidden?: boolean;
@@ -52,7 +51,7 @@ export const GraphControls: React.FC<GraphControlsProps> = ({
 }) => {
   const [isExporting, setIsExporting] = useState(false);
 
-  const handleExport = async (format: 'png' | 'svg') => {
+  const handleExport = async (format: 'png') => {
     setIsExporting(true);
     try {
       await onExport(format);
@@ -172,24 +171,6 @@ export const GraphControls: React.FC<GraphControlsProps> = ({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Export as PNG</p>
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleExport('svg')}
-                    disabled={isExporting}
-                    className="flex-1 h-8 text-xs"
-                  >
-                    <Download className="h-4 w-4 mr-1" />
-                    SVG
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Export as SVG</p>
                 </TooltipContent>
               </Tooltip>
             </div>
