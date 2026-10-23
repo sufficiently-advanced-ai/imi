@@ -74,6 +74,31 @@ instruction grade). Each action maps to an ADR-001 gate response: `allow` / `blo
 signal. It's duck-typed, so the same audit path covers signals, captured memories, and agent
 memories.
 
+### Durability: audit first, atomic state
+
+Every signal review goes through `update_signal(review_action=…)` in
+`app/services/chat_tools.py`; the decision/supersession REST routes and the MCP tool both call
+it. (Captured-memory and agent-memory reviews use their own paths in
+`app/services/capture_service.py` and `app/services/memory_writeback.py`, which do not follow
+this ordering yet.) It writes in this order:
+
+1. Take the per-container lock (`SignalStore.container_lock`, one re-entrant
+   `threading.RLock` per meeting file) and re-read the signal from disk, so two concurrent
+   updates to signals in the same meeting file cannot overwrite each other.
+2. **Append the audit row** (`SignalAuditStore.append`: append-only, flushed and fsynced).
+   If this fails, **nothing is persisted** and the call returns `success: False`.
+3. **Persist the signal** (`SignalStore.save` → `app/utils/atomic_write.atomic_write_text`:
+   sibling temp file, fsync, `os.replace`). A crash mid-write leaves the previous file, never
+   a truncated one. If this fails, a compensating audit row with action `<action>_failed`
+   (gate `None`, `after == before`) is appended so the log records that the attempt was not
+   applied, and the call returns `success: False`.
+4. Release the lock; then the best-effort steps: git commit of the audit JSONL, Neo4j mirror.
+
+The invariant: **no persisted governance change exists without a preceding audit row.** The
+log can contain an attempt that was not applied (always followed by its `_failed` row unless
+that second append also failed, which is logged at ERROR); it can never be missing a change
+that was applied.
+
 ## How signals are born
 
 During ingestion, `SignalPromoter.promote(observation)`

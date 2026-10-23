@@ -17,13 +17,13 @@ import asyncio
 import json
 import logging
 import os
-import tempfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.git_ops import git_ops
 from app.services.decision_states import compute_decision_state
 from app.services.decision_view import load_decision_signals
+from app.utils.atomic_write import atomic_write_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.services.signal_store import SignalStore
@@ -72,23 +72,6 @@ def evaluate_states(
 # ---------------------------------------------------------------------------
 # Private I/O helpers (mirror constitution.py's atomic-write pattern)
 # ---------------------------------------------------------------------------
-
-
-def _write_atomic(final_path: str, content: str) -> None:
-    """Write *content* to *final_path* atomically via tempfile + os.replace."""
-    dir_path = os.path.dirname(final_path)
-    os.makedirs(dir_path, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        os.replace(tmp_path, final_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
 
 
 def _append_jsonl_lines(path: str, lines: list[dict]) -> None:
@@ -205,7 +188,7 @@ async def run_staleness_evaluation(
     transitions_full_path = os.path.join(_git.repo_path, TRANSITIONS_RELATIVE_PATH)
 
     if snapshot_changed:
-        await asyncio.to_thread(_write_atomic, snapshot_full_path, snapshot_content)
+        await asyncio.to_thread(atomic_write_text, snapshot_full_path, snapshot_content)
         logger.info(
             "[STALENESS] Snapshot written to %s (%d decisions)",
             snapshot_full_path,

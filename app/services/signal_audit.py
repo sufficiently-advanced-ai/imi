@@ -15,6 +15,7 @@ See docs/prd/memory-governance-and-retrieval-prd.md §10 (G2) and issue #914.
 """
 
 import logging
+import os
 from pathlib import Path
 
 from app.models.signal import Signal, SignalAuditRecord
@@ -92,6 +93,36 @@ def review_with_audit(
     return new_signal, record
 
 
+PERSIST_FAILED_SUFFIX = "_failed"
+
+
+def persist_failed_record(original: SignalAuditRecord, error: str) -> SignalAuditRecord:
+    """Compensating audit row for a transition whose state write failed.
+
+    The governance path appends the audit row *before* persisting the signal.
+    If that persist then fails, this row is appended after the original so the
+    log stays truthful: the attempt is recorded, and so is the fact that it was
+    not applied. Schema-compatible with every reader of the log: ``action`` is
+    ``<action>_failed`` (free-form string, rendered as e.g. "confirm failed"),
+    ``gate_response`` is None, and ``after`` equals ``before`` because the
+    signal state did not change.
+    """
+    return SignalAuditRecord(
+        signal_id=original.signal_id,
+        record_kind=original.record_kind,
+        action=f"{original.action}{PERSIST_FAILED_SUFFIX}",
+        gate_response=None,
+        actor=original.actor,
+        tenant_id=original.tenant_id,
+        reasoning=(
+            f"action={original.action} not applied: signal state write failed "
+            f"after audit row {original.id}; state unchanged ({error})"
+        ),
+        before=dict(original.before),
+        after=dict(original.before),
+    )
+
+
 class SignalAuditStore:
     """Append-only JSONL audit log, one file per signal id.
 
@@ -116,11 +147,18 @@ class SignalAuditStore:
         return str(self._file_path(signal_id).relative_to(self.repo_root))
 
     def append(self, record: SignalAuditRecord) -> Path:
-        """Append one audit record. Never rewrites existing rows."""
+        """Append one audit record. Never rewrites existing rows.
+
+        Flushes and fsyncs before returning, so once this returns the row is
+        durable; callers that gate a state change on the audit row (see
+        ``chat_tools.update_signal``) can rely on it surviving a crash.
+        """
         self.audit_dir.mkdir(parents=True, exist_ok=True)
         path = self._file_path(record.signal_id)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(record.model_dump_json() + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         return path
 
     def read_for_signal(self, signal_id: str) -> list[SignalAuditRecord]:
