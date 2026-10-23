@@ -136,7 +136,9 @@ export async function getKnowledgeFiles(options: GetKnowledgeFilesOptions = {}):
         total: data.total || formattedFiles.length,
         page: data.page || 0,
         limit: data.limit || limit,
-        hasNextPage: data.total ? (data.page + 1) * data.limit < data.total : false
+        hasNextPage: data.total && data.page !== undefined && data.limit !== undefined
+          ? (data.page + 1) * data.limit < data.total
+          : false
       };
     } catch (error) {
       clearTimeout(timeoutId);

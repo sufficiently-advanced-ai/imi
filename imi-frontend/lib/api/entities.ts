@@ -91,6 +91,9 @@ export interface DomainSchema {
   }>;
 }
 
+/** Schema of a single entity type within a DomainSchema. */
+export type EntityTypeSchema = DomainSchema['entities'][string];
+
 export interface ValidationResult {
   valid: boolean;
   errors: Array<{

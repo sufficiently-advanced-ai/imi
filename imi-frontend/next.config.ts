@@ -18,9 +18,6 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   // Generate unique build IDs to prevent caching issues
   generateBuildId: async () => {
     // Use timestamp to ensure unique build IDs

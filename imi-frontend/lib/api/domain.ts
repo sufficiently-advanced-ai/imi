@@ -5,6 +5,8 @@ import { getApiUrl } from '@/lib/config';
 export interface DomainGraphNode {
   id: string;
   entityType: string;
+  /** Snake-case duplicate of entityType; the backend sends both. */
+  entity_type?: string;
   attributes: Record<string, any>;
 }
 
@@ -19,11 +21,20 @@ export interface DomainGraphEdge {
 export interface DomainGraphData {
   nodes: DomainGraphNode[];
   edges: DomainGraphEdge[];
+  // Mirrors the `statistics` dict built in app/routes/domain_graph.py. The
+  // per-type breakdowns (from GraphVisualizationAdapter.get_statistics) are only
+  // present on the full-build path, not the fast path or neighborhood queries.
   statistics: {
     total_nodes: number;
     total_edges: number;
-    by_entity_type?: Record<string, number>;
-    relationships?: Record<string, number>;
+    nodes_by_type?: Record<string, number>;
+    edges_by_type?: Record<string, number>;
+    semantic_edges_count?: number;
+    domain?: string;
+    fast_path?: boolean;
+    // Neighborhood (seeded) queries:
+    seed?: string;
+    depth?: number;
     // Added with Tier 1 context-first loading:
     truncated?: boolean;
     total_available_nodes?: number;
