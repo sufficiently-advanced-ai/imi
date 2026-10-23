@@ -185,6 +185,8 @@ PUBLIC_ENDPOINTS = {
     "/_next",  # Next.js assets
     "/static",  # Static files
     "/favicon.ico",
-    # Webhook endpoints (use webhook secret validation instead of user auth)
+    # Webhook endpoints: no user auth. /api/webhook/github verifies GitHub's
+    # X-Hub-Signature-256 HMAC when a webhook secret is configured, and accepts
+    # unsigned deliveries (logging a warning) when none is.
     "/api/webhook/github",
 }
