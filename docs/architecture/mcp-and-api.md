@@ -144,7 +144,8 @@ top of imi.
 - `demo` — requires a `session` cookie set by `/auth/login`; no external IdP.
 
 Health, auth, docs, static, and the GitHub webhook are on a public allowlist
-(`auth.py:172-190`). The **MCP endpoint has no bearer auth in community edition** — access
+(`auth.py:172-192`); the webhook instead verifies GitHub's `X-Hub-Signature-256` HMAC when a
+webhook secret is configured (see [Git corpus](../getting-started/git-corpus.md)). The **MCP endpoint has no bearer auth in community edition** — access
 control is network-level (bind to loopback / nginx allowlist) plus a DNS-rebinding Host-header
 allowlist seeded from `MCP_ALLOWED_HOSTS` and the host of `MCP_PUBLIC_URL`
 (`_build_allowed_hosts()` in `mcp_server.py`), shared by both transports. Do not expose port
