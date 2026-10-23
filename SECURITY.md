@@ -19,9 +19,11 @@ imi is designed to run **private-by-default**:
 - `AUTH_MODE=none` (the default) performs **no authentication** — it is intended
   for single-user, localhost or private-network (e.g. VPN/Tailscale) deployments.
   Do not expose an `AUTH_MODE=none` instance to the public internet.
-- The GitHub webhook endpoint accepts a `WEBHOOK_SECRET` but relies on the
-  bot-commit prefix and branch rules for loop protection; treat the webhook URL
-  as sensitive.
+- The GitHub webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC when
+  `GITHUB_WEBHOOK_SECRET` (or `WEBHOOK_SECRET`) is set and rejects unsigned or
+  mis-signed deliveries with 401. With no secret it accepts unsigned deliveries
+  (logging a warning), so set the secret whenever the endpoint is reachable
+  beyond loopback.
 - API keys and tokens live only in `.env` (gitignored). Never commit them.
 
 ## Supported versions

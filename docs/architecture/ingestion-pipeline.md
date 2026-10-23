@@ -20,7 +20,7 @@ the signal/memory stores.
 | Generic ingest | `POST /api/ingest` (202) | `app/routes/ingest.py:167` | The front door. `IngestRequest`: `content` (required, ≤500 KB), `source`, `source_id`, `title`, `participants`, `timestamp`, `metadata` |
 | Job status | `GET /api/ingest/{job_id}/status`, `/jobs`, `/{job_id}/delta`, `/{job_id}/stream` (SSE) | `app/routes/ingest.py:195-262` | Live phase progress via SSE events `ingest_phase` / `ingest_complete` / `ingest_failed` |
 | Transcript drop-in | `POST /api/ingest/zapier` | `app/routes/ingest_zapier.py:52` | Adapter for call recorders (Otter, Fathom, Grain, Fireflies, Zoom). Maps `provider` → `ContentSource`, builds an `IngestRequest`, delegates to the front door |
-| GitHub webhook | `POST /api/webhook/github` | `app/routes/webhook.py:97` | Separate pipeline — see below |
+| GitHub webhook | `POST /api/webhook/github` | `app/routes/webhook.py:174` | Separate pipeline — see below; HMAC-verified when a webhook secret is set |
 | File upload | `POST /upload` | `app/routes/upload.py:26` | Multipart, `.md`/`.txt` only, ≤25 KB. Separate inline pipeline |
 | Thought capture | `POST /api/captures` | `app/routes/captures.py` | Free-form notes straight into the memory layer (also exposed as the `capture_thought` MCP tool) |
 | MCP tool | `add_call_transcript` | `app/services/chat_tools.py:1733` | Synchronous bridge: enqueues, then polls the job store (`submit_and_wait`, `app/routes/ingest.py:115`) |

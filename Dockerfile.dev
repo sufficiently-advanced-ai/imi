@@ -17,13 +17,17 @@ COPY requirements.txt .
 COPY deployment/strip-unused-ml-deps.sh /tmp/strip-unused-ml-deps.sh
 # Strip is chained into the same RUN as the install so the removed bytes don't
 # persist in a lower layer (Docker layers are additive). See the script header.
+# `pip check` fails the build on an inconsistent dependency set. It runs BEFORE
+# the strip because the strip deliberately removes packages semantica declares.
 RUN pip install --no-cache-dir -r requirements.txt \
+ && pip check \
  && bash /tmp/strip-unused-ml-deps.sh
-RUN pip install --no-cache-dir python-multipart==0.0.6
 
 # Install Claude Agent SDK CLI for claude-agent-sdk Python package
-# Dev container will use host's subscription credentials via volume mount
-RUN npm install -g @anthropic-ai/claude-code @anthropic-ai/claude-agent-sdk
+# Dev container will use host's subscription credentials via volume mount.
+# Pinned for reproducible builds; to bump, run `npm view <pkg> version` for each
+# package and update both pins together.
+RUN npm install -g @anthropic-ai/claude-code@2.1.309 @anthropic-ai/claude-agent-sdk@0.3.309
 
 # Copy Node.js package files
 COPY imi-frontend/package*.json ./imi-frontend/
