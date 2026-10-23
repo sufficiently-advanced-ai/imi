@@ -20,6 +20,7 @@ from pathlib import Path
 
 from app.models.signal import Signal, SignalAuditRecord
 from app.services.signal_governance import apply_review, gate_response_for_action
+from app.utils.atomic_write import fsync_dir
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +156,14 @@ class SignalAuditStore:
         """
         self.audit_dir.mkdir(parents=True, exist_ok=True)
         path = self._file_path(record.signal_id)
+        is_new = not path.exists()
         with path.open("a", encoding="utf-8") as fh:
             fh.write(record.model_dump_json() + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        if is_new:
+            # First row for this signal: make the new directory entry durable too.
+            fsync_dir(self.audit_dir)
         return path
 
     def read_for_signal(self, signal_id: str) -> list[SignalAuditRecord]:

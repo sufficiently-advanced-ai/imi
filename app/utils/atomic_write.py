@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 
 
-def _fsync_dir(dir_path: Path) -> None:
+def fsync_dir(dir_path: Path) -> None:
     """Best-effort fsync of a directory so the rename itself is durable."""
     try:
         fd = os.open(dir_path, os.O_RDONLY)
@@ -66,4 +66,4 @@ def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8"
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
         raise
-    _fsync_dir(dir_path)
+    fsync_dir(dir_path)
