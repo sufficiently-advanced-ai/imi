@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -31,6 +30,7 @@ from app.services.artifact_markdown import inline_text
 from app.services.constitution import CONSTITUTION_RELATIVE_PATH, render_constitution
 from app.services.signal_store import signal_store
 from app.services.staleness_evaluator import TRANSITIONS_RELATIVE_PATH
+from app.utils.atomic_write import atomic_write_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.models.signal import Signal
@@ -112,23 +112,6 @@ def _extract_active_headings(constitution_md: str) -> set[str]:
         if in_active and line.startswith("#### "):
             headings.append(line[5:].strip())
     return set(headings)
-
-
-def _write_atomic(final_path: str, content: str) -> None:
-    """Write content to final_path atomically via tempfile + os.replace."""
-    dir_path = os.path.dirname(final_path)
-    os.makedirs(dir_path, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        os.replace(tmp_path, final_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +425,7 @@ async def export_weekly_digest(
     date_str = now.strftime("%Y-%m-%d")
     relative_path = f"{WEEKLY_DIGEST_DIR}/weekly-{date_str}.md"
     full_path = os.path.join(_git.repo_path, relative_path)
-    await asyncio.to_thread(_write_atomic, full_path, text)
+    await asyncio.to_thread(atomic_write_text, full_path, text)
     logger.info("[WEEKLY_DIGEST] Written to %s", full_path)
 
     # --- 6. Commit ---

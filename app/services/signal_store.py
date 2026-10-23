@@ -7,16 +7,37 @@ Reads and writes batched signal JSON files stored per-meeting at:
 
 import json
 import logging
+import os
+import threading
 from datetime import date
 from pathlib import Path
 
 from app.models.signal import MeetingSignals, Signal
+from app.utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
 VALID_SIGNAL_STATUSES = {"open", "in_progress", "done"}
 
 SIGNALS_DIR = Path("/app/repo/signals")
+
+# One re-entrant lock per container file (keyed by absolute path, so every
+# SignalStore instance and tenant pointing at the same file shares it). Held
+# across a read-modify-write of a container so concurrent updates to signals in
+# the same meeting file cannot overwrite each other. A threading lock works for
+# both sync callers and async callers (which run these sync methods on the
+# event loop or in a worker thread); callers must never await while holding it.
+_CONTAINER_LOCKS: dict[str, threading.RLock] = {}
+_CONTAINER_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for_path(path: Path) -> threading.RLock:
+    key = os.path.abspath(path)
+    with _CONTAINER_LOCKS_GUARD:
+        lock = _CONTAINER_LOCKS.get(key)
+        if lock is None:
+            lock = _CONTAINER_LOCKS[key] = threading.RLock()
+        return lock
 
 
 def remap_entity_refs(
@@ -108,11 +129,35 @@ class SignalStore:
     def exists(self, bot_id: str) -> bool:
         return self._file_path(bot_id).is_file()
 
+    def container_lock(self, bot_id: str) -> threading.RLock:
+        """Lock serializing read-modify-write of one meeting's signal file.
+
+        Re-entrant, so a holder may call ``save``/``replace_signal`` (which
+        take it again). Hold it only around synchronous file work.
+        """
+        return _lock_for_path(self._file_path(bot_id))
+
+    def _find_in_container(
+        self, bot_id: str, signal_id: str
+    ) -> tuple[Signal, MeetingSignals] | None:
+        """Re-read one container from disk and find ``signal_id`` in it."""
+        container = self.load(bot_id)
+        if container is None:
+            return None
+        for signal in container.signals:
+            if signal.id == signal_id:
+                return signal, container
+        return None
+
     def save(self, meeting_signals: MeetingSignals) -> Path:
-        """Write meeting signals to disk. Creates the signals/ dir if needed."""
-        self.signals_dir.mkdir(parents=True, exist_ok=True)
+        """Write meeting signals to disk atomically (temp file + fsync + rename).
+
+        A crash mid-write leaves the previous file intact rather than a
+        truncated one. Creates the signals/ dir if needed.
+        """
         path = self._file_path(meeting_signals.bot_id)
-        path.write_text(meeting_signals.model_dump_json(indent=2), encoding="utf-8")
+        with _lock_for_path(path):
+            atomic_write_text(path, meeting_signals.model_dump_json(indent=2))
         logger.info(
             f"[SIGNALS] Saved {meeting_signals.signal_count} signals to {path.name}"
         )
@@ -216,12 +261,46 @@ class SignalStore:
                 f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_SIGNAL_STATUSES))}"
             )
 
-        result = self.find_signal_by_id(signal_id)
-        if result is None:
+        located = self.find_signal_by_id(signal_id)
+        if located is None:
             return None
+        bot_id = located[1].bot_id
 
-        signal, container = result
+        with self.container_lock(bot_id):
+            # Re-read under the lock so a concurrent write to this container
+            # (another signal in the same meeting file) is not overwritten.
+            result = self._find_in_container(bot_id, signal_id)
+            if result is None:
+                return None
+            signal, container = result
+            return self._apply_field_updates(
+                signal,
+                container,
+                status=status,
+                content=content,
+                owner_id=owner_id,
+                owner_name=owner_name,
+                owner_type=owner_type,
+                due_date=due_date,
+            )
 
+    def _apply_field_updates(
+        self,
+        signal: Signal,
+        container: MeetingSignals,
+        *,
+        status: str | None,
+        content: str | None,
+        owner_id: str | None,
+        owner_name: str | None,
+        owner_type: str | None,
+        due_date: str | None,
+    ) -> Signal:
+        """Apply validated field updates to ``signal`` and persist ``container``.
+
+        Caller holds ``container_lock(container.bot_id)``.
+        """
+        signal_id = signal.id
         # Build update dict for model_copy
         updates: dict = {}
         if status is not None:
@@ -285,16 +364,21 @@ class SignalStore:
 
         Returns the deleted Signal for confirmation, or None if not found.
         """
-        result = self.find_signal_by_id(signal_id)
-        if result is None:
+        located = self.find_signal_by_id(signal_id)
+        if located is None:
             return None
+        bot_id = located[1].bot_id
 
-        signal, container = result
+        with self.container_lock(bot_id):
+            result = self._find_in_container(bot_id, signal_id)
+            if result is None:
+                return None
+            signal, container = result
 
-        # Filter out the signal
-        container.signals = [s for s in container.signals if s.id != signal_id]
-        object.__setattr__(container, "signal_count", len(container.signals))
-        self.save(container)
+            # Filter out the signal
+            container.signals = [s for s in container.signals if s.id != signal_id]
+            object.__setattr__(container, "signal_count", len(container.signals))
+            self.save(container)
 
         logger.info(f"[SIGNALS] Deleted signal {signal_id} from {container.bot_id}")
         return signal

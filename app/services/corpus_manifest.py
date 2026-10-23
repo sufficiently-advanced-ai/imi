@@ -34,6 +34,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.utils.atomic_write import atomic_write_text
+
 logger = logging.getLogger(__name__)
 
 MANIFEST_VERSION = 1
@@ -156,11 +158,7 @@ def load_manifest(path: Path) -> Manifest | None:
 
 
 def save_manifest(path: Path, manifest: Manifest) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(manifest.to_json(), f)
-    os.replace(tmp, path)
+    atomic_write_text(path, json.dumps(manifest.to_json()))
 
 
 def _now_iso() -> str:

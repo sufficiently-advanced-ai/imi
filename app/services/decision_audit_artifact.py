@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import tempfile
 from datetime import UTC, datetime
 
 from app.config import settings
@@ -30,6 +29,7 @@ from app.services.decision_view import (
     load_decision_signals,
 )
 from app.services.signal_store import signal_store
+from app.utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -177,21 +177,7 @@ async def export_decision_audit(
     full_path = os.path.join(git_ops.repo_path, relative_path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-    def _write_atomic(final_path: str, content: str) -> None:
-        dir_path = os.path.dirname(final_path)
-        fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.replace(tmp_path, final_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-
-    await asyncio.to_thread(_write_atomic, full_path, text)
+    await asyncio.to_thread(atomic_write_text, full_path, text)
 
     logger.info("[AUDIT] Written to %s", full_path)
 
