@@ -22,7 +22,7 @@ Health checks before doing anything:
 
 ```bash
 curl -fsS http://<host>:8080/health           # 200 = app up
-curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies
+curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies + corpus_sync (adopted = run a graph rebuild)
 ```
 
 ## The rules of the road (non-negotiable)

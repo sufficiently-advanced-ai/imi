@@ -46,6 +46,7 @@ import { DecisionDetailDialog } from "@/components/decisions/DecisionDetailDialo
 import { ExportConstitutionButton } from "@/components/decisions/ExportConstitutionButton";
 import { AddTranscriptDialog } from "@/components/ingest/AddTranscriptDialog";
 import { DeltaReportCard } from "@/components/DeltaReportCard";
+import { CorpusSyncBanner } from "@/components/CorpusSyncBanner";
 import MarkdownViewer from "@/components/MarkdownViewer";
 
 // ---------------------------------------------------------------------------
@@ -433,6 +434,8 @@ export default function OverviewPage() {
             </div>
           }
         />
+
+        <CorpusSyncBanner />
 
         <div className="grid gap-6 lg:grid-cols-3">
           <ConstitutionCard onSelect={handleSelect} />

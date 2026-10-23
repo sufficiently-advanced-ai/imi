@@ -23,6 +23,8 @@ from collections.abc import Awaitable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services import corpus_sync
+
 logger = logging.getLogger(__name__)
 
 _status: dict[str, Any] = {
@@ -134,6 +136,7 @@ async def run_full_rebuild(
             state="running", source=source, clean=clean,
             started_at=_now(), finished_at=None, stats={}, error=None,
         )
+        corpus_sync.set_corpus_sync("reconciling", reason=f"full_rebuild:{source}", action="full_rebuild")
         stats: dict[str, Any] = {}
         try:
             kg = _get_kg()
@@ -158,14 +161,26 @@ async def run_full_rebuild(
                 stats["semantica"] = await semantica_full_build(sk)
 
             reconciler = make_reconciler(kg, sk)
+            manifest = None
             if reconciler is not None:
-                await reconciler.record_full_build(source=source)
+                manifest = await reconciler.record_full_build(source=source)
                 stats["manifest"] = "recorded"
 
             _status.update(state="completed", finished_at=_now(), stats=stats)
+            # A full build ingested the whole corpus: this clears ``adopted``.
+            corpus_sync.set_corpus_sync(
+                "synced", reason=f"full_rebuild:{source}", action="full_rebuild",
+                build_id=getattr(manifest, "build_id", None),
+                baseline_at=getattr(manifest, "built_at", None),
+                counts={"files": len(manifest.files)} if manifest is not None else None,
+            )
             logger.info("[REBUILD] completed: %s", stats)
         except Exception as e:
             _status.update(state="failed", finished_at=_now(), stats=stats, error=str(e))
+            corpus_sync.set_corpus_sync(
+                "rebuild_required", reason=f"full_rebuild_failed:{source}",
+                action="full_rebuild", error=str(e),
+            )
             logger.exception("[REBUILD] failed")
             raise
     finally:
@@ -197,16 +212,36 @@ async def startup_reconcile() -> dict[str, Any]:
     """
     reconciler = make_reconciler(sk=_get_sk())
     if reconciler is None:
-        return {"action": "skipped", "reason": "graph_or_neo4j_unavailable"}
+        result = {"action": "skipped", "reason": "graph_or_neo4j_unavailable"}
+        corpus_sync.record_reconcile_result(result)
+        return result
 
-    result = await reconciler.reconcile()
-    logger.info("[RECONCILE] %s", result)
+    corpus_sync.set_corpus_sync("reconciling", reason="startup_reconcile", action="reconcile")
+    try:
+        result = await reconciler.reconcile()
+        logger.info("[RECONCILE] %s", result)
 
-    if result.get("action") == "full_rebuild_required":
-        logger.info("[RECONCILE] graph is empty — running a full build now (deferred startup task)")
-        status = await run_full_rebuild(source="startup_empty_graph")
-        result["rebuild"] = status.get("state")
-        result["rebuild_stats"] = status.get("stats")
+        if result.get("action") == "full_rebuild_required":
+            logger.info("[RECONCILE] graph is empty — running a full build now (deferred startup task)")
+            try:
+                status = await run_full_rebuild(source="startup_empty_graph")
+            except Exception as e:
+                result["rebuild"] = "failed"
+                result["error"] = str(e)
+                if not is_rebuild_running():
+                    corpus_sync.record_reconcile_result(result)
+                raise
+            result["rebuild"] = status.get("state")
+            result["rebuild_stats"] = status.get("stats")
+    except Exception as e:
+        if corpus_sync.get_corpus_sync()["status"] == "reconciling":
+            corpus_sync.set_corpus_sync(
+                "unknown", reason="reconcile_failed", action="reconcile", error=str(e)
+            )
+        raise
+    if not is_rebuild_running():
+        # An admin rebuild started meanwhile owns the status until it finishes.
+        corpus_sync.record_reconcile_result(result)
     return result
 
 

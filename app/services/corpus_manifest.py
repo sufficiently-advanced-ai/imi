@@ -168,15 +168,23 @@ def _now_iso() -> str:
 # ── Neo4j-side build marker ───────────────────────────────────────────────
 
 
-async def read_graph_build_id(neo4j: Any) -> str | None:
+async def read_graph_state(neo4j: Any) -> dict[str, Any]:
+    """The ``:_CorpusState`` marker: ``build_id``, the ``source`` that wrote
+    the baseline (an adoption reason, or the rebuild source) and when."""
     rows = await neo4j.execute_read(
-        "MATCH (s:_CorpusState {id: $id}) RETURN s.build_id AS build_id",
+        "MATCH (s:_CorpusState {id: $id}) "
+        "RETURN s.build_id AS build_id, s.source AS source, s.updated_at AS updated_at",
         {"id": CORPUS_STATE_ID},
     )
-    if not rows:
-        return None
-    value = rows[0].get("build_id") if isinstance(rows[0], dict) else None
-    return str(value) if value else None
+    row = rows[0] if rows and isinstance(rows[0], dict) else {}
+    return {
+        key: (str(row[key]) if row.get(key) else None)
+        for key in ("build_id", "source", "updated_at")
+    }
+
+
+async def read_graph_build_id(neo4j: Any) -> str | None:
+    return (await read_graph_state(neo4j))["build_id"]
 
 
 async def write_graph_build_id(neo4j: Any, build_id: str, extra: dict[str, Any] | None = None) -> None:
@@ -240,7 +248,8 @@ class CorpusReconciler:
 
     async def reconcile(self) -> dict[str, Any]:
         """Diff manifest vs disk and apply the delta. Returns a summary dict."""
-        graph_build_id = await read_graph_build_id(self.neo4j)
+        graph_state = await read_graph_state(self.neo4j)
+        graph_build_id = graph_state["build_id"]
         manifest = load_manifest(self.manifest_path)
 
         if graph_build_id is None:
@@ -254,13 +263,20 @@ class CorpusReconciler:
             reason = "manifest_missing" if manifest is None else "manifest_mismatch"
             return await self._adopt(reason, graph_build_id=graph_build_id)
 
+        # Who wrote this baseline: an adoption reason here means the graph was
+        # never fed the files that were on disk at that point (corpus_sync).
+        baseline = {
+            "build_id": graph_build_id,
+            "baseline_source": graph_state["source"],
+            "baseline_at": graph_state["updated_at"] or manifest.built_at,
+        }
         disk = scan_corpus(self.repo_path)
         delta = diff_stamps(manifest.files, disk)
         if delta.is_empty:
-            return {"action": "unchanged", "files": len(disk)}
+            return {"action": "unchanged", "files": len(disk), **baseline}
 
         logger.info("[RECONCILE] corpus changed since last build: %s", delta.counts())
-        summary: dict[str, Any] = {"action": "reconciled", **delta.counts()}
+        summary: dict[str, Any] = {"action": "reconciled", **delta.counts(), **baseline}
         failed: set[str] = set()  # keep their old stamps so the next boot retries
 
         if delta.removed:
@@ -403,6 +419,9 @@ class CorpusReconciler:
             "reason": reason,
             "files": len(manifest.files),
             "entities": entities,
+            "build_id": manifest.build_id,
+            "baseline_source": reason,
+            "baseline_at": manifest.built_at,
         }
 
     async def _count_entities(self) -> int | None:
