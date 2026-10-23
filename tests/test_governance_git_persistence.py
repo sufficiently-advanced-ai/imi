@@ -170,10 +170,13 @@ async def test_audit_append_failure_surfaced_in_result(tmp_path, caplog):
         from app.services.chat_tools import update_signal
         result = await update_signal(signal.id, review_action="confirm")
 
-    # Result still has success=True (signal was saved) but reports audit_error
-    assert result["success"] is True
+    # Audit-first: the review is refused and nothing is persisted
+    assert result["success"] is False
+    assert result["review_applied"] is False
     assert "audit_error" in result, "audit_error must be in response when append fails"
     assert "disk full" in result["audit_error"]
+    mock_store.replace_signal.assert_not_called()
+    mock_git.commit_file.assert_not_called()
     # Must log at ERROR level (not just warning)
     assert any("AUDIT APPEND FAILED" in r.message for r in caplog.records), (
         "Expected ERROR log for audit append failure"

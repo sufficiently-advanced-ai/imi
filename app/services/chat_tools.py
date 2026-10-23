@@ -730,10 +730,18 @@ async def update_signal(
 
     **Governance transition** (review_action): routes through
     ``review_with_audit`` (which composes ``apply_review`` + audit record),
-    persists the updated signal to the SignalStore, appends the audit row via
-    ``SignalAuditStore``, and syncs to Neo4j (all best-effort after the primary
-    write). The audit row is the G2 guarantee (ADR-002 "append-only, survives");
-    git-commit of the audit JSONL is best-effort (failure logged, not raised).
+    then, holding the signal container's lock, **appends the audit row first**
+    (fsynced) and only then persists the updated signal to the SignalStore
+    (atomic temp-file + rename). Invariant: no persisted governance change can
+    exist without a preceding audit row (G2, ADR-002).
+
+    - Audit append fails: nothing is persisted; returns ``success: False``.
+    - Signal persist fails after the audit row was written: a compensating
+      ``<action>_failed`` audit row is appended so the log stays truthful;
+      returns ``success: False``.
+
+    Git-commit of the audit JSONL and the Neo4j mirror run after both writes
+    and are best-effort (failure logged, not raised).
 
     Authority / governance fields (can_use_as_evidence, can_use_as_instruction,
     provenance_status, review_status) are NOT settable directly — review_action
@@ -752,7 +760,8 @@ async def update_signal(
 
     Returns:
         Dict with success, signal data, and sync status. On governance
-        transitions also includes review_applied=True and audit_row_id.
+        transitions also includes review_applied=True and audit_row_id; on a
+        failed governance write, success=False, review_applied=False and error.
     """
     try:
         store = SignalStore()
@@ -761,67 +770,105 @@ async def update_signal(
         # Governance transition path (review_action provided)
         # ----------------------------------------------------------------
         if review_action is not None:
-            # 1. Look up the signal (needed for review_with_audit)
+            from app.services.signal_audit import persist_failed_record, review_with_audit
+
+            # 1. Locate the signal's container (needed for the lock)
             lookup = store.find_signal_by_id(signal_id)
             if lookup is None:
                 return {"success": False, "error": f"Signal '{signal_id}' not found"}
-            current_signal, container = lookup
 
-            # 2. Apply review transition + emit audit record (pure, no I/O)
-            try:
-                from app.services.signal_audit import review_with_audit
-                new_signal, audit_record = review_with_audit(
-                    current_signal,
-                    review_action,
-                    actor=actor,
-                    superseded_by=superseded_by,
-                )
-            except ValueError as e:
-                return {"success": False, "error": str(e)}
+            audit_store = SignalAuditStore()
+            # Steps 2-4 are synchronous and run under the container lock so a
+            # concurrent update to the same meeting file cannot be lost. Never
+            # await inside this block.
+            with store.container_lock(lookup[1].bot_id):
+                # Re-read under the lock: review the state on disk now, not the
+                # state seen before the lock was taken.
+                lookup = store.find_signal_by_id(signal_id)
+                if lookup is None:
+                    return {"success": False, "error": f"Signal '{signal_id}' not found"}
+                current_signal, container = lookup
 
-            # 3. Persist the updated signal to SignalStore (source of truth)
-            store.replace_signal(new_signal, container)
-
-            # 4. Append audit row (the G2 guarantee — log loudly on failure)
-            audit_path: str | None = None
-            try:
-                audit_store = SignalAuditStore()
-                audit_file = audit_store.append(audit_record)
-                audit_path = audit_store.relative_path(signal_id)
-                logger.info(
-                    "[UPDATE_SIGNAL] Audit row appended: %s action=%s actor=%s",
-                    audit_file, review_action, actor,
-                )
-            except Exception as e:
-                logger.error(
-                    "[UPDATE_SIGNAL] AUDIT APPEND FAILED for signal %s action=%s: %s",
-                    signal_id, review_action, e,
-                    exc_info=True,
-                )
-                # Audit failure: still return success (signal was saved) but surface
-                # audit_error so the caller can detect the gap.
-                return {
-                    "success": True,
-                    "review_applied": True,
-                    "audit_error": str(e),
-                    "signal": _signal_to_dict(new_signal),
-                    "neo4j_synced": False,
-                }
-
-            # 5. Git commit of audit JSONL (best-effort — after successful append)
-            if audit_path:
+                # 2. Apply review transition + emit audit record (pure, no I/O)
                 try:
-                    audit_file_path = audit_store._file_path(signal_id)
-                    audit_content = audit_file_path.read_text(encoding="utf-8")
-                    await git_ops.commit_file(
-                        audit_path,
-                        audit_content,
-                        f"audit: {review_action} signal {signal_id}",
+                    new_signal, audit_record = review_with_audit(
+                        current_signal,
+                        review_action,
+                        actor=actor,
+                        superseded_by=superseded_by,
+                    )
+                except ValueError as e:
+                    return {"success": False, "error": str(e)}
+
+                # 3. Append the audit row FIRST (G2). If it cannot be written,
+                #    persist nothing: a governance change must never exist
+                #    without its audit row.
+                try:
+                    audit_file = audit_store.append(audit_record)
+                    logger.info(
+                        "[UPDATE_SIGNAL] Audit row appended: %s action=%s actor=%s",
+                        audit_file, review_action, actor,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "[UPDATE_SIGNAL] Git commit of audit JSONL failed (non-fatal): %s", e
+                    logger.error(
+                        "[UPDATE_SIGNAL] AUDIT APPEND FAILED for signal %s action=%s; "
+                        "review NOT applied: %s",
+                        signal_id, review_action, e,
+                        exc_info=True,
                     )
+                    return {
+                        "success": False,
+                        "review_applied": False,
+                        "error": f"Audit append failed; review not applied: {e}",
+                        "audit_error": str(e),
+                    }
+
+                # 4. Persist the updated signal (source of truth, atomic write).
+                #    On failure, append a compensating row so the log records
+                #    that the audited attempt was not applied.
+                try:
+                    store.replace_signal(new_signal, container)
+                except Exception as e:
+                    logger.error(
+                        "[UPDATE_SIGNAL] SIGNAL PERSIST FAILED for signal %s action=%s "
+                        "after audit row %s; review NOT applied: %s",
+                        signal_id, review_action, audit_record.id, e,
+                        exc_info=True,
+                    )
+                    compensating = persist_failed_record(audit_record, str(e))
+                    compensating_id: str | None = None
+                    try:
+                        audit_store.append(compensating)
+                        compensating_id = compensating.id
+                    except Exception as ce:
+                        logger.error(
+                            "[UPDATE_SIGNAL] Compensating audit row FAILED for signal %s "
+                            "(audit row %s records an attempt that was not applied): %s",
+                            signal_id, audit_record.id, ce,
+                            exc_info=True,
+                        )
+                    return {
+                        "success": False,
+                        "review_applied": False,
+                        "error": f"Signal persist failed; review not applied: {e}",
+                        "audit_row_id": audit_record.id,
+                        "compensating_audit_row_id": compensating_id,
+                    }
+
+            # 5. Git commit of audit JSONL (best-effort — after both writes)
+            try:
+                audit_path = audit_store.relative_path(signal_id)
+                audit_file_path = audit_store._file_path(signal_id)
+                audit_content = audit_file_path.read_text(encoding="utf-8")
+                await git_ops.commit_file(
+                    audit_path,
+                    audit_content,
+                    f"audit: {review_action} signal {signal_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    "[UPDATE_SIGNAL] Git commit of audit JSONL failed (non-fatal): %s", e
+                )
 
             # 6. Neo4j governance mirror (best-effort)
             neo4j_synced = False
