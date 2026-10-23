@@ -19,6 +19,7 @@ docs/adr/ADR-001-signals-decision-records-routing-approval-gates.md.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -66,6 +67,25 @@ _GATE_FOR_ACTION = {
     "dispute": "revise",
     "escalate": "escalate",
 }
+
+
+# Review actions that leave the record in a human-reviewed state. Each one binds
+# the review to the content it was applied to (``reviewed_content_hash``,
+# ADR-009); editing that content afterwards sends the record back to pending.
+REVIEWED_STATES = frozenset({"confirmed", "evidence_only", "rejected"})
+_REVIEW_BINDING_ACTIONS = frozenset({"confirm", "reject", "evidence_only"})
+
+# Audit action recorded when a content edit invalidates a review (ADR-009).
+CONTENT_EDITED_ACTION = "content_edited"
+
+
+def content_hash(content: str | None) -> str:
+    """sha256 hex digest of a record's content exactly as stored (ADR-009).
+
+    No normalization: any change to the reviewed text, whitespace included,
+    counts as a new revision.
+    """
+    return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
 def instruction_grade_permitted(provenance_status: str) -> bool:
@@ -161,5 +181,45 @@ def apply_review(
             f"provenance {new_provenance!r}"
         )
 
+    if action in _REVIEW_BINDING_ACTIONS:
+        # ADR-009: bind the review to the revision it was applied to.
+        updates["reviewed_content_hash"] = content_hash(signal.content)
+
     # model_copy bypasses model_validators — authority invariant re-checked above by design.
+    return signal.model_copy(update=updates)
+
+
+def content_edit_demotes(signal: Signal, new_content: str) -> bool:
+    """Whether replacing ``signal``'s content with ``new_content`` voids its review.
+
+    True when the signal is in a reviewed state (or instruction-grade) and the
+    new content's hash differs from the reviewed revision. Signals reviewed
+    before revision binding existed carry no ``reviewed_content_hash``; their
+    current content stands in for the reviewed revision.
+    """
+    if signal.review_status not in REVIEWED_STATES and not signal.can_use_as_instruction:
+        return False
+    reviewed = getattr(signal, "reviewed_content_hash", None) or content_hash(
+        signal.content
+    )
+    return content_hash(new_content) != reviewed
+
+
+def demote_for_content_change(signal: Signal, new_content: str) -> Signal:
+    """Apply a content edit, voiding the review if the reviewed text changed.
+
+    Returns a NEW Signal (the original is unchanged) with ``content`` set to
+    ``new_content``. When ``content_edit_demotes`` holds, the copy is also sent
+    back to review: ``review_status="pending"`` and
+    ``can_use_as_instruction=False``. ``provenance_status`` and
+    ``can_use_as_evidence`` are left as they are — demotion only ever removes
+    authority, and the authority invariant (instruction-grade requires
+    confirmed provenance) holds trivially once instruction-grade is cleared.
+    See ADR-009.
+    """
+    updates: dict = {"content": new_content}
+    if content_edit_demotes(signal, new_content):
+        updates["review_status"] = "pending"
+        updates["can_use_as_instruction"] = False
+    # model_copy bypasses model_validators; the update only clears authority.
     return signal.model_copy(update=updates)

@@ -19,7 +19,13 @@ import os
 from pathlib import Path
 
 from app.models.signal import Signal, SignalAuditRecord
-from app.services.signal_governance import apply_review, gate_response_for_action
+from app.services.signal_governance import (
+    CONTENT_EDITED_ACTION,
+    apply_review,
+    content_hash,
+    demote_for_content_change,
+    gate_response_for_action,
+)
 from app.utils.atomic_write import fsync_dir
 
 logger = logging.getLogger(__name__)
@@ -38,11 +44,14 @@ _GOVERNANCE_FIELDS = (
     "superseded_by",
     "valid_to",
 )
+# Snapshotted too, but kept out of the derived reasoning string (a hex digest
+# is noise there): which content revision the review is bound to (ADR-009).
+_SNAPSHOT_FIELDS = _GOVERNANCE_FIELDS + ("reviewed_content_hash",)
 
 
 def _governance_snapshot(signal: Signal) -> dict:
     """Extract just the governance fields from a signal for the audit row."""
-    return {field: getattr(signal, field) for field in _GOVERNANCE_FIELDS}
+    return {field: getattr(signal, field, None) for field in _SNAPSHOT_FIELDS}
 
 
 def _derive_reasoning(before: dict, after: dict, action: str, gate: str) -> str:
@@ -61,6 +70,7 @@ def review_with_audit(
     actor: str | None = None,
     superseded_by: str | None = None,
     record_kind: str = "signal",
+    claimed_actor: str | None = None,
 ) -> tuple[Signal, SignalAuditRecord]:
     """Apply a review action and emit an immutable audit record.
 
@@ -71,6 +81,9 @@ def review_with_audit(
     ``apply_review`` is duck-typed (model_copy-based), so this works for any
     governed record kind (Signal, CapturedMemory, ...) that carries the
     governance field surface; ``record_kind`` labels the audit row accordingly.
+
+    ``actor`` is the server-stamped identity; ``claimed_actor`` is whatever
+    name the caller supplied, recorded unverified (ADR-009).
 
     Raises:
         ValueError: propagated from apply_review for invalid actions.
@@ -86,6 +99,7 @@ def review_with_audit(
         action=action,
         gate_response=gate,
         actor=actor,
+        claimed_actor=claimed_actor,
         tenant_id=signal.tenant_id,
         reasoning=_derive_reasoning(before, after, action, gate),
         before=before,
@@ -94,7 +108,57 @@ def review_with_audit(
     return new_signal, record
 
 
+def content_edit_with_audit(
+    signal: Signal,
+    new_content: str,
+    *,
+    actor: str | None = None,
+    claimed_actor: str | None = None,
+    record_kind: str = "signal",
+) -> tuple[Signal, SignalAuditRecord | None]:
+    """Apply a content edit; emit a ``content_edited`` audit row if it voids a review.
+
+    Composes the pure ``demote_for_content_change`` with audit generation
+    (ADR-009). Returns ``(new_signal, record)``; ``record`` is None when the
+    edit does not touch a reviewed revision (nothing governance-relevant
+    changed, so no audit row is owed). The row's before/after snapshots carry
+    a ``content_hash`` key alongside the governance fields. Not persisted —
+    the caller appends it before persisting the signal (audit-first).
+    """
+    new_signal = demote_for_content_change(signal, new_content)
+    before = _governance_snapshot(signal)
+    after = _governance_snapshot(new_signal)
+    if before == after:
+        return new_signal, None
+    before["content_hash"] = content_hash(signal.content)
+    after["content_hash"] = content_hash(new_content)
+    parts = [f"action={CONTENT_EDITED_ACTION}"]
+    for field in _GOVERNANCE_FIELDS:
+        if before.get(field) != after.get(field):
+            parts.append(f"{field} {before.get(field)!r}→{after.get(field)!r}")
+    parts.append(
+        "content changed after review; review voided, back to pending (ADR-009)"
+    )
+    record = SignalAuditRecord(
+        signal_id=signal.id,
+        record_kind=record_kind,
+        action=CONTENT_EDITED_ACTION,
+        gate_response=None,
+        actor=actor,
+        claimed_actor=claimed_actor,
+        tenant_id=signal.tenant_id,
+        reasoning="; ".join(parts),
+        before=before,
+        after=after,
+    )
+    return new_signal, record
+
+
 PERSIST_FAILED_SUFFIX = "_failed"
+
+
+class AuditAppendError(RuntimeError):
+    """An audit row could not be appended, so the gated change was not applied."""
 
 
 def persist_failed_record(original: SignalAuditRecord, error: str) -> SignalAuditRecord:
@@ -114,6 +178,7 @@ def persist_failed_record(original: SignalAuditRecord, error: str) -> SignalAudi
         action=f"{original.action}{PERSIST_FAILED_SUFFIX}",
         gate_response=None,
         actor=original.actor,
+        claimed_actor=original.claimed_actor,
         tenant_id=original.tenant_id,
         reasoning=(
             f"action={original.action} not applied: signal state write failed "

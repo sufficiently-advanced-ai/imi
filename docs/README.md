@@ -44,7 +44,7 @@ the docs. After editing a source: `node scripts/export_diagrams.mjs`.
 - [`adr/`](adr/) — Architecture Decision Records. [ADR-002](adr/ADR-002-evidence-instruction-authority-gate.md) (evidence/instruction authority gate) is load-bearing across the whole memory system
 - [`prd/`](prd/) — product requirement docs for the memory-governance and decision-state systems
 - [`mcp_tool_conventions.md`](mcp_tool_conventions.md) — the contract for adding/consuming MCP tools
-- [`mcp_access_tiers.md`](mcp_access_tiers.md) — MCP transports (SSE + Streamable HTTP) and the Local / Relayed / Remote access tiers ([ADR-008](adr/ADR-008-remote-mcp-access.md))
+- [`mcp_access_tiers.md`](mcp_access_tiers.md) — MCP transports (SSE + Streamable HTTP) and the Local / Relayed / Remote access tiers ([ADR-008](adr/ADR-008-remote-mcp-access.md)) and who may review over MCP ([ADR-009](adr/ADR-009-review-authority-and-revision-binding.md))
 - [`world-model-concept.md`](world-model-concept.md) — the concept behind the graph
 
 ## Accuracy notes

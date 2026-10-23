@@ -107,6 +107,8 @@ class AgentMemory(BaseModel):
         "we watch). Server-assigned at admission; never accepted from clients",
     )
     tenant_id: str | None = None
+    # ADR-009: sha256 of the content as last reviewed (set by review actions).
+    reviewed_content_hash: str | None = Field(None)
     workspace_id: str | None = None
     project_id: str | None = None
     visibility: str = Field("personal")

@@ -287,6 +287,16 @@ class Settings(JSONConfigSettings):
         env="MCP_PUBLIC_URL",
         description="URL remote MCP clients use (remote tier); unset keeps MCP local-only",
     )
+    # ADR-009: whether MCP clients may perform review actions (update_signal
+    # review_action). MCP has no authentication, so a review over MCP is only
+    # as trustworthy as everyone who can reach the endpoint. Default True keeps
+    # "a human directs Claude to confirm" working; recommended False for the
+    # Remote tier (startup warns when MCP_PUBLIC_URL is set and this is True).
+    MCP_REVIEW_ACTIONS: bool = Field(
+        True,
+        env="MCP_REVIEW_ACTIONS",
+        description="Allow review actions (confirm/reject/...) over MCP; recommended false for the remote tier",
+    )
 
     # Demo Mode Settings (Epic #783)
     DEMO_MODE: bool = Field(False, env="DEMO_MODE", description="Enable demo video data injection routes")

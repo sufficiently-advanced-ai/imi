@@ -29,6 +29,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from app.models.captured_memory import CapturedMemory
+from app.utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,8 @@ class CaptureStore:
     def _save(self, memory: CapturedMemory) -> Path:
         self.capture_dir.mkdir(parents=True, exist_ok=True)
         path = self._file_path(memory.id)
-        path.write_text(memory.model_dump_json(indent=2), encoding="utf-8")
+        # Atomic: a crash mid-write never leaves a truncated record.
+        atomic_write_text(path, memory.model_dump_json(indent=2))
         return path
 
     def get(self, memory_id: str) -> CapturedMemory | None:

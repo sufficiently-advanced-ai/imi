@@ -34,6 +34,7 @@ from app.services.lane_admission import AdmissionLog, admit
 from app.services.memory_capture import REPO_ROOT, CaptureStore
 from app.services.memory_governance import (
     capture_audit_store,
+    persist_audited_transition,
     review_record_with_audit,
 )
 from app.services.signal_audit import _governance_snapshot
@@ -249,8 +250,13 @@ async def review_capture(
     """Apply an audited governance transition to a capture.
 
     Mirrors chat_tools.update_signal's governance path: transition (pure) →
-    persist → audit append (the G2 guarantee) → git commit (best-effort) →
-    re-index (best-effort; stale FAISS vectors are handled at recall time).
+    audit append FIRST (fsynced; the G2 guarantee) → persist (atomic) → git
+    commit (best-effort) → re-index (best-effort; stale FAISS vectors are
+    handled at recall time).
+
+    - Audit append fails: nothing is persisted; returns ``success: False``.
+    - Persist fails after the audit row was written: a compensating
+      ``<action>_failed`` row is appended; returns ``success: False``.
     """
     try:
         store = store or CaptureStore()
@@ -269,25 +275,15 @@ async def review_capture(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-        store.update(new_memory)
-
         audit_store = capture_audit_store(repo_root=repo_root)
-        try:
-            audit_store.append(audit_record)
-        except Exception as e:
-            logger.error(
-                "[CAPTURE] AUDIT APPEND FAILED for %s action=%s: %s",
-                capture_id,
-                action,
-                e,
-                exc_info=True,
-            )
-            return {
-                "success": True,
-                "review_applied": True,
-                "audit_error": str(e),
-                "capture": _capture_dict(new_memory),
-            }
+        failure = persist_audited_transition(
+            audit_store,
+            audit_record,
+            lambda: store.update(new_memory),
+            log_prefix="[CAPTURE]",
+        )
+        if failure is not None:
+            return failure
 
         committed = await _commit_capture_files(
             store, audit_store, capture_id, f"audit: {action} capture {capture_id}"

@@ -293,8 +293,15 @@ async def review_agent_memory(
     store: AgentMemoryStore | None = None,
     repo_root: Path = REPO_ROOT,
 ) -> dict[str, Any]:
-    """Audited governance transition over an agent memory (mirrors captures)."""
-    from app.services.memory_governance import review_record_with_audit
+    """Audited governance transition over an agent memory (mirrors captures).
+
+    Audit row first (fsynced), then the record (atomic); see
+    ``memory_governance.persist_audited_transition`` for the failure contract.
+    """
+    from app.services.memory_governance import (
+        persist_audited_transition,
+        review_record_with_audit,
+    )
 
     try:
         store = store or AgentMemoryStore()
@@ -313,25 +320,15 @@ async def review_agent_memory(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-        store.update(new_memory)
-
         audit_store = capture_audit_store(repo_root=repo_root)
-        try:
-            audit_store.append(audit_record)
-        except Exception as e:
-            logger.error(
-                "[WRITEBACK] AUDIT APPEND FAILED for %s action=%s: %s",
-                memory_id,
-                action,
-                e,
-                exc_info=True,
-            )
-            return {
-                "success": True,
-                "review_applied": True,
-                "audit_error": str(e),
-                "memory": new_memory.model_dump(),
-            }
+        failure = persist_audited_transition(
+            audit_store,
+            audit_record,
+            lambda: store.update(new_memory),
+            log_prefix="[WRITEBACK]",
+        )
+        if failure is not None:
+            return failure
 
         committed = False
         try:

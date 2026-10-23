@@ -40,6 +40,7 @@ Both run in every tier. Local clients can use either one.
 | compose port binding (`BIND_ADDRESS`) | `127.0.0.1` | the private-network interface (or keep loopback and use `tailscale serve`, below) |
 | `MCP_ALLOWED_HOSTS` | localhost only | the private hostname(s) clients use |
 | `MCP_PUBLIC_URL` | unset, so the remote tier is off | the URL clients use. `http://` is accepted (a tailnet already encrypts traffic) and logs a startup warning |
+| `MCP_REVIEW_ACTIONS` | `true`: MCP clients may perform review actions | **recommended `false`**: review in the UI instead (see [below](#review-actions-over-mcp)) |
 
 With the defaults, only loopback can connect. Requests with any other `Host` header get
 `421 Invalid Host header`.
@@ -144,7 +145,9 @@ take effect only on restart.
 ### 3. Check the startup log
 
 With `MCP_PUBLIC_URL` set, imi logs once at startup that the remote tier is **enabled and
-unauthenticated**. If the URL is `http://`, it logs a second warning. An `MCP_PUBLIC_URL`
+unauthenticated**. If the URL is `http://`, it logs a second warning. If
+`MCP_REVIEW_ACTIONS` is still `true`, it logs a third warning that remote clients can perform
+review actions. An `MCP_PUBLIC_URL`
 that can't be parsed (it must be `http(s)://host[:port][/path]`) is logged as an error and
 ignored, and the remote tier stays off.
 
@@ -173,6 +176,21 @@ do*. No tool accepts `provenance_status`, `review_status` or `can_use_as_*` as i
 `capture_thought` and `memory_writeback` always write evidence-grade, pending-review memory.
 Only a review action can promote a record to instruction-grade.
 `tests/test_mcp_surface_authority.py` covers these rules.
+
+### Review actions over MCP
+
+`update_signal` with a `review_action` (confirm, reject, evidence_only, dispute, supersede)
+is how a person directs Claude to review a signal on their behalf. MCP has no
+authentication, so imi cannot tell who is asking. It therefore records every such review as
+**MCP-originated**: the server stamps the audit actor as `mcp:<client name>` (the name the
+client sent when it connected) and keeps the `actor` argument only as an unverified
+`claimed_actor` ([ADR-009](adr/ADR-009-review-authority-and-revision-binding.md)).
+
+On the Local and Relayed tiers the only caller is you, and the default
+(`MCP_REVIEW_ACTIONS=true`) is fine. On the Remote tier anyone who can reach the URL could
+confirm a signal and make it instruction-grade. Set `MCP_REVIEW_ACTIONS=false` there: the
+`update_signal` tool (and the `ask_kb` sub-agent) then refuses review actions with an error
+that points to the review UI, while plain field edits and REST/UI review keep working.
 
 One of those review actions, `update_signal` with `review_action`, is itself an MCP tool. imi
 has no way to tell who is calling, so a review over MCP is only as trustworthy as the set of

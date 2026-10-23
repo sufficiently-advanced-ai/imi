@@ -43,11 +43,14 @@ MCP_HEADERS = {
 
 @pytest.fixture
 def mcp_settings(monkeypatch):
-    """Set MCP_ALLOWED_HOSTS / MCP_PUBLIC_URL for one test."""
+    """Set MCP_ALLOWED_HOSTS / MCP_PUBLIC_URL / MCP_REVIEW_ACTIONS for one test."""
 
-    def _set(allowed_hosts: str = "", public_url: str = ""):
+    def _set(allowed_hosts: str = "", public_url: str = "", review_actions: bool = False):
         monkeypatch.setattr(settings, "MCP_ALLOWED_HOSTS", allowed_hosts, raising=False)
         monkeypatch.setattr(settings, "MCP_PUBLIC_URL", public_url, raising=False)
+        # ADR-009 adds a review-actions warning on remote tiers; tests that
+        # count tier warnings pin it off unless they opt in.
+        monkeypatch.setattr(settings, "MCP_REVIEW_ACTIONS", review_actions, raising=False)
 
     _set()
     return _set
@@ -273,6 +276,29 @@ def test_http_public_url_adds_plain_http_warning(mcp_settings, caplog):
     assert len(warnings) == 2
     assert any("remote tier enabled" in w for w in warnings)
     assert any("plain http://" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    "tier",
+    [
+        {"public_url": "https://imi.example.ts.net/api/mcp/http"},
+        {"allowed_hosts": "imi.example.ts.net"},
+    ],
+)
+def test_remote_tier_with_review_actions_adds_warning(mcp_settings, caplog, tier):
+    mcp_settings(review_actions=True, **tier)
+    caplog.set_level(logging.INFO, logger=mcp_server.logger.name)
+    mcp_server.log_mcp_access_tier()
+    warnings = _messages(caplog, logging.WARNING)
+    assert len(warnings) == 2
+    assert any("MCP_REVIEW_ACTIONS" in w for w in warnings)
+
+
+def test_local_tier_with_review_actions_logs_no_warning(mcp_settings, caplog):
+    mcp_settings(review_actions=True)
+    caplog.set_level(logging.INFO, logger=mcp_server.logger.name)
+    mcp_server.log_mcp_access_tier()
+    assert _messages(caplog, logging.WARNING) == []
 
 
 def test_invalid_public_url_logs_error(mcp_settings, caplog):

@@ -29,9 +29,14 @@ curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies
 
 1. **You write evidence, never instructions.** Whatever you persist via `memory_writeback`,
    `capture_thought`, or ingestion enters as evidence-grade, pending review. You cannot
-   promote it — only a human review action (`update_signal` with `review_action="confirm"`,
-   or the review UI/endpoints) grants instruction grade. Don't try to work around this; it's
-   enforced server-side at write, review, and recall (ADR-002).
+   promote it on your own. A human can, in the review UI or through the review endpoints, or
+   by directing you to call `update_signal` with `review_action="confirm"` on their behalf.
+   Only do that when they ask. imi records it as an MCP-originated review: the server stamps
+   the audit actor (`mcp:<client>`) and keeps any `actor` you pass only as an unverified
+   claim. An instance can turn MCP review actions off (`MCP_REVIEW_ACTIONS=false`); the call
+   then fails and the person reviews in the UI. Editing the content of a reviewed signal
+   sends it back to pending and removes instruction grade (ADR-009). Don't try to work
+   around any of this; it's enforced server-side at write, review, and recall (ADR-002).
 2. **When recalling memory to decide how to act**, request `authority="instruction"` for
    policy and `authority="evidence"` for context — and treat them differently. Policy hits
    from `judge_recall` carry a `required_behavior` (allow/block/revise/escalate): honor it.
