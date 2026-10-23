@@ -1,13 +1,23 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   createIngestEventSource,
   fetchIngestStatus,
   type IngestSSEEvent,
   type IngestPhaseEvent,
+  type IngestCompleteEvent,
+  type PhaseOutcome,
 } from "@/lib/api/ingest";
 
 // ---------------------------------------------------------------------------
@@ -47,7 +57,7 @@ const PHASE_LABELS: Record<string, string> = {
 // Types
 // ---------------------------------------------------------------------------
 
-type PhaseState = "pending" | "active" | "done" | "failed";
+type PhaseState = "pending" | "active" | "done" | "warning" | "failed";
 
 export interface IngestProgressProps {
   jobId: string;
@@ -65,6 +75,13 @@ function phaseStateIcon(state: PhaseState) {
   switch (state) {
     case "done":
       return <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />;
+    case "warning":
+      return (
+        <AlertTriangle
+          className="h-4 w-4 text-amber-500 shrink-0"
+          aria-label="Completed with a warning"
+        />
+      );
     case "active":
       return (
         <Loader2 className="h-4 w-4 text-violet-500 shrink-0 animate-spin" />
@@ -76,6 +93,12 @@ function phaseStateIcon(state: PhaseState) {
         <Circle className="h-4 w-4 text-muted-foreground/30 shrink-0" />
       );
   }
+}
+
+function outcomesByPhase(list: PhaseOutcome[] | undefined): Record<string, PhaseOutcome> {
+  const out: Record<string, PhaseOutcome> = {};
+  for (const rec of list ?? []) out[rec.phase] = rec;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +117,19 @@ export function IngestProgress({
   const [failed, setFailed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [, setDone] = useState(false);
+  // Per-phase outcomes; a "failed" outcome on a completed phase means the
+  // phase degraded and the job ends completed_with_warnings.
+  const [outcomes, setOutcomes] = useState<Record<string, PhaseOutcome>>({});
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [showWarnings, setShowWarnings] = useState(false);
+
+  const applyOutcomes = useCallback(
+    (list: PhaseOutcome[] | undefined, warn: string[] | undefined) => {
+      if (list) setOutcomes(outcomesByPhase(list));
+      if (warn) setWarnings(warn);
+    },
+    [],
+  );
 
   // Keep stable refs for callbacks
   const onDeltaReadyRef = useRef(onDeltaReady);
@@ -119,13 +155,17 @@ export function IngestProgress({
         const status = await fetchIngestStatus(jobId);
         setPhasesCompleted(new Set(status.phases_completed));
         setCurrentPhase(status.current_phase);
+        applyOutcomes(status.phase_outcomes, status.warnings);
 
         if (status.status === "failed") {
           setFailed(true);
           setErrorMsg(status.error ?? "Pipeline failed");
           onFailedRef.current?.(status.error ?? "Pipeline failed");
           stopPolling();
-        } else if (status.status === "completed") {
+        } else if (
+          status.status === "completed" ||
+          status.status === "completed_with_warnings"
+        ) {
           setDone(true);
           onDeltaReadyRef.current?.();
           stopPolling();
@@ -139,7 +179,7 @@ export function IngestProgress({
         // poll errors are non-fatal; SSE likely reconnecting
       }
     }, 3000);
-  }, [jobId, stopPolling]);
+  }, [jobId, stopPolling, applyOutcomes]);
 
   useEffect(() => {
     // Reset deltaNotified flag when jobId changes
@@ -154,6 +194,7 @@ export function IngestProgress({
           if (e.status === "completed") {
             setPhasesCompleted(new Set(e.phases_completed));
             setCurrentPhase(null);
+            applyOutcomes(e.phase_outcomes, e.warnings);
           } else if (e.status === "started") {
             setCurrentPhase(e.phase);
           }
@@ -163,6 +204,8 @@ export function IngestProgress({
             onDeltaReadyRef.current?.();
           }
         } else if (event.type === "ingest_complete") {
+          const done = event as IngestCompleteEvent;
+          applyOutcomes(done.phase_outcomes, done.warnings);
           setDone(true);
           setPhasesCompleted(new Set(PHASES));
           setCurrentPhase(null);
@@ -194,14 +237,16 @@ export function IngestProgress({
       es.close();
       stopPolling();
     };
-  }, [jobId, startPolling, stopPolling]);
+  }, [jobId, startPolling, stopPolling, applyOutcomes]);
+
+  const degraded = Object.values(outcomes).filter((o) => o.outcome === "failed");
 
   return (
     <div className="space-y-1" role="status" aria-label="Ingestion pipeline progress">
       {PHASES.map((phase) => {
         let state: PhaseState = "pending";
         if (phasesCompleted.has(phase)) {
-          state = "done";
+          state = outcomes[phase]?.outcome === "failed" ? "warning" : "done";
         } else if (currentPhase === phase) {
           state = failed ? "failed" : "active";
         }
@@ -213,6 +258,7 @@ export function IngestProgress({
               "flex items-center gap-2.5 px-1 py-1 rounded text-sm transition-colors",
               state === "active" && "text-violet-700 dark:text-violet-300 font-medium",
               state === "done" && "text-muted-foreground",
+              state === "warning" && "text-amber-700 dark:text-amber-400",
               state === "pending" && "text-muted-foreground/50",
               state === "failed" && "text-destructive",
             )}
@@ -222,6 +268,46 @@ export function IngestProgress({
           </div>
         );
       })}
+
+      {!failed && (warnings.length > 0 || degraded.length > 0) && (
+        <div
+          className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+          data-testid="ingest-warnings"
+        >
+          <button
+            type="button"
+            onClick={() => setShowWarnings((v) => !v)}
+            aria-expanded={showWarnings}
+            className="inline-flex items-center gap-1 font-medium"
+          >
+            {showWarnings ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            Completed with warnings ({Math.max(warnings.length, degraded.length)})
+          </button>
+          {showWarnings && (
+            <ul className="mt-1 space-y-1 pl-5">
+              {degraded.length > 0
+                ? degraded.map((o) => (
+                    <li key={o.phase} className="list-disc break-words">
+                      <span className="font-medium">
+                        {PHASE_LABELS[o.phase] ?? o.phase}
+                      </span>
+                      {o.detail ? `: ${o.detail}` : ""}
+                      {o.retryable ? " (retryable)" : ""}
+                    </li>
+                  ))
+                : warnings.map((w) => (
+                    <li key={w} className="list-disc break-words">
+                      {w}
+                    </li>
+                  ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {errorMsg && (
         <p className="mt-2 text-xs text-destructive px-1">{errorMsg}</p>

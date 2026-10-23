@@ -363,7 +363,9 @@ class RebuildOrchestrator(BaseOrchestrator):
             sub_result = await self._ingest.process_observation(
                 obs, bot_id, sub_job_id, {}
             )
-            if sub_result.get("status") == "completed":
+            # completed_with_warnings: re-extracted and persisted, a phase
+            # degraded (logged with the phase outcome) — still processed.
+            if sub_result.get("status") in ("completed", "completed_with_warnings"):
                 processed += 1
             else:
                 failed.append(bot_id)

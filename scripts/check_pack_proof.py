@@ -50,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pack_common import REPO_ROOT, load_pack, load_yaml  # noqa: E402
 
 LEDGER_DIR = REPO_ROOT / "build" / "pack-proof"
-TERMINAL = {"completed", "failed", "dropped"}
+TERMINAL = {"completed", "completed_with_warnings", "failed", "dropped"}
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +196,11 @@ def ingest_sample(client, docs, ledger: dict[str, str], *, timeout: float, force
             continue
         status = wait_for_job(client, resp["job_id"], timeout, poll)
         state = status.get("status")
-        if state == "completed":
+        if state in ("completed", "completed_with_warnings"):
             ledger[sid] = d["sha"]
             log(f"  ingested {sid} ({status.get('content_type') or '?'})")
+            for warning in status.get("warnings") or []:
+                log(f"    warning  {warning}")
         else:
             errors.append(f"{sid}: job {resp['job_id']} ended {state}: {status.get('error') or ''}")
             log(f"  ERROR    {sid}: {state}")

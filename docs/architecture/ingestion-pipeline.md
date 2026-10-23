@@ -114,7 +114,34 @@ token-bucket rate limiting (`claude_client.py:569-643`). Each extraction has a n
 
 - **Job store** — an in-memory dict (`app/routes/ingest.py:37`) keyed by `job:{job_id}`,
   content hash, and `source_id:{source_id}`. *Ephemeral: lost on restart.* Job status shape:
-  `status`, `content_type`, `phases_completed[]`, `current_phase`, `result`, `error`.
+  `status`, `content_type`, `phases_completed[]`, `phase_outcomes[]`, `warnings[]`,
+  `current_phase`, `result`, `error`.
+- **Phase lifecycle** — `_run_phase` runs each phase and appends a plain-dict outcome to
+  `phase_outcomes`: `{"phase", "outcome", "detail", "retryable"}` with `outcome` one of
+  `ok` (did its work), `empty` (ran, found nothing — e.g. no signals), `skipped`
+  (intentionally not run — library lane, no LLM client, no API key, no git storage) or
+  `failed`. A phase that raises is recorded `failed` and fails the job, as before. The
+  "non-fatal" steps above do not raise: they report through `phase_report().failed(...)`
+  (`app/services/orchestrators/phase_outcomes.py`) and the pipeline carries on — signal
+  promotion, the Neo4j signal write, entity node writes and resolution, relationship
+  inference, claim attribution, graph document sync / manifest records, duplicate /
+  supersession / conflict matching, delta commit and profile enrichment. Context-only
+  lookups (glossary, type descriptions, namesakes) stay log-only. `retryable` says whether
+  a re-run could plausibly succeed (service/LLM/IO errors) versus a deterministic one (bad
+  domain config).
+- **Status vocabulary** — `pending` → `running` → one of `completed` (every phase ok /
+  empty / skipped), `completed_with_warnings` (at least one phase reported `failed` but the
+  content was persisted), `failed` (a phase raised, or the PERSIST corpus write failed —
+  files are the source of truth, so a job that did not write them is not a success),
+  `dropped` (lane admission). `warnings` holds one `"PHASE: detail"` line per failed phase.
+- **Where warnings appear** — `GET /api/ingest/{job_id}/status` (`phase_outcomes`,
+  `warnings`), `GET /api/ingest/{job_id}/delta` (same two fields, from the job record), SSE
+  `ingest_phase` "completed" events (`outcome`, `detail`, `retryable`, running
+  `phase_outcomes` / `warnings`) and `ingest_complete` (`status`, `phase_outcomes`,
+  `warnings`), `submit_and_wait` and the `add_call_transcript` MCP tool (`status:
+  completed_with_warnings`, `warnings`). The UI shows an amber state in `IngestProgress`
+  (per-phase details on expand) and on the overview's latest-intake card. The committed
+  `deltas/delta-*.md` artifact is unchanged.
 - **Task queue** — in-process `asyncio.PriorityQueue`, max concurrency 3
   (`app/services/task_queue.py:95`). No broker; failures surface but don't auto-retry.
 - **Idempotency** — dedup by `source_id` first, then SHA-256 content hash
@@ -147,7 +174,7 @@ If you're adding a new source, prefer the front door (`/api/ingest`) over clonin
 | Run a library-primary deployment (research, policy, analyst teams) | `library:` / `recall:` in `config/lanes.yaml` ([ADR-006](../adr/ADR-006-library-primary-deployments.md)): `decay.enabled` / `decay.horizons_days`, `entities.mode: allowlist` + `entities.create_types` (through entity admission), `infer_relationships`, `attribution_types`, `recall.default_lanes`. Bad values warn and fall back to the defaults (= ADR-003). Read claims over time with the `list_claims` MCP tool |
 | Route inference to other models/providers | Create `config/inference.yaml` (see `config/inference.yaml.example`); per-operation routing to Anthropic / vLLM / Bedrock / OpenAI-compatible endpoints |
 | Change which entity/relationship types are persisted | Edit the active domain schema — the graph-enrichment phase validates against it. See [Domain Schemas](../customization/domain-schemas.md) |
-| Add a pipeline stage | Add a phase name to `PHASES` (`ingest_orchestrator.py:72`), write a `_phase_*` coroutine, insert a `_run_phase(...)` call in `_run_observation_phases` (`:240`). Status tracking and SSE come for free |
+| Add a pipeline stage | Add a phase name to `PHASES` (`ingest_orchestrator.py:72`), write a `_phase_*` coroutine, insert a `_run_phase(...)` call in `_run_observation_phases` (`:240`). Status tracking, phase outcomes and SSE come for free; report a degraded step with `phase_report().failed(detail)` (or `.empty()` / `.skipped()`) instead of only logging it |
 | Add an extraction tool | Register in `_get_extraction_tools` (`app/routes/ingest.py:406`); tools subclass `AgentTool` (`app/services/agent_tools.py`) |
 
 Known hardcoded seams (accepted for the community edition): phase ordering, the in-memory job

@@ -420,6 +420,15 @@ class TestIngestRoutes:
 class TestIngestOrchestrator:
     """Test the orchestration pipeline using the observation value chain."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_signal_store(self, monkeypatch):
+        # A degraded phase now shows in the job status, so the store the
+        # pipeline reads/writes must work for a run to be clean.
+        store = Mock()
+        store.load_all = Mock(return_value=[])
+        monkeypatch.setattr("app.services.signal_store.signal_store", store)
+        return store
+
     @pytest.fixture
     def mock_classifier(self):
         classifier = Mock()
@@ -428,11 +437,14 @@ class TestIngestOrchestrator:
 
     @pytest.fixture
     def mock_claude_client(self):
-        return Mock()
+        # No LLM: the LLM-backed phases report skipped/empty instead of
+        # crashing on a bare Mock (which now surfaces as a warning).
+        return None
 
     @pytest.fixture
     def mock_graph(self):
         graph = AsyncMock()
+        graph.nodes = {}
         return graph
 
     @pytest.fixture

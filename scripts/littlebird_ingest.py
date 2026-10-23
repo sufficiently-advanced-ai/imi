@@ -104,7 +104,7 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
                 seen.append(phase)
                 print(f"    ✓ {phase:<20} +{time.monotonic() - started:6.1f}s")
         # "dropped": lane admission (ADR-003) rejected the item as junk.
-        if s.get("status") in ("completed", "failed", "dropped"):
+        if s.get("status") in ("completed", "completed_with_warnings", "failed", "dropped"):
             break
         if time.monotonic() - started > poll_timeout:
             print(f"    … still {s.get('current_phase')} after {poll_timeout:.0f}s — moving on")
@@ -119,13 +119,18 @@ def ingest_one(client: httpx.Client, m: dict, poll_timeout: float) -> dict:
         print(f"    ✗ FAILED: {s.get('error')}")
         return {"job_id": job_id, "status": "failed", "error": s.get("error")}
 
+    # completed_with_warnings: stored, but a phase degraded (e.g. signal
+    # extraction crashed) — say so instead of reporting a clean ingest.
+    for warning in s.get("warnings") or []:
+        print(f"    ⚠ {warning}")
     delta = _request(client, "GET", f"/api/ingest/{job_id}/delta")
     delta_json = delta.json() if delta.status_code == 200 else {}
     if delta_json:
         print(f"    Δ {summarize_delta(delta_json)}")
     return {
         "job_id": job_id,
-        "status": "completed",
+        "status": s["status"],
+        "warnings": s.get("warnings") or [],
         "seconds": round(time.monotonic() - started, 1),
         "result": s.get("result"),
         "delta": delta_json,
@@ -165,7 +170,9 @@ def main() -> None:
         for n, m in enumerate(todo, 1):
             print(f"\n[{n}/{len(todo)}] {m['start_time'][:10]}  {m['title']}  ({len(m['participants'])} participants)")
             outcome = ingest_one(client, m, args.poll_timeout)
-            if outcome["status"] in ("completed", "duplicate", "dropped"):
+            if outcome["status"] in (
+                "completed", "completed_with_warnings", "duplicate", "dropped"
+            ):
                 ledger[m["littlebird_id"]] = outcome
                 ledger_path.write_text(json.dumps(ledger, indent=2, default=str))
 

@@ -31,11 +31,36 @@ export interface IngestResponse {
   poll_url: string;
 }
 
+/**
+ * Job status vocabulary. `completed_with_warnings`: every phase returned but at
+ * least one degraded (e.g. signal promotion crashed) — the content was still
+ * persisted; `warnings` / `phase_outcomes` say what went wrong.
+ */
+export type IngestJobState =
+  | "pending"
+  | "running"
+  | "completed"
+  | "completed_with_warnings"
+  | "failed"
+  | "dropped";
+
+/** What one pipeline phase did (mirrors the backend PhaseOutcome). */
+export interface PhaseOutcome {
+  phase: string;
+  outcome: "ok" | "empty" | "skipped" | "failed";
+  detail: string | null;
+  retryable: boolean;
+}
+
 export interface IngestJobStatus {
   job_id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: IngestJobState;
   content_type: string | null;
   phases_completed: string[];
+  /** Absent on servers that predate phase outcomes. */
+  phase_outcomes?: PhaseOutcome[];
+  /** One line per failed phase ("PHASE: detail"). */
+  warnings?: string[];
   current_phase: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
@@ -52,6 +77,12 @@ export interface IngestPhaseEvent {
   phases_completed: string[];
   timestamp: string;
   execution_id?: string;
+  /** On "completed" events: this phase's outcome. */
+  outcome?: PhaseOutcome["outcome"];
+  detail?: string | null;
+  retryable?: boolean;
+  phase_outcomes?: PhaseOutcome[];
+  warnings?: string[];
 }
 
 export interface DeltaReportReadyEvent {
@@ -63,6 +94,9 @@ export interface DeltaReportReadyEvent {
 export interface IngestCompleteEvent {
   type: "ingest_complete";
   result: Record<string, number | string>;
+  status?: "completed" | "completed_with_warnings";
+  phase_outcomes?: PhaseOutcome[];
+  warnings?: string[];
   timestamp: string;
 }
 
@@ -133,6 +167,8 @@ export interface DeltaReport {
   commitments_closed: DeltaItem[];
   entities_touched: Array<{ id: string; name: string; type: string }>;
   counts: Record<string, number>;
+  phase_outcomes?: PhaseOutcome[];
+  warnings?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +199,8 @@ export interface IngestJobRecord {
   status: IngestJobStatus["status"];
   created_at?: string;
   title?: string | null;
+  phase_outcomes?: PhaseOutcome[];
+  warnings?: string[];
   [key: string]: unknown;
 }
 

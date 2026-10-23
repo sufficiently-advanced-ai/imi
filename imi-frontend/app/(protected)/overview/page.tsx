@@ -15,6 +15,7 @@ import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { BasePathLink } from "@/lib/utils/links";
 import {
+  AlertTriangle,
   ArrowRight,
   ChevronDown,
   ChevronRight,
@@ -244,10 +245,18 @@ function LatestIntakeCard() {
 
   const newestId = newest?.job_id ?? null;
   const newestStatus = newest?.status ?? null;
+  const newestCompleted =
+    newestStatus === "completed" || newestStatus === "completed_with_warnings";
+  // A job that completed with warnings persisted its content but some phase
+  // degraded (e.g. signal promotion crashed) — never show it as clean.
+  const rawWarnings = newest?.warnings;
+  const newestWarnings: string[] = Array.isArray(rawWarnings)
+    ? rawWarnings
+    : [];
 
   useEffect(() => {
     // Delta is only available once the pipeline has completed.
-    if (!newestId || newestStatus !== "completed") {
+    if (!newestId || !newestCompleted) {
       setDelta(null);
       return;
     }
@@ -267,7 +276,7 @@ function LatestIntakeCard() {
     return () => {
       cancelled = true;
     };
-  }, [newestId, newestStatus]);
+  }, [newestId, newestCompleted]);
 
   return (
     <Card>
@@ -308,13 +317,15 @@ function LatestIntakeCard() {
                   variant={
                     newest.status === "completed"
                       ? "success"
-                      : newest.status === "failed"
-                        ? "destructive"
-                        : "outline"
+                      : newest.status === "completed_with_warnings"
+                        ? "warning"
+                        : newest.status === "failed"
+                          ? "destructive"
+                          : "outline"
                   }
                   className="flex-shrink-0 px-1.5 py-0 text-[10px]"
                 >
-                  {newest.status.toUpperCase()}
+                  {newest.status.replace(/_/g, " ").toUpperCase()}
                 </Badge>
               </div>
               {jobDate(newest) && (
@@ -334,7 +345,15 @@ function LatestIntakeCard() {
               </div>
             )}
 
-            {(delta || deltaLoading) && (
+            {newestWarnings.length > 0 && !expanded && (
+              <p className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {newestWarnings.length} pipeline{" "}
+                {newestWarnings.length === 1 ? "warning" : "warnings"}
+              </p>
+            )}
+
+            {(delta || deltaLoading || newestWarnings.length > 0) && (
               <>
                 <button
                   type="button"
@@ -348,7 +367,19 @@ function LatestIntakeCard() {
                   )}
                   {expanded ? "Hide details" : "View change report"}
                 </button>
-                {expanded && (
+                {expanded && newestWarnings.length > 0 && (
+                  <ul
+                    className="space-y-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                    aria-label="Pipeline warnings"
+                  >
+                    {newestWarnings.map((w) => (
+                      <li key={w} className="break-words">
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {expanded && (delta || deltaLoading) && (
                   <DeltaReportCard report={delta} loading={deltaLoading} />
                 )}
               </>

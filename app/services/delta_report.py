@@ -77,6 +77,11 @@ class DeltaReport(BaseModel):
     commitments_closed: list[DeltaItem]
     entities_touched: list[dict]  # {id, name, type} deduped by id
     counts: dict[str, int]  # one entry per section
+    # Filled from the job's phase outcomes once the pipeline finishes: a
+    # degraded phase (e.g. signal promotion crashed) is named here so an
+    # empty-looking report is not mistaken for "nothing to learn".
+    phase_outcomes: list[dict] = []
+    warnings: list[str] = []
 
 
 # ---------------------------------------------------------------------------
