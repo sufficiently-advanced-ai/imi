@@ -84,7 +84,7 @@ Setup walkthrough — repo creation, token scopes, webhook wiring, migration war
 | `GITHUB_ACCESS_TOKEN` (alias of `GITHUB_TOKEN`; canonical wins) | — | corpus clone/push auth; auto-injected only into `https://github.com/...` URLs (`app/git_ops.py:636`) |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | `imi Bot` / `imi-bot@example.com` | commit identity on corpus writes |
 | `REPO_NAME` | — | `owner/repo` for the webhook path's GitHub API client; **not forwarded by stock compose** — add via an override file |
-| `WEBHOOK_SECRET` | — | reserved — accepted in config but **not verified** by the community `/api/webhook/github` path; don't expose the endpoint publicly |
+| `GITHUB_WEBHOOK_SECRET` (or `WEBHOOK_SECRET`, which wins) | — | GitHub webhook secret. When set, `/api/webhook/github` requires a valid `X-Hub-Signature-256` and returns 401 otherwise; when unset, unsigned deliveries are accepted with a one-time warning. **Set it whenever the endpoint is reachable beyond loopback.** Not forwarded by stock compose — add via an override file ([setup](git-corpus.md)) |
 | `allowed_branches` | `["main"]` | defined but currently unused |
 | `BOT_COMMIT_PREFIX` | `[bot]` | prefix on automated commits; the webhook skips commits carrying it (loop protection) |
 

@@ -1,6 +1,11 @@
+import hashlib
+import hmac
 import json
 import logging
+import os
 import sys
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
@@ -89,18 +94,130 @@ async def shutdown_event():
     await global_task_queue.stop()
 
 
+# Values that mean "a secret is configured elsewhere", never a usable key:
+# ConfigManager persists secrets to app_config.json as "[CONFIGURED]", and the
+# example config carries an unexpanded "${GITHUB_WEBHOOK_SECRET}" placeholder.
+_SECRET_PLACEHOLDERS = ("[CONFIGURED]", "[REDACTED]")
+
+# Bounded memory of handled X-GitHub-Delivery ids. In-process only: a restart
+# forgets them, which at worst re-runs an idempotent re-ingest.
+MAX_SEEN_DELIVERIES = 1000
+_seen_deliveries: "OrderedDict[str, None]" = OrderedDict()
+_seen_lock = threading.Lock()
+
+_unverified_warning_logged = False
+
+
+def verify_github_signature(
+    secret: str, body: bytes, signature_header: str | None
+) -> bool:
+    """Return True iff ``signature_header`` is GitHub's HMAC-SHA256 of ``body``.
+
+    GitHub sends ``X-Hub-Signature-256: sha256=<hexdigest>`` computed over the raw
+    request body with the webhook secret. The comparison is constant-time.
+    """
+    if not secret or not signature_header:
+        return False
+    expected = (
+        "sha256="
+        + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    )
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+def _is_placeholder(value: str) -> bool:
+    return value in _SECRET_PLACEHOLDERS or (
+        value.startswith("${") and value.endswith("}")
+    )
+
+
+def get_webhook_secret() -> str:
+    """Resolve the effective GitHub webhook secret ("" when none is configured).
+
+    ``settings.WEBHOOK_SECRET`` (env ``WEBHOOK_SECRET`` or app_config.json
+    ``github.webhook_secret``) wins. An empty value or a redacted/unexpanded
+    placeholder falls back to the ``GITHUB_WEBHOOK_SECRET`` env var, the name
+    the config layer documents.
+    """
+    secret = (settings.WEBHOOK_SECRET or "").strip()
+    if not secret or _is_placeholder(secret):
+        secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
+        if _is_placeholder(secret):
+            secret = ""
+    return secret
+
+
+def _warn_unverified_once() -> None:
+    global _unverified_warning_logged
+    if not _unverified_warning_logged:
+        _unverified_warning_logged = True
+        logger.warning(
+            "GitHub webhook signature verification is DISABLED: no webhook secret "
+            "is configured. Set GITHUB_WEBHOOK_SECRET (or WEBHOOK_SECRET) whenever "
+            "/api/webhook/github is reachable beyond loopback."
+        )
+
+
+def _delivery_seen(delivery_id: str) -> bool:
+    with _seen_lock:
+        return delivery_id in _seen_deliveries
+
+
+def _remember_delivery(delivery_id: str) -> None:
+    with _seen_lock:
+        _seen_deliveries[delivery_id] = None
+        _seen_deliveries.move_to_end(delivery_id)
+        while len(_seen_deliveries) > MAX_SEEN_DELIVERIES:
+            _seen_deliveries.popitem(last=False)
+
+
 @router.post("/webhook/github", response_model=WebhookResponse)
 async def github_webhook(
-    request: Request, event: str = Header(..., alias="X-GitHub-Event")
+    request: Request,
+    event: str = Header(..., alias="X-GitHub-Event"),
+    signature: str | None = Header(None, alias="X-Hub-Signature-256"),
+    delivery_id: str | None = Header(None, alias="X-GitHub-Delivery"),
 ) -> WebhookResponse:
-    """Handle incoming GitHub webhooks with extra logging for maximum visibility."""
+    """Handle incoming GitHub webhooks.
+
+    With a webhook secret configured, ``X-Hub-Signature-256`` is verified over the
+    raw body before anything is parsed; a missing or wrong signature is a 401.
+    Without one, deliveries are accepted (loopback deployments) and a warning is
+    logged once per process. A repeated ``X-GitHub-Delivery`` id is acknowledged
+    without re-running the pipeline.
+    """
+    body = await request.body()
+
+    secret = get_webhook_secret()
+    if secret:
+        if not verify_github_signature(secret, body, signature):
+            _log_webhook(
+                "webhook_signature_rejected",
+                {
+                    "event": event,
+                    "delivery_id": delivery_id,
+                    "signature_present": bool(signature),
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing X-Hub-Signature-256",
+            )
+    else:
+        _warn_unverified_once()
+
+    if delivery_id and _delivery_seen(delivery_id):
+        _log_webhook(
+            "webhook_duplicate_delivery", {"event": event, "delivery_id": delivery_id}
+        )
+        return WebhookResponse(status="already_processed")
+
     try:
-        # Parse payload
-        payload = await request.json()
+        payload = json.loads(body)
 
         # Create orchestrator and process webhook
         orchestrator = WebhookOrchestrator(payload, event)
-        return await orchestrator.process()
+        result = await orchestrator.process()
 
     except Exception as e:
         error = HTTPException(
@@ -112,6 +229,12 @@ async def github_webhook(
             error,
         )
         raise error
+
+    # Remember only handled deliveries, so GitHub's redelivery of a failed
+    # attempt is processed rather than short-circuited.
+    if delivery_id:
+        _remember_delivery(delivery_id)
+    return result
 
 
 

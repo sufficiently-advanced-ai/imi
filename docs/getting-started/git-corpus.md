@@ -114,14 +114,17 @@ services:
   app:
     environment:
       - REPO_NAME=${REPO_NAME:-}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
 ```
 
-Then set `REPO_NAME=your-org/your-kb` in `.env` and recreate the container.
+Then set `REPO_NAME=your-org/your-kb` and `GITHUB_WEBHOOK_SECRET=<a long random string>` in
+`.env` and recreate the container.
 
 **GitHub-side.** Repo → Settings → Webhooks → Add webhook:
 
 - Payload URL: `https://<your-host>/api/webhook/github`
 - Content type: `application/json`
+- Secret: the same value as `GITHUB_WEBHOOK_SECRET`
 - Events: *Just the push event* — anything else is rejected with a 400
   (`app/github_client.py:258-270`)
 
@@ -132,13 +135,16 @@ in the background. Commits from `*[bot]` users or messages starting with
 protection that stops imi re-ingesting its own pushes; don't strip the prefix from automated
 commits.
 
-> **Security reality check:** the community webhook path validates the event type but does
-> **not** verify GitHub's HMAC signature — `WEBHOOK_SECRET` is accepted in config and unused
-> here, as is the `allowed_branches` setting. Anyone who can reach the endpoint can trigger
-> a pull-and-ingest. Keep the instance loopback/VPN-only (the shipped compose binds
-> `127.0.0.1`), or front it with a proxy that enforces auth before exposing the webhook. If
-> you can't do either, don't add the webhook — poll with a cron that calls
-> `POST /api/repository/reinitialize` instead.
+> **Signature verification.** When a webhook secret is configured (`GITHUB_WEBHOOK_SECRET`,
+> or `WEBHOOK_SECRET`, which takes precedence), the handler verifies GitHub's
+> `X-Hub-Signature-256` HMAC over the raw body and rejects a missing or wrong signature with
+> a 401 before the payload is parsed (`verify_github_signature` in `app/routes/webhook.py`).
+> A repeated `X-GitHub-Delivery` id (the last 1000, in-process) is acknowledged with
+> `"status": "already_processed"` without re-running the pull-and-ingest. With **no** secret
+> set, unsigned deliveries are still accepted so existing loopback-only installs keep working,
+> and a warning is logged once per process — anyone who can reach the endpoint can then
+> trigger a pull-and-ingest. **Configure `GITHUB_WEBHOOK_SECRET` whenever the endpoint is
+> reachable beyond loopback.** The `allowed_branches` setting is still unused on this path.
 
 ## Operational notes
 
@@ -162,5 +168,6 @@ commits.
 | Clone works but pushes fail with 403 | token lacks **write** (fine-grained: Contents read-only; or SSO not authorized for an org repo) |
 | Webhook returns 500 `GITHUB_TOKEN not configured` | no token reached the app — set `GITHUB_ACCESS_TOKEN` in `.env` (Step 2) and recreate the container |
 | Webhook returns 400 | non-push event — set the webhook to push events only |
+| Webhook returns 401 | signature missing or wrong — the GitHub webhook's Secret must equal `GITHUB_WEBHOOK_SECRET` (or `WEBHOOK_SECRET`) in the app container |
 | Webhook delivers but nothing re-ingests | commit was skipped as a bot commit, or touched no `.md`/`.markdown` files — check `docker compose logs app` for `skipping_bot_commit` |
 | Local corpus vanished after enabling remote mode | the wipe-and-reclone above — restore from any backup/clone of the old `./repo` and push it to the remote |
