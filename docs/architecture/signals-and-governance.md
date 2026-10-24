@@ -54,8 +54,15 @@ re-hydrated from the authoritative store at recall time. Practical consequence:
 
 > **An agent can never mint instruction-grade memory.** Pipeline-extracted signals enter as
 > `inferred`/`pending`; agent writebacks are clamped to `generated`; only a human review
-> transition (`update_signal(review_action="confirm")` via MCP, or the review endpoints)
-> grants instruction grade.
+> transition (the review UI/endpoints, or `update_signal(review_action="confirm")` called by
+> an agent at a human's direction) grants instruction grade.
+
+MCP has no authentication (ADR-008), so an MCP review is recorded as MCP-originated, not as a
+named reviewer: the handler stamps `actor` as `mcp` or `mcp:<clientInfo.name>` and stores the
+caller's `actor` argument as `claimed_actor` (unverified). `MCP_REVIEW_ACTIONS=false` turns
+review actions over MCP off (the `update_signal` tool and the `ask_kb` sub-agent) while REST
+review keeps working; startup warns when the remote tier is on and the flag is still true
+(`app/services/review_authority.py`, ADR-009).
 
 Authority fields are **server-injected and never client-settable** — keep them out of any
 new API input models, or you've built a privilege escalation.
@@ -74,13 +81,26 @@ instruction grade). Each action maps to an ADR-001 gate response: `allow` / `blo
 signal. It's duck-typed, so the same audit path covers signals, captured memories, and agent
 memories.
 
+### Revision binding (ADR-009)
+
+A review applies to the text that was reviewed. `confirm`, `reject` and `evidence_only` set
+`reviewed_content_hash` (sha256 of the content, `signal_governance.content_hash`) on the
+record. Every content edit of a signal goes through `SignalStore.update_signal_governed`,
+which calls the pure `demote_for_content_change`: if the signal is in a reviewed state (or
+instruction-grade) and the new content's hash differs from the reviewed one, the signal goes
+back to `review_status="pending"` with `can_use_as_instruction=False`, and a `content_edited`
+audit row (before/after governance snapshots plus `content_hash`) is appended first, under the
+same rules as below (a failed persist adds `content_edited_failed`). `provenance_status` and
+`can_use_as_evidence` are left alone: demotion only removes authority. Status, owner and
+due-date edits, and edits that leave the text identical, never demote. Records reviewed before
+this existed have no hash; their current content stands in for the reviewed revision.
+
 ### Durability: audit first, atomic state
 
 Every signal review goes through `update_signal(review_action=…)` in
 `app/services/chat_tools.py`; the decision/supersession REST routes and the MCP tool both call
-it. (Captured-memory and agent-memory reviews use their own paths in
-`app/services/capture_service.py` and `app/services/memory_writeback.py`, which do not follow
-this ordering yet.) It writes in this order:
+it. A demoting content edit (above) follows the same order inside
+`SignalStore.update_signal_governed`. It writes in this order:
 
 1. Take the per-container lock (`SignalStore.container_lock`, one re-entrant
    `threading.RLock` per meeting file) and re-read the signal from disk, so two concurrent
@@ -94,10 +114,19 @@ this ordering yet.) It writes in this order:
    applied, and the call returns `success: False`.
 4. Release the lock; then the best-effort steps: git commit of the audit JSONL, Neo4j mirror.
 
-The invariant: **no persisted governance change exists without a preceding audit row.** The
-log can contain an attempt that was not applied (always followed by its `_failed` row unless
-that second append also failed, which is logged at ERROR); it can never be missing a change
-that was applied.
+Captured-memory and agent-memory reviews (`review_capture` in
+`app/services/capture_service.py`, `review_agent_memory` in `app/services/memory_writeback.py`,
+behind `POST /api/{captures,memories}/{id}/review`) follow steps 2 and 3 through
+`memory_governance.persist_audited_transition`: audit row first, then the record (written with
+`atomic_write_text`), a compensating `<action>_failed` row if that write fails, and
+`success: False` on either failure. Those stores have no per-record lock. Captures and agent
+memories have no content-edit path, so revision binding only records `reviewed_content_hash`
+for them.
+
+The invariant: **no persisted governance change exists without a preceding audit row**, for
+signals, captures and agent memories. The log can contain an attempt that was not applied
+(always followed by its `_failed` row unless that second append also failed, which is logged
+at ERROR); it can never be missing a change that was applied.
 
 ## How signals are born
 
@@ -121,7 +150,7 @@ source resolved to an entity (ADR-006 §5).
 | Surface | What |
 |---|---|
 | REST | `GET /api/signals/feed`, signal transitions in `app/routes/signal_mutations.py` (close/reopen/in-progress/update, bulk), `GET /api/decisions`, `POST /api/{captures,memories}/{id}/review` |
-| MCP | `search_signals`, `search_signals_semantic` (authority-aware), `list_decisions`, `get_decision` (with lineage + audit), `get_constitution`, `update_signal` (fields **and** the governance `review_action`), `delete_signal` |
+| MCP | `search_signals`, `search_signals_semantic` (authority-aware), `list_decisions`, `get_decision` (with lineage + audit), `get_constitution`, `update_signal` (fields **and** the governance `review_action`, unless `MCP_REVIEW_ACTIONS=false`), `delete_signal` |
 | Judge | `POST /api/judge/recall` returns evidence **plus** `policy_hits` — instruction-grade memory and confirmed decisions with `required_behavior` ∈ allow/block/revise/escalate. `POST /api/judge/decisions` records idempotent decision events (`app/services/judge_service.py`) |
 
 The "constitution" (`get_constitution`) renders all confirmed, active decisions as a single

@@ -153,6 +153,7 @@ def log_mcp_access_tier() -> None:
                 "MCP_PUBLIC_URL uses plain http:// — accepted (a tailnet/VPN already "
                 "encrypts traffic), but imi adds no MCP auth or TLS of its own."
             )
+        _warn_remote_review_actions(settings)
         return
 
     remote = [
@@ -168,8 +169,21 @@ def log_mcp_access_tier() -> None:
             "See docs/mcp_access_tiers.md.",
             ", ".join(remote),
         )
+        _warn_remote_review_actions(settings)
     else:
         logger.info("MCP access: local tier (loopback Host allowlist only).")
+
+
+def _warn_remote_review_actions(settings) -> None:
+    """ADR-009: warn when remote MCP clients may perform review actions."""
+    if getattr(settings, "MCP_REVIEW_ACTIONS", True):
+        logger.warning(
+            "MCP_REVIEW_ACTIONS is true while MCP is reachable from other machines: any "
+            "remote MCP client can perform review actions (confirm/reject/...), and confirm "
+            "makes a signal instruction-grade. Recommended for the remote tier: "
+            "MCP_REVIEW_ACTIONS=false, and review in the UI. See "
+            "docs/adr/ADR-009-review-authority-and-revision-binding.md."
+        )
 
 
 _security = TransportSecuritySettings(
@@ -447,6 +461,21 @@ TOOLS = [
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
     return TOOLS
+
+
+def _mcp_client_name() -> str | None:
+    """``clientInfo.name`` the current MCP session sent at initialize, if any.
+
+    Self-reported by the client (MCP has no authentication), so it only labels
+    the channel in the audit actor; it is never treated as a verified identity.
+    """
+    try:
+        params = server.request_context.session.client_params
+    except (LookupError, AttributeError):
+        return None
+    info = getattr(params, "clientInfo", None) if params is not None else None
+    name = getattr(info, "name", None)
+    return name if isinstance(name, str) else None
 
 
 @server.call_tool()
@@ -856,18 +885,11 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
         # --- Signal mutation tools ---
         elif name == "update_signal":
-            from app.services.chat_tools import update_signal
+            from app.services.review_authority import mcp_actor, mcp_update_signal
 
-            result = await update_signal(
-                args["signal_id"],
-                status=args.get("status"),
-                content=args.get("content"),
-                owner_id=args.get("owner_id"),
-                due_date=args.get("due_date"),
-                review_action=args.get("review_action"),
-                actor=args.get("actor"),
-                superseded_by=args.get("superseded_by"),
-            )
+            # ADR-009: actor stamped here, never from args (args["actor"] is
+            # kept as an unverified claim); MCP_REVIEW_ACTIONS gates reviews.
+            result = await mcp_update_signal(args, actor=mcp_actor(_mcp_client_name()))
             return _text(result)
 
         elif name == "delete_signal":
@@ -987,12 +1009,14 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
         elif name == "ask_kb":
             from app.services.ask_kb import ask_kb
+            from app.services.review_authority import mcp_actor
 
             result = await ask_kb(
                 intent=args["intent"],
                 entity_context=args.get("entity_context"),
                 allow_mutations=args.get("allow_mutations", False),
                 max_steps=args.get("max_steps", 8),
+                actor=mcp_actor(_mcp_client_name()),  # ADR-009: stamped here
             )
             return _text(result)
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.models.agent_memory import AgentMemory
+from app.utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,8 @@ class AgentMemoryStore:
     def save(self, memory: AgentMemory) -> Path:
         path = self._file_path(memory)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(memory.model_dump_json(indent=2), encoding="utf-8")
+        # Atomic: a crash mid-write never leaves a truncated record.
+        atomic_write_text(path, memory.model_dump_json(indent=2))
         self._id_index[memory.id] = path
         if self._key_index is not None and memory.idempotency_key:
             self._key_index[memory.idempotency_key] = path
