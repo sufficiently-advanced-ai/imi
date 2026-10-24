@@ -239,8 +239,11 @@ async def startup_reconcile() -> dict[str, Any]:
                 "unknown", reason="reconcile_failed", action="reconcile", error=str(e)
             )
         raise
-    if not is_rebuild_running():
-        # An admin rebuild started meanwhile owns the status until it finishes.
+    rebuilt = result.get("rebuild") == "completed" and corpus_sync.get_corpus_sync()["status"] == "synced"
+    if not is_rebuild_running() and not rebuilt:
+        # An admin rebuild started meanwhile owns the status until it finishes;
+        # a completed startup rebuild already recorded ``synced`` with its
+        # build id and file count.
         corpus_sync.record_reconcile_result(result)
     return result
 

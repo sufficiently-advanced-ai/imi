@@ -161,6 +161,27 @@ async def test_empty_graph_rebuild_failure_is_rebuild_required(monkeypatch):
     assert snap["status"] == "rebuild_required" and snap["error"] == "boom"
 
 
+@pytest.mark.asyncio
+async def test_empty_graph_startup_rebuild_keeps_its_build_provenance(monkeypatch):
+    reconciler = MagicMock()
+    reconciler.reconcile = AsyncMock(return_value={"action": "full_rebuild_required", "reason": "graph_empty"})
+    reconciler.record_full_build = AsyncMock(
+        return_value=Manifest(build_id="fresh", built_at="t3", files={"a.md": (1, 1), "b.md": (1, 1)})
+    )
+    kg = MagicMock()
+    kg.build_graph = AsyncMock(return_value={})
+    monkeypatch.setattr(gr, "make_reconciler", lambda *a, **k: reconciler)
+    monkeypatch.setattr(gr, "_get_kg", lambda: kg)
+    monkeypatch.setattr(gr, "_get_sk", lambda: None)
+
+    result = await gr.startup_reconcile()
+
+    assert result["rebuild"] == "completed"
+    snap = corpus_sync.get_corpus_sync()
+    assert snap["status"] == "synced" and snap["reason"] == "full_rebuild:startup_empty_graph"
+    assert snap["build_id"] == "fresh" and snap["counts"] == {"files": 2}
+
+
 def _rebuild_deps(monkeypatch, build_graph):
     kg = MagicMock()
     kg.build_graph = build_graph
