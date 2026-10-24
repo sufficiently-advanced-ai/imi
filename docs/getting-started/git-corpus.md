@@ -170,4 +170,6 @@ commits.
 | Webhook returns 400 | non-push event — set the webhook to push events only |
 | Webhook returns 401 | signature missing or wrong — the GitHub webhook's Secret must equal `GITHUB_WEBHOOK_SECRET` (or `WEBHOOK_SECRET`) in the app container |
 | Webhook delivers but nothing re-ingests | commit was skipped as a bot commit, or touched no `.md`/`.markdown` files — check `docker compose logs app` for `skipping_bot_commit` |
+| Overview shows "The graph may be missing corpus files"; `/health/ready` has `corpus_sync.status: adopted` | the stateful boot found no usable corpus manifest for this graph (data dir restored or replaced, graph rebuilt by hand, upgrade from before manifests) and adopted the disk as baseline without ingesting it — run `POST /api/admin/rebuild-graph` (poll `/api/admin/rebuild-graph/status`); the warning clears when it completes. See [startup and state](../architecture/startup-and-state.md#corpus-sync-status) |
+| `corpus_sync.status: rebuild_required` | a full rebuild failed or never completed (`corpus_sync.error` says why) — fix the cause and run `POST /api/admin/rebuild-graph` |
 | Local corpus vanished after enabling remote mode | the wipe-and-reclone above — restore from any backup/clone of the old `./repo` and push it to the remote |

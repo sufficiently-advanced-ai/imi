@@ -8,6 +8,7 @@
  *  - latest intake shows newest job + delta counts
  *  - digest card renders markdown; "No digest yet." on null
  *  - cards degrade independently (one fetch rejecting doesn't blank others)
+ *  - corpus sync banner only for adopted / rebuild_required
  */
 
 import React from "react";
@@ -25,6 +26,7 @@ import {
 } from "@/lib/api/digest";
 import { useReviewCounts } from "@/lib/hooks/useReviewCounts";
 import { useDomain } from "@/contexts/DomainContext";
+import { fetchCorpusSync } from "@/lib/api/corpus-sync";
 
 // ---- mocks ----
 
@@ -42,6 +44,11 @@ jest.mock("@/lib/api/ingest", () => ({
 
 jest.mock("@/lib/api/digest", () => ({
   fetchLatestWeeklyDigest: jest.fn(),
+}));
+
+jest.mock("@/lib/api/corpus-sync", () => ({
+  fetchCorpusSync: jest.fn(),
+  STALE_CORPUS_STATUSES: new Set(["adopted", "rebuild_required"]),
 }));
 
 jest.mock("@/lib/hooks/useReviewCounts", () => ({
@@ -101,6 +108,22 @@ const mockFetchDelta = fetchDelta as jest.Mock;
 const mockFetchLatestWeeklyDigest = fetchLatestWeeklyDigest as jest.Mock;
 const mockUseReviewCounts = useReviewCounts as jest.Mock;
 const mockUseDomain = useDomain as jest.Mock;
+const mockFetchCorpusSync = fetchCorpusSync as jest.Mock;
+
+function corpusSync(status: string, warnings: string[] = []) {
+  return {
+    status,
+    reason: null,
+    action: null,
+    counts: {},
+    build_id: null,
+    baseline_at: null,
+    error: null,
+    updated_at: null,
+    degraded: warnings.length > 0,
+    warnings,
+  };
+}
 
 // ---- fixtures ----
 
@@ -176,6 +199,7 @@ function setHappyDefaults() {
   });
   mockFetchLatestWeeklyDigest.mockResolvedValue("## This week\n- Did stuff");
   mockUseReviewCounts.mockReturnValue({ count: 4, refresh: jest.fn() });
+  mockFetchCorpusSync.mockResolvedValue(corpusSync("synced"));
 }
 
 beforeEach(() => {
@@ -184,6 +208,37 @@ beforeEach(() => {
 });
 
 describe("Overview page", () => {
+  it("shows the corpus sync banner when the baseline was adopted", async () => {
+    mockFetchCorpusSync.mockResolvedValue(
+      corpusSync("adopted", ["Corpus baseline was adopted without ingesting"]),
+    );
+    render(<OverviewPage />);
+    const banner = await screen.findByTestId("corpus-sync-banner");
+    expect(banner).toHaveTextContent("may be missing corpus files");
+    expect(banner).toHaveTextContent("adopted without ingesting");
+    expect(banner).toHaveTextContent("/api/admin/rebuild-graph");
+  });
+
+  it("shows the corpus sync banner when a rebuild is required", async () => {
+    mockFetchCorpusSync.mockResolvedValue(corpusSync("rebuild_required", ["x"]));
+    render(<OverviewPage />);
+    expect(await screen.findByTestId("corpus-sync-banner")).toHaveTextContent(
+      "needs a full rebuild",
+    );
+  });
+
+  it("hides the corpus sync banner when synced or the fetch fails", async () => {
+    render(<OverviewPage />);
+    await screen.findByText("12 decisions across 4 meetings");
+    await waitFor(() => expect(mockFetchCorpusSync).toHaveBeenCalled());
+    expect(screen.queryByTestId("corpus-sync-banner")).not.toBeInTheDocument();
+
+    mockFetchCorpusSync.mockRejectedValue(new Error("403"));
+    render(<OverviewPage />);
+    await waitFor(() => expect(mockFetchCorpusSync).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("corpus-sync-banner")).not.toBeInTheDocument();
+  });
+
   it("renders the stats headline as the header description", async () => {
     render(<OverviewPage />);
     expect(

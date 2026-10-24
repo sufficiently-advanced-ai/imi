@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..services.health_check import DependencyStatus, get_health_service
 
@@ -31,6 +31,11 @@ class ReadinessResponse(BaseModel):
     performance_metrics: dict[str, Any]
     version: str
     uptime_seconds: float
+    # Corpus/graph sync is reported beside readiness, not folded into it: an
+    # adopted baseline keeps the instance ready but marks it degraded.
+    corpus_sync: dict[str, Any] | None = None
+    degraded: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class MetricsResponse(BaseModel):
@@ -102,6 +107,25 @@ def _startup_state() -> dict[str, Any]:
     }
 
 
+def _corpus_sync_state() -> dict[str, Any] | None:
+    """Last reconcile/rebuild outcome (``app/services/corpus_sync.py``)."""
+    try:
+        from ..services.corpus_sync import get_corpus_sync
+
+        return get_corpus_sync()
+    except Exception as e:  # never let a status read break a probe
+        logger.warning("corpus sync status unavailable: %s", e)
+        return None
+
+
+def _with_corpus_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    sync = _corpus_sync_state()
+    payload["corpus_sync"] = sync
+    payload["warnings"] = list((sync or {}).get("warnings") or [])
+    payload["degraded"] = bool(payload.get("degraded")) or bool((sync or {}).get("degraded"))
+    return payload
+
+
 @router.get("/health/startup")
 async def startup_check() -> Response:
     """
@@ -111,7 +135,7 @@ async def startup_check() -> Response:
     probe (the process is up) and returns 200 during the minutes a cold
     start can spend loading the graph; this endpoint does not.
     """
-    state = _startup_state()
+    state = _with_corpus_sync(_startup_state())
     state["timestamp"] = time.time()
     status_code = 200 if state["ready"] else 503
     response = JSONResponse(content=state, status_code=status_code)
@@ -133,7 +157,9 @@ async def readiness_check() -> Response:
     startup = _startup_state()
     if not startup["ready"]:
         response = JSONResponse(
-            content={"status": "starting", "startup": startup, "timestamp": time.time()},
+            content=_with_corpus_sync(
+                {"status": "starting", "startup": startup, "timestamp": time.time()}
+            ),
             status_code=503,
         )
         response.headers["Cache-Control"] = "no-cache"
@@ -153,6 +179,7 @@ async def readiness_check() -> Response:
         elif result.status == DependencyStatus.DEGRADED:
             status_code = 200  # Still ready, but degraded
 
+        sync = _with_corpus_sync({"degraded": result.status == DependencyStatus.DEGRADED})
         response_data = ReadinessResponse(
             status=result.status,
             timestamp=result.timestamp.isoformat(),
@@ -160,6 +187,7 @@ async def readiness_check() -> Response:
             performance_metrics=result.performance_metrics,
             version=result.version,
             uptime_seconds=result.uptime_seconds,
+            **sync,
         ).model_dump()
 
         if status_code == 503:
