@@ -1748,8 +1748,11 @@ async def add_call_transcript(
             judged per item at admission unless lanes.yaml trusts it.
 
     Returns:
-        On completion: dict with status="completed", bot_id, content_type, and
-        extraction counts. On timeout: status="processing" with job_id/poll_url.
+        On completion: dict with status="completed" (or
+        "completed_with_warnings" when a pipeline phase degraded but the
+        transcript was stored), bot_id, content_type, extraction counts, and
+        ``warnings`` (one line per degraded phase; empty when clean). On
+        timeout: status="processing" with job_id/poll_url.
         On invalid input or pipeline failure: {"error": ...}.
     """
     # --- Validate transcript ---
@@ -1822,6 +1825,7 @@ async def add_call_transcript(
         return {
             "error": f"Ingestion failed: {outcome.get('error') or 'unknown error'}",
             "job_id": outcome.get("job_id"),
+            "warnings": outcome.get("warnings") or [],
         }
 
     if state == "dropped":
@@ -1844,12 +1848,14 @@ async def add_call_transcript(
             ),
         }
 
-    # state == "completed"
+    # state == "completed" | "completed_with_warnings"
     result = outcome.get("result") or {}
     content_hash = result.get("content_hash", "")
     bot_id = f"ingest-{content_hash[:12]}" if content_hash else None
+    warnings = outcome.get("warnings") or []
     return {
-        "status": "completed",
+        "status": state if state == "completed_with_warnings" else "completed",
+        "warnings": warnings,
         "bot_id": bot_id,
         "content_type": outcome.get("content_type"),
         "title": title,
@@ -1864,6 +1870,11 @@ async def add_call_transcript(
         "next": (
             "Inspect with get_meeting_transcript(bot_id) or search_signals "
             "(filter by entity or date)."
+            + (
+                " Some pipeline phases degraded: report the warnings to the user."
+                if warnings
+                else ""
+            )
         ),
     }
 
