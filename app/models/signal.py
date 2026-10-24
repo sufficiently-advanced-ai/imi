@@ -113,6 +113,12 @@ class Signal(BaseModel):
     tenant_id: str | None = Field(
         None, description="Tenant scope for the governance ladder (multi-tenant)"
     )
+    reviewed_content_hash: str | None = Field(
+        None,
+        description="sha256 of the content as last reviewed (ADR-009). Set by "
+        "review actions; a later content edit that changes it sends the signal "
+        "back to pending. Server-managed; never accepted from clients",
+    )
 
     @field_validator("provenance_status")
     @classmethod
@@ -207,7 +213,16 @@ class SignalAuditRecord(BaseModel):
     gate_response: str | None = Field(
         None, description="ADR-001 gate response: allow, block, revise, escalate"
     )
-    actor: str | None = Field(None, description="Who performed the action")
+    actor: str | None = Field(
+        None,
+        description="Who performed the action, as stamped by the server (e.g. "
+        "'mcp:<client>' for MCP-originated actions)",
+    )
+    claimed_actor: str | None = Field(
+        None,
+        description="UNVERIFIED actor name supplied by the caller (e.g. an MCP "
+        "client's 'actor' argument). Recorded as data only; never authoritative",
+    )
     tenant_id: str | None = Field(None, description="Tenant scope")
     reasoning: str = Field("", description="Human-readable description of the change")
     before: dict = Field(

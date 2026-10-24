@@ -12,7 +12,7 @@ import threading
 from datetime import date
 from pathlib import Path
 
-from app.models.signal import MeetingSignals, Signal
+from app.models.signal import MeetingSignals, Signal, SignalAuditRecord
 from app.utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -228,8 +228,54 @@ class SignalStore:
         owner_name: str | None = None,
         owner_type: str | None = None,
         due_date: str | None = None,
+        actor: str | None = None,
+        claimed_actor: str | None = None,
+        audit_store=None,
     ) -> Signal | None:
         """Update fields on an existing signal and persist to disk.
+
+        Thin wrapper over ``update_signal_governed`` that drops the audit row.
+        A content edit that voids a review is still audited (ADR-009).
+        """
+        result = self.update_signal_governed(
+            signal_id,
+            status=status,
+            content=content,
+            owner_id=owner_id,
+            owner_name=owner_name,
+            owner_type=owner_type,
+            due_date=due_date,
+            actor=actor,
+            claimed_actor=claimed_actor,
+            audit_store=audit_store,
+        )
+        return None if result is None else result[0]
+
+    def update_signal_governed(
+        self,
+        signal_id: str,
+        *,
+        status: str | None = None,
+        content: str | None = None,
+        owner_id: str | None = None,
+        owner_name: str | None = None,
+        owner_type: str | None = None,
+        due_date: str | None = None,
+        actor: str | None = None,
+        claimed_actor: str | None = None,
+        audit_store=None,
+    ) -> tuple[Signal, SignalAuditRecord | None] | None:
+        """Update fields on an existing signal and persist to disk.
+
+        Every content edit passes through the governance chokepoint (ADR-009):
+        if the edit changes the content of a reviewed (or instruction-grade)
+        signal, the signal goes back to ``pending`` without instruction-grade
+        authority, and a ``content_edited`` audit row is appended (fsynced)
+        BEFORE the signal is persisted. If that append fails nothing is
+        persisted and ``AuditAppendError`` is raised; if the persist fails
+        after the row was written, a compensating ``content_edited_failed``
+        row is appended and the error propagates. Status / owner / due_date
+        edits and identical-content edits never demote.
 
         Args:
             signal_id: The signal's UUID5 identifier.
@@ -239,13 +285,19 @@ class SignalStore:
             owner_name: New owner display name (used with owner_id).
             owner_type: New owner entity type (used with owner_id).
             due_date: New due date string.
+            actor / claimed_actor: server-stamped actor and the caller's
+                unverified claim, recorded on a ``content_edited`` row.
+            audit_store: ``SignalAuditStore`` for that row (default store
+                when None).
 
         Returns:
-            The updated Signal, or None if not found.
+            ``(updated_signal, audit_record_or_None)``, or None if not found.
 
         Raises:
             ValueError: If status is not a valid value, signal_id is empty,
                 owner_id is empty, or due_date is not YYYY-MM-DD.
+            AuditAppendError: a demoting edit's audit row could not be written
+                (nothing was persisted).
         """
         if not signal_id or not signal_id.strip():
             raise ValueError("signal_id must be a non-empty string")
@@ -273,9 +325,7 @@ class SignalStore:
             if result is None:
                 return None
             signal, container = result
-            return self._apply_field_updates(
-                signal,
-                container,
+            field_updates = dict(
                 status=status,
                 content=content,
                 owner_id=owner_id,
@@ -283,6 +333,65 @@ class SignalStore:
                 owner_type=owner_type,
                 due_date=due_date,
             )
+            audit_record = None
+            if content is not None:
+                from app.services.signal_audit import content_edit_with_audit
+
+                signal, audit_record = content_edit_with_audit(
+                    signal, content, actor=actor, claimed_actor=claimed_actor
+                )
+            if audit_record is None:
+                return self._apply_field_updates(signal, container, **field_updates), None
+            return (
+                self._persist_audited_edit(
+                    signal, container, audit_record, audit_store, field_updates
+                ),
+                audit_record,
+            )
+
+    def _persist_audited_edit(
+        self,
+        signal: Signal,
+        container: MeetingSignals,
+        audit_record: SignalAuditRecord,
+        audit_store,
+        field_updates: dict,
+    ) -> Signal:
+        """Audit-first persistence of a demoting content edit (caller holds the lock)."""
+        from app.services.signal_audit import (
+            AuditAppendError,
+            SignalAuditStore,
+            persist_failed_record,
+        )
+
+        audit_store = audit_store if audit_store is not None else SignalAuditStore()
+        try:
+            audit_store.append(audit_record)
+        except Exception as e:
+            logger.error(
+                "[SIGNALS] AUDIT APPEND FAILED for content edit of %s; edit NOT applied: %s",
+                signal.id, e, exc_info=True,
+            )
+            raise AuditAppendError(
+                f"Audit append failed; content edit not applied: {e}"
+            ) from e
+        try:
+            return self._apply_field_updates(signal, container, **field_updates)
+        except Exception as e:
+            logger.error(
+                "[SIGNALS] SIGNAL PERSIST FAILED for content edit of %s after audit "
+                "row %s; edit NOT applied: %s",
+                signal.id, audit_record.id, e, exc_info=True,
+            )
+            try:
+                audit_store.append(persist_failed_record(audit_record, str(e)))
+            except Exception as ce:
+                logger.error(
+                    "[SIGNALS] Compensating audit row FAILED for %s (audit row %s "
+                    "records an edit that was not applied): %s",
+                    signal.id, audit_record.id, ce, exc_info=True,
+                )
+            raise
 
     def _apply_field_updates(
         self,

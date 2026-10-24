@@ -69,8 +69,15 @@ def _build_anthropic_tools(read_only: bool) -> list[dict[str, Any]]:
 
 # Mapping from canonical tool name to the chat_tools.py function call.
 # Each value is a coroutine factory: given the args dict, return a coroutine.
-def _make_tool_dispatcher():
-    """Build a dispatcher dict for tools the sub-agent can invoke."""
+def _make_tool_dispatcher(actor: str | None = None):
+    """Build a dispatcher dict for tools the sub-agent can invoke.
+
+    ``actor`` is the server-stamped identity of the MCP caller (ADR-009);
+    ``update_signal`` records it and enforces ``MCP_REVIEW_ACTIONS``.
+    """
+    from app.services.review_authority import MCP_ACTOR
+
+    stamped_actor = actor or MCP_ACTOR
 
     async def _search_knowledge_graph(args):
         from app.services.chat_tools import search_knowledge_graph
@@ -123,8 +130,10 @@ def _make_tool_dispatcher():
         return await get_meeting_transcript(**args)
 
     async def _update_signal(args):
-        from app.services.chat_tools import update_signal
-        return await update_signal(**args)
+        # ask_kb is an MCP tool: same actor stamping and review gate as the
+        # MCP update_signal tool (the sub-agent's "actor" is only a claim).
+        from app.services.review_authority import mcp_update_signal
+        return await mcp_update_signal(args, actor=stamped_actor)
 
     async def _delete_signal(args):
         from app.services.chat_tools import delete_signal
@@ -188,6 +197,7 @@ async def ask_kb(
     entity_context: list[str] | None = None,
     allow_mutations: bool = False,
     max_steps: int = 8,
+    actor: str | None = None,
 ) -> dict[str, Any]:
     """Run a sub-agent loop that uses CRUD tools to answer a natural-language intent.
 
@@ -200,6 +210,8 @@ async def ask_kb(
             update_signal / delete_signal in addition to the read-only
             CRUD set. Default False.
         max_steps: Hard cap on tool-call iterations (default 8).
+        actor: Server-stamped identity of the caller, recorded on audit rows
+            for mutations (default ``mcp``; ADR-009).
 
     Returns:
         Dict with keys:
@@ -220,7 +232,7 @@ async def ask_kb(
         }
 
     tools = _build_anthropic_tools(read_only=not allow_mutations)
-    dispatcher = _make_tool_dispatcher()
+    dispatcher = _make_tool_dispatcher(actor)
 
     user_prompt = intent
     if entity_context:
