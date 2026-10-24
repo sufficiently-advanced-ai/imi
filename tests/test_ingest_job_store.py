@@ -25,7 +25,9 @@ class FakeQueue:
         self.calls: list[dict[str, Any]] = []
 
     def enqueue(self, func, *args, task_id=None, priority=0, **kwargs):
-        self.calls.append({"func": func, "args": args, "task_id": task_id})
+        self.calls.append(
+            {"func": func, "args": args, "task_id": task_id, "job_id": args[1]}
+        )
         return task_id
 
     @property
@@ -126,12 +128,12 @@ async def test_interrupted_jobs_are_reenqueued_at_startup(db_path):
     queue = FakeQueue()
     recovered = await ingest.recover_interrupted_jobs(second, queue)
     assert recovered == {"requeued": 2, "failed": 0}
-    assert {c["task_id"] for c in queue.calls} == {pending_id, running_id}
+    assert {c["job_id"] for c in queue.calls} == {pending_id, running_id}
     job = second[f"job:{pending_id}"]
     assert job["status"] == "pending"
     assert job["attempts"] == 2
     assert job["interrupted"] is True
-    replayed = next(c["args"][0] for c in queue.calls if c["task_id"] == pending_id)
+    replayed = next(c["args"][0] for c in queue.calls if c["job_id"] == pending_id)
     assert replayed.content == request.content
     assert replayed.source_id == "src-r"
     assert replayed._channel == "mcp"  # ADR-007 channel survives the restart
@@ -266,7 +268,8 @@ def test_retry_endpoint_reruns_failed_job(db_path):
         status = client.get(f"/api/ingest/{job_id}/status").json()
         assert status["status"] == "pending"
         assert status["attempts"] == 2
-    assert [c["task_id"] for c in queue.calls] == [job_id]
+    assert [c["job_id"] for c in queue.calls] == [job_id]
+    assert queue.calls[0]["task_id"] == f"{job_id}#attempt-2"
     assert queue.requests[0].source_id == "src-retry"
     asyncio.run(store.close())
 
@@ -299,7 +302,7 @@ def test_post_ingest_429_when_pending_bound_exceeded(monkeypatch):
         # A duplicate is still answered while the queue is full.
         assert client.post("/api/ingest", json={"content": "note 0"}).json()["status"] == "duplicate"
         # A finished job frees a slot.
-        first = queue.calls[0]["task_id"]
+        first = queue.calls[0]["job_id"]
         store[f"job:{first}"]["status"] = "completed"
         assert client.post("/api/ingest", json={"content": "note 3"}).status_code == 202
     assert len(queue.calls) == 3
@@ -373,4 +376,26 @@ async def test_pipeline_failure_is_checkpointed(db_path, monkeypatch):
     assert job["status"] == "failed"
     assert "tools exploded" in job["error"]
     assert job["finished_at"]
+    await reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_write_is_retried_at_next_checkpoint(db_path):
+    store = await _open(db_path)
+    job_id, _ = ingest.enqueue_ingestion(_request(), store, FakeQueue())
+    await store.flush()
+    real_write = store._write_sync
+
+    def locked(*_a):
+        raise RuntimeError("database is locked")
+
+    store._write_sync = locked
+    store[f"job:{job_id}"]["status"] = "completed"
+    await store.persist(job_id)  # fails; logged, not raised
+    store._write_sync = real_write
+    await store.persist(job_id)  # unchanged record, but the write is retried
+    await store.close()
+
+    reopened = await _open(db_path)
+    assert reopened[f"job:{job_id}"]["status"] == "completed"
     await reopened.close()

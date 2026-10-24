@@ -211,7 +211,7 @@ class JobStore(MutableMapping):
         if self._written.get(job_id) == digest:
             return None
         self._written[job_id] = digest
-        return self._submit(self._write_sync, job_id, json.loads(text))
+        return self._submit(self._write_tracked, job_id, json.loads(text), digest)
 
     async def persist(self, job_id: str) -> None:
         """Checkpoint: write the job record and wait for the write."""
@@ -429,6 +429,15 @@ class JobStore(MutableMapping):
                 session.add(row)
             _job_to_row(job, row)
             session.commit()
+
+    def _write_tracked(self, job_id: str, job: dict[str, Any], digest: str) -> None:
+        try:
+            self._write_sync(job_id, job)
+        except Exception:
+            # Forget the digest so the next checkpoint retries this snapshot.
+            if self._written.get(job_id) == digest:
+                self._written.pop(job_id, None)
+            raise
 
     def _write_request_sync(self, job_id: str, payload: str, channel: str | None) -> None:
         from sqlalchemy.orm import Session

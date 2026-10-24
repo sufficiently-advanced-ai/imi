@@ -140,12 +140,15 @@ def _start_attempt(
     if isinstance(job_store, JobStore):
         job_store.save_request(job_id, request)
 
+    attempts = job_store[job_key]["attempts"]
     task_queue.enqueue(
         _run_ingestion_pipeline,
         request,
         job_id,
         job_store,
-        task_id=job_id,
+        # One TaskQueue entry per attempt: a re-run never shadows the
+        # previous attempt's task record.
+        task_id=job_id if attempts == 1 else f"{job_id}#attempt-{attempts}",
         priority=1,
     )
 
