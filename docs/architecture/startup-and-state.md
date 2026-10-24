@@ -70,6 +70,35 @@ stored on a `:_CorpusState` node in Neo4j. On a stateful boot:
 * otherwise diff manifest vs disk and call `Neo4jKnowledgeGraph.ingest_files`
   / `remove_files` and `SemanticaKnowledge.ingest_file` for the delta only.
 
+### Corpus sync status
+
+The reconcile outcome is not only logged: `app/services/corpus_sync.py` records
+it and exposes it as `corpus_sync` on `GET /health/ready`, `GET /health/startup`
+and `GET /api/admin/corpus-sync` (the overview page shows a warning banner from
+the last one).
+
+| `corpus_sync.status` | Meaning |
+|---|---|
+| `pending` | stateful boot queued the deferred reconcile; it has not started |
+| `reconciling` | a reconcile or full rebuild is running |
+| `synced` | graph matches the corpus: unchanged, delta reconciled, or a full rebuild completed |
+| `adopted` | the disk state was adopted as baseline **without being ingested** — files changed before `baseline_at` may be missing from the graph |
+| `rebuild_required` | a full rebuild was needed (empty graph) or attempted, and did not complete |
+| `unknown` | no reconcile has run (`STARTUP_RECONCILE=false`, graph/Neo4j unavailable, reconcile errored — see `error`) |
+
+`adopted` and `rebuild_required` set `degraded: true` and add an operator-facing
+line to `warnings` (so do files queued for retry after a partial reconcile).
+Readiness is unaffected: `ready` stays `true` and `/health/ready` stays 200,
+because the instance serves correctly from the graph it has — it is the graph's
+completeness that is in question.
+
+`adopted` survives restarts. The adoption reason is written as `source` on the
+`:_CorpusState` node, so the next boot's reconcile (which sees an unchanged
+manifest) still reports `baseline_source: manifest_missing` and the status
+stays `adopted`. Only a completed full rebuild (`POST /api/admin/rebuild-graph`,
+or the empty-graph startup build) writes a non-adoption source and returns the
+status to `synced`.
+
 It keys off the **filesystem** deliberately: the corpus working tree regularly
 contains files git has not committed yet (on one deployment, ~3.8k untracked
 `memory/` records), and "files are the source of truth" means the disk.

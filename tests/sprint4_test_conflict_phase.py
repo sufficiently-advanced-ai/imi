@@ -419,6 +419,7 @@ class TestDetectConflictsPhase:
         orch._phase_detect_conflicts = AsyncMock(return_value=0)
         orch._phase_enrich_graph = AsyncMock(return_value={"signal_count": 0, "edge_count": 0})
         orch._phase_persist = AsyncMock(return_value=None)
+        orch._phase_enrich_profiles = AsyncMock(return_value={})
 
         request = IngestRequest(content="Meeting transcript here", title="Test")
         job_store: dict = {}
@@ -462,6 +463,7 @@ class TestDetectConflictsPhase:
         orch._phase_detect_supersession = AsyncMock(return_value=0)
         orch._phase_enrich_graph = AsyncMock(return_value={"signal_count": 0, "edge_count": 0})
         orch._phase_persist = AsyncMock(return_value=None)
+        orch._phase_enrich_profiles = AsyncMock(return_value={})
 
         fake_candidate = {
             "other_signal_id": "old-1",

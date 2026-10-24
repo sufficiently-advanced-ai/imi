@@ -509,12 +509,18 @@ async def _run_seed(args) -> int:
                 result = {"status": "failed", "error": str(e)}
 
             status = (result or {}).get("status", "failed")
+            # completed_with_warnings persisted the document: it is done for
+            # --resume; the degraded phases are kept beside it.
+            warnings = list((result or {}).get("warnings") or [])
+            if status == "completed_with_warnings":
+                status = "completed"
             async with manifest_lock:
                 manifest[path.name] = {
                     "sha256": sha,
                     "job_id": job_id,
                     "status": status,
                     "bot_id": f"ingest-{(result or {}).get('content_hash', '')[:12]}",
+                    **({"warnings": warnings} if warnings else {}),
                 }
                 save_manifest(folder, manifest)
 
@@ -524,6 +530,7 @@ async def _run_seed(args) -> int:
                     f"[{i}/{len(entries)}] {path.name}: completed — "
                     f"{result.get('signals_written', 0)} signals, "
                     f"{result.get('decisions_found', 0)} decisions"
+                    + (f" — {len(warnings)} warning(s): {'; '.join(warnings)}" if warnings else "")
                 )
             elif status == "duplicate":
                 counts["dupes"] += 1

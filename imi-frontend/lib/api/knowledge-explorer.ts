@@ -84,9 +84,12 @@ export interface EntitySummary {
 // API Functions
 // ──────────────────────────────────────────────
 
-const buildQueryString = (params: Record<string, string | number | boolean | undefined | null>): string => {
+type QueryValue = string | number | boolean | undefined | null;
+
+// Generic over T so interfaces without an index signature (e.g. SearchParams) are accepted.
+const buildQueryString = <T extends { [K in keyof T]: QueryValue }>(params: T): string => {
   const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
+  (Object.entries(params) as [string, QueryValue][]).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       searchParams.append(key, String(value));
     }

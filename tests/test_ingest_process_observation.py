@@ -47,6 +47,16 @@ def mock_meeting_signals():
     )
 
 
+@pytest.fixture(autouse=True)
+def _clean_signal_store(monkeypatch):
+    # A degraded phase now shows in the job status, so the store the
+    # pipeline reads/writes must work for a run to be clean.
+    store = Mock()
+    store.load_all = Mock(return_value=[])
+    monkeypatch.setattr("app.services.signal_store.signal_store", store)
+    return store
+
+
 @pytest.fixture
 def orchestrator(tmp_path, mock_meeting_signals):
     classifier = Mock()
@@ -57,10 +67,12 @@ def orchestrator(tmp_path, mock_meeting_signals):
     git_ops.repo_path = str(tmp_path / "test_repo")
     git_ops.commit_file = AsyncMock()
 
+    graph = AsyncMock()
+    graph.nodes = {}
     orch = IngestOrchestrator(
         classifier=classifier,
-        claude_client=Mock(),
-        graph=AsyncMock(),
+        claude_client=None,  # no LLM: LLM-backed phases report skipped
+        graph=graph,
         signal_writer=signal_writer,
         git_ops=git_ops,
     )

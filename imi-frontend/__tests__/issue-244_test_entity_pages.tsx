@@ -312,21 +312,21 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
 
   it('should render create entity page', () => {
     expect(() => {
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       expect(screen.getByTestId('create-entity-page')).toBeInTheDocument()
     }).toThrow()
   })
 
   it('should show page title with entity type', () => {
     expect(() => {
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       expect(screen.getByRole('heading', { name: /create person/i })).toBeInTheDocument()
     }).toThrow()
   })
 
   it('should render entity form for the specified type', () => {
     expect(() => {
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       expect(screen.getByLabelText(/name/i)).toBeInTheDocument()
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
@@ -336,10 +336,10 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
 
   it('should show breadcrumb navigation', () => {
     expect(() => {
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       expect(screen.getByRole('navigation', { name: /breadcrumb/i })).toBeInTheDocument()
-      expect(screen.getByLink('Entities')).toHaveAttribute('href', '/entities')
+      expect(screen.getByRole('link', { name: 'Entities' })).toHaveAttribute('href', '/entities')
       expect(screen.getByText('Create Person')).toBeInTheDocument()
     }).toThrow()
   })
@@ -348,7 +348,7 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
     expect(async () => {
       const entitiesAPI = require('@/lib/api/entities')
       
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       await userEvent.type(screen.getByLabelText(/name/i), 'New Person')
       await userEvent.type(screen.getByLabelText(/email/i), 'new@example.com')
@@ -372,7 +372,7 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
 
   it('should navigate back when cancel is clicked', async () => {
     expect(async () => {
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       const cancelButton = screen.getByRole('button', { name: /cancel/i })
       await userEvent.click(cancelButton)
@@ -386,7 +386,7 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.createEntity.mockRejectedValue(new Error('Validation failed'))
       
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       await userEvent.type(screen.getByLabelText(/name/i), 'New Person')
       await userEvent.type(screen.getByLabelText(/email/i), 'invalid-email')
@@ -405,7 +405,7 @@ describe('CreateEntityPage (/entities/[type]/new)', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.createEntity.mockImplementation(() => new Promise(() => {}))
       
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       await userEvent.type(screen.getByLabelText(/name/i), 'New Person')
       const saveButton = screen.getByRole('button', { name: /save/i })
@@ -433,7 +433,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
 
   it('should render edit entity page', () => {
     expect(() => {
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       expect(screen.getByTestId('edit-entity-page')).toBeInTheDocument()
     }).toThrow()
   })
@@ -442,7 +442,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
     expect(async () => {
       const entitiesAPI = require('@/lib/api/entities')
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(entitiesAPI.getEntity).toHaveBeenCalledWith('person-1')
@@ -455,7 +455,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
 
   it('should show page title with entity name', async () => {
     expect(async () => {
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: /edit john smith/i })).toBeInTheDocument()
@@ -465,7 +465,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
 
   it('should show relationship manager', async () => {
     expect(async () => {
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(screen.getByTestId('relationship-manager')).toBeInTheDocument()
@@ -477,7 +477,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
     expect(async () => {
       const entitiesAPI = require('@/lib/api/entities')
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(screen.getByDisplayValue('John Smith')).toBeInTheDocument()
@@ -506,7 +506,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
 
   it('should show delete confirmation dialog', async () => {
     expect(async () => {
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       const deleteButton = screen.getByRole('button', { name: /delete/i })
       await userEvent.click(deleteButton)
@@ -521,7 +521,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.deleteEntity.mockResolvedValue({ success: true })
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       const deleteButton = screen.getByRole('button', { name: /delete/i })
       await userEvent.click(deleteButton)
@@ -542,7 +542,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.getEntity.mockRejectedValue(new Error('Entity not found'))
       
-      render(<EditEntityPage params={{ type: 'person', id: 'nonexistent' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'nonexistent' })} />)
       
       await waitFor(() => {
         expect(screen.getByText(/entity not found/i)).toBeInTheDocument()
@@ -555,7 +555,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.getEntity.mockImplementation(() => new Promise(() => {}))
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       expect(screen.getByTestId('loading-entity')).toBeInTheDocument()
     }).toThrow()
@@ -566,7 +566,7 @@ describe('EditEntityPage (/entities/[type]/[id])', () => {
       const entitiesAPI = require('@/lib/api/entities')
       entitiesAPI.updateEntity.mockRejectedValue(new Error('Update failed'))
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(screen.getByDisplayValue('John Smith')).toBeInTheDocument()
@@ -612,7 +612,7 @@ describe('Entity Pages Integration', () => {
         attributes: { name: 'New Person', email: 'new@example.com' }
       })
       
-      render(<CreateEntityPage params={{ type: 'person' }} />)
+      render(<CreateEntityPage params={Promise.resolve({ type: 'person' })} />)
       
       // Fill and submit form
       await userEvent.type(screen.getByLabelText(/name/i), 'New Person')
@@ -671,7 +671,7 @@ describe('Entity Pages Integration', () => {
 
   it('should handle concurrent user actions gracefully', async () => {
     expect(async () => {
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       await waitFor(() => {
         expect(screen.getByDisplayValue('John Smith')).toBeInTheDocument()
@@ -694,7 +694,7 @@ describe('Entity Pages Integration', () => {
       // Simulate user pressing browser back button
       window.history.back = jest.fn()
       
-      render(<EditEntityPage params={{ type: 'person', id: 'person-1' }} />)
+      render(<EditEntityPage params={Promise.resolve({ type: 'person', id: 'person-1' })} />)
       
       const cancelButton = screen.getByRole('button', { name: /cancel/i })
       await userEvent.click(cancelButton)

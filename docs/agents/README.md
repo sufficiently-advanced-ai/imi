@@ -22,7 +22,7 @@ Health checks before doing anything:
 
 ```bash
 curl -fsS http://<host>:8080/health           # 200 = app up
-curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies
+curl -fsS http://<host>:8080/health/ready     # readiness incl. dependencies + corpus_sync (adopted = run a graph rebuild)
 ```
 
 ## The rules of the road (non-negotiable)
@@ -63,9 +63,13 @@ MCP: add_call_transcript(transcript, start_time, participants, title, source_id,
 REST: POST /api/ingest  {content, title, source_id, participants, source}
 ```
 
-Then **verify**: poll `GET /api/ingest/{job_id}/status` until `completed` (job status is
-in-memory — if the app restarted mid-job, re-ingest; idempotency makes this safe). Read
-`GET /api/ingest/{job_id}/delta` for a summary of what changed, and surface it to the user.
+Then **verify**: poll `GET /api/ingest/{job_id}/status` until `completed` or
+`completed_with_warnings` (job status is in-memory — if the app restarted mid-job,
+re-ingest; idempotency makes this safe). Read `GET /api/ingest/{job_id}/delta` for a summary
+of what changed, and surface it to the user. `completed_with_warnings` means the content was
+stored but a phase degraded (e.g. signal extraction crashed, so an empty delta is not "nothing
+to learn"): report the `warnings` lines (also in the delta and in `add_call_transcript`'s
+result) instead of presenting the ingest as clean.
 
 ### Answer a question from the knowledge base
 

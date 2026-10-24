@@ -80,12 +80,24 @@ class IngestResult(BaseModel):
     processing_time_ms: int = 0
 
 
+class PhaseOutcome(BaseModel):
+    """What one pipeline phase did (see services/orchestrators/phase_outcomes.py)."""
+    phase: str
+    outcome: str  # ok | empty | skipped | failed
+    detail: str | None = None
+    retryable: bool = False
+
+
 class IngestJobStatus(BaseModel):
     """Status of an ingestion job."""
     job_id: str
-    status: str  # pending/running/completed/failed/dropped
+    # pending | running | completed | completed_with_warnings | failed | dropped
+    status: str
     content_type: str | None = None
     phases_completed: list[str] = Field(default_factory=list)
+    phase_outcomes: list[PhaseOutcome] = Field(default_factory=list)
+    # One line per failed phase ("PHASE: detail"); empty for a clean job.
+    warnings: list[str] = Field(default_factory=list)
     current_phase: str | None = None
     result: IngestResult | None = None
     error: str | None = None

@@ -51,10 +51,11 @@ describe("fetchLatestWeeklyDigest", () => {
 
   it("redirects to /signin and throws on 401", async () => {
     const originalLocation = window.location;
-    // Allow assignment by deleting and redefining
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (window as any).location;
-    window.location = { href: "" } as Location;
+    // Allow assignment by deleting and redefining. The DOM lib types the
+    // location setter as `string & Location`, so assign through a widened view.
+    const win = window as unknown as { location: Pick<Location, "href"> };
+    Reflect.deleteProperty(window, "location");
+    win.location = { href: "" };
 
     mockedFetch.mockResolvedValueOnce({
       status: 401,
@@ -69,7 +70,7 @@ describe("fetchLatestWeeklyDigest", () => {
     expect(window.location.href).toBe("/signin");
 
     // Restore
-    window.location = originalLocation;
+    win.location = originalLocation;
   });
 
   it("throws on other non-ok responses", async () => {

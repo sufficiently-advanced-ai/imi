@@ -14,6 +14,7 @@
  * 10. MobileNav exposes the same items inside the Sheet
  */
 
+import type { ReactNode } from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { usePathname, useSearchParams } from "next/navigation";
 import Navigation, { MobileNav } from "@/components/navigation";
@@ -48,7 +49,7 @@ jest.mock("@/lib/utils/links", () => {
       "/domain-graph-enhanced", "/entities", "/signin", "/api", "/_next",
       "/decisions", "/profile", "/overview",
     ],
-    default: ({ href, children, ...props }) => (
+    default: ({ href, children, ...props }: { href: string; children?: ReactNode }) => (
       <a href={href} {...props}>
         {children}
       </a>
@@ -71,12 +72,13 @@ jest.mock("@/lib/hooks/useReviewCounts", () => ({
 }));
 
 // Domain context
-const defaultDomainMock = {
-  getNavLabel: (_group, _path, fallback) => fallback,
-  getGroupLabel: (_group, fallback) => fallback,
-  getEntityDisplayName: (key) => key,
-  getTerm: (_key, fallback) => fallback,
-  domainConfig: { id: "default", name: "Default", entities: {}, relationships: {}, ui: null },
+type DomainContextValue = ReturnType<typeof import("@/contexts/DomainContext").useDomain>;
+const defaultDomainMock: DomainContextValue = {
+  getNavLabel: (_group: string, _path: string, fallback: string) => fallback,
+  getGroupLabel: (_group: string, fallback: string) => fallback,
+  getEntityDisplayName: (key: string) => key,
+  getTerm: (_key: string, fallback: string) => fallback,
+  domainConfig: { id: "default", name: "Default", entities: {}, relationships: {} },
   uiLabels: null,
   isLoading: false,
   error: null,
@@ -103,7 +105,7 @@ jest.mock("@/lib/utils/entity-icons", () => ({
   getEntityIcon: () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return function StubIcon({ className }) {
+    return function StubIcon({ className }: { className?: string }) {
       return React.createElement("span", { className });
     };
   },
@@ -117,16 +119,25 @@ import { useAuth } from "@/lib/hooks/useAuth";
 import { useReviewCounts } from "@/lib/hooks/useReviewCounts";
 import { useDomain } from "@/contexts/DomainContext";
 
-function setDomain(overrides = {}) {
-  useDomain.mockReturnValue({ ...defaultDomainMock, ...overrides });
+const mockUseAuth = jest.mocked(useAuth);
+const mockUseSearchParams = jest.mocked(useSearchParams);
+
+function setDomain(overrides: Partial<DomainContextValue> = {}) {
+  jest.mocked(useDomain).mockReturnValue({ ...defaultDomainMock, ...overrides });
 }
 
-function setReviewCount(count) {
-  useReviewCounts.mockReturnValue({ count, refresh: jest.fn() });
+function setReviewCount(count: number | null) {
+  jest.mocked(useReviewCounts).mockReturnValue({ count, refresh: jest.fn() });
 }
 
-function setPathname(path) {
-  usePathname.mockReturnValue(path);
+function setPathname(path: string) {
+  jest.mocked(usePathname).mockReturnValue(path);
+}
+
+function setSearchParams(params: URLSearchParams) {
+  // next/navigation's ReadonlyURLSearchParams is a URLSearchParams subclass
+  // without the mutating methods; the component only reads from it.
+  mockUseSearchParams.mockReturnValue(params as ReturnType<typeof useSearchParams>);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +150,7 @@ describe("Navigation", () => {
     setDomain();
     setReviewCount(0);
     setPathname("/");
-    useSearchParams.mockReturnValue(new URLSearchParams());
+    setSearchParams(new URLSearchParams());
   });
 
   // 1. Overview renders as first nav item linking to /overview
@@ -205,18 +216,20 @@ describe("Navigation", () => {
 
   // 9. System item renders only when authenticated
   it("System item renders when authenticated", () => {
-    useAuth.mockReturnValue({
+    mockUseAuth.mockReturnValue({
       user: { id: "u1", email: "test@example.com" },
       loading: false,
+      error: null,
     });
     render(<Navigation />);
     expect(screen.getByRole("link", { name: /system/i })).toBeInTheDocument();
   });
 
   it("System item is absent when not authenticated", () => {
-    useAuth.mockReturnValue({
+    mockUseAuth.mockReturnValue({
       user: null,
       loading: false,
+      error: null,
     });
     render(<Navigation />);
     expect(screen.queryByRole("link", { name: /system/i })).not.toBeInTheDocument();
@@ -233,10 +246,11 @@ describe("MobileNav", () => {
     setDomain();
     setReviewCount(0);
     setPathname("/");
-    useSearchParams.mockReturnValue(new URLSearchParams());
-    useAuth.mockReturnValue({
+    setSearchParams(new URLSearchParams());
+    mockUseAuth.mockReturnValue({
       user: { id: "u1", email: "test@example.com", firstName: "Test", lastName: "User" },
       loading: false,
+      error: null,
     });
   });
 

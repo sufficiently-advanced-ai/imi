@@ -124,6 +124,11 @@ for i in $(seq 1 18); do
   sleep 5
   status=$(curl -s --max-time 10 "${base}/api/ingest/${job}/status")
   echo "$status" | grep -qE '"status":"completed"' && { green "  ingestion completed (~$((i*5))s)"; break; }
+  # A degraded phase (e.g. no working LLM key) still persists the content.
+  echo "$status" | grep -qE '"status":"completed_with_warnings"' && {
+    green "  ingestion completed with warnings (~$((i*5))s): $(echo "$status" | grep -oE '"warnings":\[[^]]*\]')"
+    break
+  }
   if echo "$status" | grep -qE '"status":"failed"'; then
     red "  ingestion FAILED: $(echo "$status" | grep -oE '"error":"[^"]*"')"; exit 1
   fi
