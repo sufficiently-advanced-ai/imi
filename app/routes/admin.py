@@ -566,3 +566,17 @@ async def rebuild_graph_status():
     from ..services import graph_rebuild
 
     return graph_rebuild.get_rebuild_status()
+
+
+@router.get("/corpus-sync")
+async def corpus_sync_status():
+    """Whether the graph is in sync with the corpus on disk.
+
+    ``status`` is ``synced``, ``adopted`` (baseline adopted without ingesting —
+    the graph may be stale until a rebuild), ``rebuild_required``,
+    ``pending``/``reconciling`` or ``unknown``; ``warnings`` carries the
+    operator-facing text. The same object is on ``/health/ready``.
+    """
+    from ..services.corpus_sync import get_corpus_sync
+
+    return get_corpus_sync()

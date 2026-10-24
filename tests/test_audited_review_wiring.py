@@ -228,7 +228,7 @@ async def test_plain_field_update_does_not_create_audit_row(tmp_path):
     updated_signal = _make_signal(status="done")
 
     mock_store = MagicMock()
-    mock_store.update_signal.return_value = updated_signal
+    mock_store.update_signal_governed.return_value = (updated_signal, None)
     mock_store.find_signal_by_id.return_value = (updated_signal, MagicMock(bot_id="bot-123"))
     mock_store.relative_path = MagicMock(return_value="signals/meeting-bot-123.json")
 

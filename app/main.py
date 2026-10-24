@@ -389,8 +389,12 @@ async def startup_event():
                             )
                 except Exception as warm_err:
                     sys.stderr.write(f"Warning: Graph cache sync failed: {warm_err}\n")
+                from .services import corpus_sync
                 if settings.STARTUP_RECONCILE:
+                    corpus_sync.set_corpus_sync("pending", reason="startup_reconcile_queued")
                     deferred_startup_tasks.append(("corpus-reconcile", graph_rebuild.startup_reconcile))
+                else:
+                    corpus_sync.set_corpus_sync("unknown", reason="startup_reconcile_disabled")
                 if settings.STARTUP_VECTOR_BOOTSTRAP:
                     deferred_startup_tasks.append(("vector-bootstrap", graph_rebuild.bootstrap_vector_index))
 

@@ -609,7 +609,14 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "supersede a signal.\n\n"
             "Authority / governance fields (can_use_as_evidence, can_use_as_instruction, "
             "provenance_status, review_status) are NOT settable directly — review_action "
-            "is the ONLY governance entry point (ADR-002 server-injected)."
+            "is the ONLY governance entry point (ADR-002 server-injected).\n\n"
+            "Over MCP, a review_action is recorded as an MCP-originated review: the server "
+            "stamps the audit actor itself (mcp:<client>) and keeps any `actor` you pass "
+            "only as an unverified claim. Instances can disable review actions over MCP "
+            "(MCP_REVIEW_ACTIONS=false); the call then fails and a person reviews in the UI. "
+            "Use review_action only when the user explicitly asks you to review on their "
+            "behalf. Editing the content of a reviewed signal sends it back to pending and "
+            "clears instruction-grade (ADR-009)."
         ),
         "inputSchema": {
             "type": "object",
@@ -624,7 +631,11 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "content": {
                     "type": "string",
-                    "description": "Updated content text (plain field update)",
+                    "description": (
+                        "Updated content text (plain field update). If the signal was "
+                        "reviewed, a changed text voids the review: it returns to pending "
+                        "and loses instruction-grade."
+                    ),
                 },
                 "owner_id": {
                     "type": "string",
@@ -662,7 +673,11 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
                 "actor": {
                     "type": "string",
-                    "description": "Who is performing the review action (recorded in the audit row). Omit to leave anonymous.",
+                    "description": (
+                        "Name of the person on whose behalf you act. Recorded in the audit "
+                        "row as an unverified claim only; over MCP the server stamps the "
+                        "actual actor (mcp:<client>)."
+                    ),
                 },
                 "superseded_by": {
                     "type": "string",

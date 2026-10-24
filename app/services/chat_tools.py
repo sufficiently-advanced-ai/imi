@@ -719,6 +719,7 @@ async def update_signal(
     review_action: str | None = None,
     actor: str | None = None,
     superseded_by: str | None = None,
+    claimed_actor: str | None = None,
 ) -> dict[str, Any]:
     """Update a persisted signal (decision, action item, key point, insight).
 
@@ -726,7 +727,12 @@ async def update_signal(
 
     **Plain field update** (status / content / owner_id / due_date): writes
     directly to the SignalStore JSON, git-commits the file, then syncs to Neo4j
-    (best-effort). No audit row is emitted.
+    (best-effort). No audit row is emitted, except (ADR-009) when a content
+    edit changes the text of a reviewed or instruction-grade signal: the
+    signal goes back to ``pending`` without instruction-grade authority and a
+    ``content_edited`` audit row is appended BEFORE the signal is persisted
+    (same audit-first guarantees as below; ``review_voided=True`` in the
+    response).
 
     **Governance transition** (review_action): routes through
     ``review_with_audit`` (which composes ``apply_review`` + audit record),
@@ -755,7 +761,11 @@ async def update_signal(
         due_date: New due date string (YYYY-MM-DD).
         review_action: Governance transition — one of: confirm, reject,
             evidence_only, dispute, supersede. Triggers audited path.
-        actor: Who is performing the review action (for the audit record).
+        actor: Who is performing the action, as stamped by the calling surface
+            (for the audit record). Transports with no authentication stamp
+            this server-side (e.g. ``mcp:<client>``) — see ADR-009.
+        claimed_actor: The caller's own, unverified name for itself; recorded
+            on the audit row as data only.
         superseded_by: Required when review_action=="supersede" — successor id.
 
     Returns:
@@ -796,6 +806,7 @@ async def update_signal(
                         review_action,
                         actor=actor,
                         superseded_by=superseded_by,
+                        claimed_actor=claimed_actor,
                     )
                 except ValueError as e:
                     return {"success": False, "error": str(e)}
@@ -944,18 +955,47 @@ async def update_signal(
             except Exception as e:
                 logger.debug(f"Owner resolution fallback for {owner_id}: {e}")
 
-        # 1. Write to JSON (source of truth)
-        updated = store.update_signal(
-            signal_id,
-            status=status,
-            content=content,
-            owner_id=owner_id,
-            owner_name=owner_name,
-            owner_type=owner_type,
-            due_date=due_date,
-        )
-        if updated is None:
+        # 1. Write to JSON (source of truth). A content edit that voids a
+        #    review is audited first inside the store (ADR-009).
+        from app.services.signal_audit import AuditAppendError
+
+        audit_store = SignalAuditStore()
+        try:
+            governed = store.update_signal_governed(
+                signal_id,
+                status=status,
+                content=content,
+                owner_id=owner_id,
+                owner_name=owner_name,
+                owner_type=owner_type,
+                due_date=due_date,
+                actor=actor,
+                claimed_actor=claimed_actor,
+                audit_store=audit_store,
+            )
+        except AuditAppendError as e:
+            return {
+                "success": False,
+                "review_voided": False,
+                "error": str(e),
+                "audit_error": str(e),
+            }
+        if governed is None:
             return {"success": False, "error": f"Signal '{signal_id}' not found"}
+        updated, edit_audit = governed
+
+        if edit_audit is not None:
+            # Git commit of the audit JSONL (best-effort — after both writes)
+            try:
+                await git_ops.commit_file(
+                    audit_store.relative_path(signal_id),
+                    audit_store._file_path(signal_id).read_text(encoding="utf-8"),
+                    f"audit: {edit_audit.action} signal {signal_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    "[UPDATE_SIGNAL] Git commit of audit JSONL failed (non-fatal): %s", e
+                )
 
         # 2. Git commit (non-fatal)
         result = store.find_signal_by_id(signal_id)
@@ -986,18 +1026,35 @@ async def update_signal(
             client = get_neo4j_client()
             if client:
                 writer = SignalGraphWriter(client)
+                governance: dict[str, Any] = {}
+                if edit_audit is not None:
+                    governance = dict(
+                        review_status=updated.review_status,
+                        can_use_as_instruction=updated.can_use_as_instruction,
+                    )
                 neo4j_synced = await writer.update_signal_properties(
                     signal_id,
                     status=status,
                     content=content,
                     owner_name=owner_name,
+                    **governance,
                 )
         except Exception as e:
             logger.warning(f"[UPDATE_SIGNAL] Neo4j sync failed (best-effort): {e}")
 
         signal_dict = _signal_to_dict(updated)
         logger.info(f"[UPDATE_SIGNAL] Updated signal {signal_id}, neo4j_synced={neo4j_synced}")
-        return {"success": True, "signal": signal_dict, "neo4j_synced": neo4j_synced}
+        response: dict[str, Any] = {
+            "success": True,
+            "signal": signal_dict,
+            "neo4j_synced": neo4j_synced,
+        }
+        if edit_audit is not None:
+            signal_dict["review_status"] = updated.review_status
+            signal_dict["can_use_as_instruction"] = updated.can_use_as_instruction
+            response["review_voided"] = True
+            response["audit_row_id"] = edit_audit.id
+        return response
 
     except ValueError as e:
         return {"success": False, "error": str(e)}

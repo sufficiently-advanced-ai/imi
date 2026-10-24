@@ -152,6 +152,13 @@ allowlist seeded from `MCP_ALLOWED_HOSTS` and the host of `MCP_PUBLIC_URL`
 8080 to untrusted networks without a proxy in front; see
 [MCP access tiers](../mcp_access_tiers.md) (ADR-008).
 
+Because MCP is unauthenticated, review actions over MCP are MCP-originated by construction
+(ADR-009): the `update_signal` handler stamps the audit `actor` as `mcp:<clientInfo.name>`
+server-side and keeps the caller's `actor` argument as an unverified `claimed_actor`
+(`app/services/review_authority.py`). `MCP_REVIEW_ACTIONS` (default `true`; recommended
+`false` for the remote tier, which logs a startup warning otherwise) switches review actions
+over MCP off entirely, for both `update_signal` and the `ask_kb` sub-agent.
+
 The hosted edition layers SSO/multi-tenant auth on the `create_app(extra_routers=...)` seam
 (`app/main.py:1116`) and the tenant-context middleware.
 
@@ -165,3 +172,4 @@ The hosted edition layers SSO/multi-tenant auth on the `create_app(extra_routers
 | Add an in-process agent | Subclass `AgentBase` (`app/agents/base.py`); register with `AgentRegistry` |
 | Restrict MCP access | Set `MCP_ALLOWED_HOSTS`; keep 8080 behind nginx/Tailscale |
 | Reach MCP from other machines on a private network | Set `MCP_PUBLIC_URL` (+ `MCP_ALLOWED_HOSTS`, `BIND_ADDRESS`); see [MCP access tiers](../mcp_access_tiers.md) |
+| Keep MCP clients from reviewing signals | `MCP_REVIEW_ACTIONS=false`; review happens in the UI / REST endpoints (ADR-009) |

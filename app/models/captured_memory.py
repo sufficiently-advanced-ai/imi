@@ -86,6 +86,8 @@ class CapturedMemory(BaseModel):
         "that received the capture; never accepted from clients",
     )
     tenant_id: str | None = Field(None)
+    # ADR-009: sha256 of the content as last reviewed (set by review actions).
+    reviewed_content_hash: str | None = Field(None)
     created_at: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat(),
     )
