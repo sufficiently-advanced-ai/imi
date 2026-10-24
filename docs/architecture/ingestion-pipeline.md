@@ -23,7 +23,7 @@ the signal/memory stores.
 | GitHub webhook | `POST /api/webhook/github` | `app/routes/webhook.py:174` | Separate pipeline — see below; HMAC-verified when a webhook secret is set |
 | File upload | `POST /upload` | `app/routes/upload.py:26` | Multipart, `.md`/`.txt` only, ≤25 KB. Separate inline pipeline |
 | Thought capture | `POST /api/captures` | `app/routes/captures.py` | Free-form notes straight into the memory layer (also exposed as the `capture_thought` MCP tool) |
-| MCP tool | `add_call_transcript` | `app/services/chat_tools.py:1733` | Synchronous bridge: enqueues, then polls the job store (`submit_and_wait`, `app/routes/ingest.py:115`) |
+| MCP tool | `add_call_transcript` | `app/services/chat_tools.py:1733` | Synchronous bridge: enqueues, then polls the job store's in-memory cache (`submit_and_wait`, `app/routes/ingest.py`) |
 | Pull connectors | `python -m app.connectors` | `app/connectors/__main__.py:67` | Exports recordings (currently Grain) to JSONL of `IngestRequest`s, which you then POST to `/api/ingest` |
 
 Request/response models live in `app/models/ingestion/models.py` (`IngestRequest`, `IngestResponse`,
@@ -112,10 +112,41 @@ token-bucket rate limiting (`claude_client.py:569-643`). Each extraction has a n
 
 ## Job tracking, idempotency, failure
 
-- **Job store** — an in-memory dict (`app/routes/ingest.py:37`) keyed by `job:{job_id}`,
-  content hash, and `source_id:{source_id}`. *Ephemeral: lost on restart.* Job status shape:
+- **Job store** — `JobStore` (`app/services/ingest_job_store.py`), a mapping keyed by
+  `job:{job_id}`, content hash, and `source_id:{source_id}` (the same keys the old in-memory
+  dict had), backed by the `ingest_jobs` table in the app database (`DATABASE_PATH`; model
+  `app/user_models/ingest_job_models.py`, alembic revision `007`; the app also creates the
+  table at startup). Reads come from the in-memory cache, so polling never hits SQLite;
+  writes run on one worker thread, off the event loop. A record is written when it is
+  assigned and at every pipeline event (the SSE emitter in `_run_ingestion_pipeline` is the
+  checkpoint) and when the pipeline returns — a crash loses at most the progress since the
+  last phase boundary. The table also stores the `IngestRequest` JSON (and its ADR-007
+  channel) for retry and recovery. Dedup entries are rebuilt from the `source_id` /
+  `content_hash` columns at startup. One app process owns the table. Job status shape:
   `status`, `content_type`, `phases_completed[]`, `phase_outcomes[]`, `warnings[]`,
-  `current_phase`, `result`, `error`.
+  `current_phase`, `result`, `error`, plus `attempts`, `interrupted`, `source_id`,
+  `content_hash`, `created_at` / `started_at` / `finished_at`.
+- **Restart recovery** — at startup (`start_job_store`, called from `app/main.py`) jobs left
+  `pending` / `running` are marked `interrupted` and re-enqueued under the same `job_id`
+  (`attempts` + 1), re-running from the first phase. This is safe because the pipeline's
+  writes are idempotent: the meeting id derives from the content hash, signal ids are
+  deterministic `uuid5`, graph writes MERGE (relationship edges on `source_id`), and the
+  corpus files (`meetings/meeting-{id}.md`, `signals/meeting-{id}.json`) are overwritten at
+  the same paths. A job interrupted 3 times is marked `failed` rather than
+  re-run again (it may be what crashes the process); retry it by hand. The startup log line
+  `[INGEST] Job store opened: ...` gives the counts.
+- **Retry** — `POST /api/ingest/{job_id}/retry` re-runs a `failed` or `interrupted` job
+  from its stored request (202, same `poll_url`); 404 for an unknown job, 409 when the job is
+  pending, running, completed or dropped. Not exposed over MCP: resubmitting the same
+  transcript through `add_call_transcript` re-runs a failed job (see idempotency below).
+- **Limits** — `INGEST_MAX_PENDING` (default 200): once that many jobs are `pending`,
+  `POST /api/ingest` answers 429 with `Retry-After: 30` and `add_call_transcript` returns an
+  `error` with `retry_after_seconds`; nothing is enqueued. Duplicates are still answered.
+  `INGEST_JOB_RETENTION_DAYS` (default 30): finished jobs (`completed`,
+  `completed_with_warnings`, `failed`, `dropped`) older than that are deleted at startup and
+  daily. Their dedup entries go with them, so resending content after that window starts a
+  new job — harmless, because ingest also dedups downstream (deterministic ids, MERGE on
+  `source_id`).
 - **Phase lifecycle** — `_run_phase` runs each phase and appends a plain-dict outcome to
   `phase_outcomes`: `{"phase", "outcome", "detail", "retryable"}` with `outcome` one of
   `ok` (did its work), `empty` (ran, found nothing — e.g. no signals), `skipped`
@@ -129,7 +160,8 @@ token-bucket rate limiting (`claude_client.py:569-643`). Each extraction has a n
   lookups (glossary, type descriptions, namesakes) stay log-only. `retryable` says whether
   a re-run could plausibly succeed (service/LLM/IO errors) versus a deterministic one (bad
   domain config).
-- **Status vocabulary** — `pending` → `running` → one of `completed` (every phase ok /
+- **Status vocabulary** — `pending` → `running` (→ `interrupted` if a restart stops it;
+  re-run automatically) → one of `completed` (every phase ok /
   empty / skipped), `completed_with_warnings` (at least one phase reported `failed` but the
   content was persisted), `failed` (a phase raised, or the PERSIST corpus write failed —
   files are the source of truth, so a job that did not write them is not a success),
@@ -143,10 +175,14 @@ token-bucket rate limiting (`claude_client.py:569-643`). Each extraction has a n
   (per-phase details on expand) and on the overview's latest-intake card. The committed
   `deltas/delta-*.md` artifact is unchanged.
 - **Task queue** — in-process `asyncio.PriorityQueue`, max concurrency 3
-  (`app/services/task_queue.py:95`). No broker; failures surface but don't auto-retry.
+  (`app/services/task_queue.py:95`). No broker; failures surface but don't auto-retry
+  (re-run with the retry endpoint). Its depth for ingest is bounded by `INGEST_MAX_PENDING`;
+  pending work is recovered from the job table, not the queue, after a restart.
 - **Idempotency** — dedup by `source_id` first, then SHA-256 content hash
-  (`ingest.py:71-88`); duplicates return the existing `job_id` with status `duplicate` (200
-  instead of 202). Signal IDs are deterministic (`uuid5` of type + meeting + position +
+  (`enqueue_ingestion` in `ingest.py`); duplicates return the existing `job_id` with status
+  `duplicate` (200 instead of 202) while that job is pending, running, completed,
+  completed_with_warnings or dropped. If it `failed` or was `interrupted`, the submission
+  re-runs it under the same `job_id` (`attempts` + 1, status `accepted`, 202). Signal IDs are deterministic (`uuid5` of type + meeting + position +
   content), and graph writes are MERGE-based, so re-ingesting the same content overwrites
   instead of duplicating. **Always send a stable `source_id` from connectors.**
 

@@ -422,6 +422,21 @@ async def startup_event():
         sys.stderr.write("Application starting in degraded state\n")
         # Don't re-raise - allow app to start without full functionality
 
+    # Durable ingest jobs (own table in DATABASE_PATH): load before serving so
+    # dedup sees past jobs, sweep expired ones, re-enqueue interrupted ones.
+    # Runs even after a partial startup failure; non-fatal — without it the
+    # job store stays in memory, as before.
+    try:
+        from .routes.ingest import start_job_store
+
+        jobs = await start_job_store()
+        sys.stderr.write(
+            f"Ingest job store opened: {jobs['loaded']} job(s), "
+            f"{jobs['requeued']} interrupted job(s) re-enqueued\n"
+        )
+    except Exception as e:
+        sys.stderr.write(f"Warning: Ingest job store unavailable (in-memory only): {e}\n")
+
     # uvicorn binds the port when this handler returns either way. Readiness
     # flips only if every readiness-critical dependency came up; otherwise the
     # failures are exposed on /health/startup and the instance stays 503.
@@ -480,6 +495,12 @@ async def shutdown_event():
         sys.stderr.write("Neo4j connection closed\n")
     except Exception as e:
         sys.stderr.write(f"Warning: Failed to close Neo4j connection: {e}\n")
+
+    try:
+        from .routes.ingest import _job_store
+        await _job_store.close()
+    except Exception as e:
+        sys.stderr.write(f"Warning: Failed to close ingest job store: {e}\n")
 
     # Close database connections - Issue #360
     try:
