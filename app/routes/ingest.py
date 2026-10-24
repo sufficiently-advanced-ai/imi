@@ -93,6 +93,8 @@ def enqueue_ingestion(
         "status": "pending",
         "content_type": None,
         "phases_completed": [],
+        "phase_outcomes": [],
+        "warnings": [],
         "current_phase": None,
         "result": None,
         "error": None,
@@ -128,7 +130,12 @@ async def submit_and_wait(
 
     Returns a dict with `state` one of:
       - "completed": includes `job_id`, `poll_url`, `content_type`, `result`
+      - "completed_with_warnings": as "completed"; a phase degraded (e.g.
+                     signal promotion crashed) but the content was persisted
       - "failed":    includes `job_id`, `poll_url`, `error`
+
+    Terminal states also carry `phase_outcomes` and `warnings` (one line per
+    failed phase) so callers such as the MCP tool can surface them.
       - "dropped":   lane admission (ADR-003) rejected the content as junk;
                      includes `job_id`, `poll_url`, `result` (with the reason)
       - "pending":   timed out before a terminal state; includes `job_id`,
@@ -146,13 +153,18 @@ async def submit_and_wait(
         job = job_store.get(job_key)
         if job:
             state = job.get("status")
-            if state == "completed":
+            outcomes = {
+                "phase_outcomes": list(job.get("phase_outcomes") or []),
+                "warnings": list(job.get("warnings") or []),
+            }
+            if state in ("completed", "completed_with_warnings"):
                 return {
-                    "state": "completed",
+                    "state": state,
                     "job_id": job_id,
                     "poll_url": poll_url,
                     "content_type": job.get("content_type"),
                     "result": job.get("result") or {},
+                    **outcomes,
                 }
             if state == "dropped":
                 return {
@@ -167,6 +179,7 @@ async def submit_and_wait(
                     "job_id": job_id,
                     "poll_url": poll_url,
                     "error": job.get("error") or "unknown error",
+                    **outcomes,
                 }
         if time.monotonic() >= deadline:
             return {"state": "pending", "job_id": job_id, "poll_url": poll_url}
@@ -240,7 +253,13 @@ async def get_job_delta(
             detail=f"Delta report not available for job '{job_id}' — job may still be running",
         )
 
-    return delta_report
+    # The job record is authoritative for outcomes: the report is built
+    # before the last phases run.
+    return {
+        **delta_report,
+        "phase_outcomes": list(job_data.get("phase_outcomes") or []),
+        "warnings": list(job_data.get("warnings") or []),
+    }
 
 
 @router.get("/{job_id}/status", response_model=IngestJobStatus)
@@ -259,6 +278,8 @@ async def get_job_status(
         status=job_data["status"],
         content_type=job_data.get("content_type"),
         phases_completed=job_data.get("phases_completed", []),
+        phase_outcomes=job_data.get("phase_outcomes") or [],
+        warnings=job_data.get("warnings") or [],
         current_phase=job_data.get("current_phase"),
         result=job_data.get("result"),
         error=job_data.get("error"),

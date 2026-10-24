@@ -41,6 +41,16 @@ from ..entity_utils import (
 from ..graph.factory import get_semantica_knowledge
 from ..ingest_classifier import compute_content_hash
 from .base import BaseOrchestrator
+from .phase_outcomes import (
+    OUTCOME_FAILED,
+    STATUS_FAILED,
+    close_report,
+    derive_job_status,
+    describe_error,
+    open_report,
+    phase_report,
+    warnings_from,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +211,8 @@ class IngestOrchestrator(BaseOrchestrator):
             "status": "running",
             "content_type": None,
             "phases_completed": [],
+            "phase_outcomes": [],
+            "warnings": [],
             "current_phase": None,
             "result": None,
             "error": None,
@@ -286,6 +298,8 @@ class IngestOrchestrator(BaseOrchestrator):
         # Finalize
         elapsed_ms = int((time.time() - start_time) * 1000)
         result["processing_time_ms"] = elapsed_ms
+        if self._finalize_outcomes(job_store, job_key, result):
+            await self._emit("ingest_failed", {"error": job_store[job_key]["error"]})
 
         if result["status"] != "failed":
             job_store[job_key]["status"] = result["status"]
@@ -301,9 +315,19 @@ class IngestOrchestrator(BaseOrchestrator):
                     "processing_time_ms",
                     "graph_nodes_created",
                     "delta_report",
+                    "phase_outcomes",
+                    "warnings",
                 )
             }
-            await self._emit("ingest_complete", {"result": _counts})
+            await self._emit(
+                "ingest_complete",
+                {
+                    "result": _counts,
+                    "status": result["status"],
+                    "phase_outcomes": list(result["phase_outcomes"]),
+                    "warnings": list(result["warnings"]),
+                },
+            )
 
         self._log_operation(
             "ingest_complete",
@@ -512,6 +536,8 @@ class IngestOrchestrator(BaseOrchestrator):
             "status": "running",
             "content_type": getattr(observation, "content_type", None),
             "phases_completed": [],
+            "phase_outcomes": [],
+            "warnings": [],
             "current_phase": None,
             "result": None,
             "error": None,
@@ -544,10 +570,46 @@ class IngestOrchestrator(BaseOrchestrator):
             )
 
         result["processing_time_ms"] = int((time.time() - start_time) * 1000)
+        self._finalize_outcomes(job_store, job_key, result)
         if result["status"] != "failed":
             job_store[job_key]["status"] = result["status"]
             job_store[job_key]["result"] = result
         return result
+
+    @staticmethod
+    def _finalize_outcomes(job_store, job_key: str, result: dict[str, Any]) -> bool:
+        """Derive the terminal status from the recorded phase outcomes.
+
+        Copies ``phase_outcomes`` / ``warnings`` onto the result (and its
+        delta report). A job whose phases all returned is ``completed``, or
+        ``completed_with_warnings`` when a phase reported a failure, or
+        ``failed`` when that phase is critical (its output was not
+        persisted). Returns True when this call turned the job into a
+        failure, so the caller can announce it.
+        """
+        job = job_store[job_key]
+        outcomes = list(job.get("phase_outcomes") or [])
+        warnings = warnings_from(outcomes)
+        job["warnings"] = warnings
+        result["phase_outcomes"] = outcomes
+        result["warnings"] = warnings
+        delta = result.get("delta_report")
+        if isinstance(delta, dict):
+            delta["phase_outcomes"] = outcomes
+            delta["warnings"] = warnings
+        if result["status"] != "completed":
+            return False  # failed (raised) or dropped: keep as is
+        critical = list(job.get("critical_failures") or [])
+        status = derive_job_status(outcomes, critical)
+        result["status"] = status
+        if status == STATUS_FAILED:
+            job["status"] = STATUS_FAILED
+            job["error"] = "; ".join(
+                w for w in warnings if w.split(":", 1)[0] in critical
+            ) or "critical phase failed"
+            job["result"] = result
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Phase implementations
@@ -600,6 +662,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
         except Exception as e:
             logger.warning("[INGEST] Admission log write failed (non-fatal): %s", e)
+            phase_report().failed(describe_error("admission log write", e))
 
     async def _phase_classify(self, request) -> str:
         """Phase 1: Classify content type."""
@@ -672,6 +735,7 @@ class IngestOrchestrator(BaseOrchestrator):
                         entities_mentioned[entity_type] = sorted(existing | set(names))
         except Exception as e:
             logger.warning(f"[INGEST] Domain entity extraction failed (non-fatal): {e}")
+            phase_report().failed(describe_error("domain entity extraction", e))
 
         # Build a markdown body with structure the SignalPromoter expects
         body = self._build_observation_body(title, request.content, participants)
@@ -727,6 +791,7 @@ class IngestOrchestrator(BaseOrchestrator):
             or content_type not in SYNTHESIS_CONTENT_TYPES
             or not observation.raw_content
         ):
+            phase_report().skipped("not a record-lane meeting transcript")
             return False
         occurred = observation.occurred_at.date().isoformat() if observation.occurred_at else None
         try:
@@ -739,8 +804,10 @@ class IngestOrchestrator(BaseOrchestrator):
             )
         except Exception as e:
             logger.warning("[INGEST] SYNTHESIZE failed (non-fatal): %s", e)
+            phase_report().failed(describe_error("meeting synthesis", e))
             return False
         if synthesis is None:
+            phase_report().empty("no summary produced")
             return False
 
         observation.summary = synthesis.summary
@@ -775,10 +842,12 @@ class IngestOrchestrator(BaseOrchestrator):
         """
         if not self._claude:
             logger.info("[INGEST] No claude client; skipping salient entity extraction")
+            phase_report().skipped("no LLM client configured")
             return 0
 
         transcript = observation.raw_content or observation.content or ""
         if not transcript.strip():
+            phase_report().empty("no content")
             return 0
 
         try:
@@ -827,6 +896,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     "[INGEST] Salient extraction returned nothing; keeping "
                     "existing entities_mentioned"
                 )
+                phase_report().empty("no entities extracted")
                 return 0
 
             resolver = self._resolver_for(observation)
@@ -882,6 +952,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 e,
                 exc_info=True,
             )
+            phase_report().failed(describe_error("salient entity extraction", e))
             return 0
 
     def _existing_entity_context(self) -> dict[str, list[str]] | None:
@@ -922,11 +993,16 @@ class IngestOrchestrator(BaseOrchestrator):
                 logger.info(
                     f"[INGEST] No signals extracted for {observation.external_id}"
                 )
+                phase_report().empty("no signals extracted")
 
             return meeting_signals
 
         except Exception as e:
+            # Non-fatal: the observation still persists, without signals. The
+            # job ends completed_with_warnings so this is not mistaken for a
+            # meeting that simply had nothing to extract.
             logger.warning(f"[INGEST] Signal promotion failed (non-fatal): {e}")
+            phase_report().failed(describe_error("signal promotion", e))
             return None
 
     @staticmethod
@@ -969,6 +1045,8 @@ class IngestOrchestrator(BaseOrchestrator):
            infer_relationships tool, then write edges to the knowledge graph.
         """
         result = {"signal_count": 0, "edge_count": 0}
+        if not self._graph and not self._signal_writer:
+            phase_report().skipped("graph service unavailable")
 
         # Step 1 (A): Extract entities + create graph nodes first so that signal
         # edges written in Step 2 can resolve to existing nodes.
@@ -1091,6 +1169,9 @@ class IngestOrchestrator(BaseOrchestrator):
                     add_failures,
                     len(entities),
                 )
+                phase_report().failed(
+                    f"entity node write: {add_failures}/{len(to_add)} add_node calls failed"
+                )
             await self._link_entity_files(entities)
 
             # Record the resolved ids on the observation so the persisted
@@ -1125,6 +1206,9 @@ class IngestOrchestrator(BaseOrchestrator):
                     e,
                     exc_info=True,
                 )
+                # The signal file (PERSIST) is the source of truth; a rebuild
+                # or re-ingest restores the graph copy, so this is retryable.
+                phase_report().failed(describe_error("Neo4j signal write", e))
 
         # Step 3 (C): Infer entity-to-entity relationships and write edges.
         # Never from library content (ADR-003 §3): third-party text must not
@@ -1265,6 +1349,7 @@ class IngestOrchestrator(BaseOrchestrator):
                             )
                         except Exception as ex:
                             logger.warning("[INGEST] Attribution add_node failed for %s: %s", e["id"], ex)
+                            phase_report().failed(describe_error("claim attribution node write", ex))
                             continue
                     ids.append(e["id"])
             ids = list(dict.fromkeys(ids))
@@ -1276,6 +1361,7 @@ class IngestOrchestrator(BaseOrchestrator):
             return ids
         except Exception as e:  # attribution is best-effort; the string stays
             logger.warning("[INGEST] Claim attribution failed (non-fatal): %s", e)
+            phase_report().failed(describe_error("claim attribution", e))
             return []
 
     async def _resolve_collected_entities(
@@ -1359,6 +1445,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 logger.warning(
                     "[INGEST] Entity resolution failed for %s/%r: %s", etype, ename, e
                 )
+                phase_report().failed(describe_error(f"entity resolution for {ename!r}", e))
                 resolved_entities.append(entity)
                 continue
             new_id = resolved.id or eid
@@ -1425,6 +1512,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     await self._graph.upgrade_entity_name(target, e["name"])
                 except Exception as ex:
                     logger.warning("[INGEST] Name upgrade failed for %s: %s", target, ex)
+                    phase_report().failed(describe_error(f"name upgrade for {target}", ex))
             out.append(e)
         return out
 
@@ -1633,6 +1721,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     await self._graph.upgrade_entity_name(e["id"], verdict.name)
                 except Exception as ex:
                     logger.warning("[INGEST] Name upgrade failed for %s: %s", e["id"], ex)
+                    phase_report().failed(describe_error(f"name upgrade for {e['id']}", ex))
                 entry = {**e, "name": verdict.name}
             else:
                 # split (a different entity than the existing match) or a
@@ -1979,6 +2068,9 @@ class IngestOrchestrator(BaseOrchestrator):
                 e,
                 exc_info=True,
             )
+            phase_report().failed(
+                describe_error("relationship edges: domain config", e), retryable=False
+            )
         if domain is None:
             return 0
 
@@ -2101,8 +2193,10 @@ class IngestOrchestrator(BaseOrchestrator):
             if result.success:
                 return result.data.get("relationships", [])
             logger.warning(f"[INGEST] infer_relationships failed: {result.error}")
+            phase_report().failed(f"relationship inference: {result.error}")
         except Exception as e:
             logger.warning(f"[INGEST] infer_relationships exception: {e}")
+            phase_report().failed(describe_error("relationship inference", e))
 
         return []
 
@@ -2122,12 +2216,14 @@ class IngestOrchestrator(BaseOrchestrator):
         Returns {"hidden": n, "linked": n} when anything changed, else None.
         """
         if not meeting_signals or not meeting_signals.signals:
+            phase_report().skipped("no signals")
             return None
 
         from app.services import signal_dedup
 
         client = signal_dedup._default_client()
         if client is None:
+            phase_report().skipped("duplicate detection disabled")
             return None
 
         from app.services.signal_store import signal_store as _signal_store
@@ -2137,6 +2233,7 @@ class IngestOrchestrator(BaseOrchestrator):
             if similar is None or batch_similarity is None:
                 stack = await asyncio.to_thread(_dedup_similarity_fns, meeting_signals.signals)
                 if stack is None:
+                    phase_report().skipped("vector index unavailable")
                     return None
                 similar, batch_similarity = stack
             batches = active_store.load_all()
@@ -2150,6 +2247,7 @@ class IngestOrchestrator(BaseOrchestrator):
             outcome = await signal_dedup.judge_duplicates(candidates, client)
         except Exception as e:
             logger.warning("[INGEST] DETECT_DUPLICATES failed (non-fatal): %s", e)
+            phase_report().failed(describe_error("duplicate detection", e))
             return None
 
         new_ids = {sig.id for sig in meeting_signals.signals}
@@ -2166,6 +2264,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     "[INGEST] DETECT_DUPLICATES: could not persist %s (non-fatal): %s",
                     old.id, e,
                 )
+                phase_report().failed(describe_error(f"hide duplicate {old.id}", e))
         if not (hidden or outcome.linked):
             return None
         logger.info(
@@ -2194,6 +2293,7 @@ class IngestOrchestrator(BaseOrchestrator):
             Number of candidate relationships found across all new signals.
         """
         if not meeting_signals:
+            phase_report().skipped("no signals")
             return 0
 
         from app.services.signal_store import signal_store as _signal_store
@@ -2210,6 +2310,7 @@ class IngestOrchestrator(BaseOrchestrator):
             logger.warning(
                 "[INGEST] DETECT_SUPERSESSION: load_all failed (non-fatal): %s", e
             )
+            phase_report().failed(describe_error("load standing signals", e))
             return 0
 
         # Flatten all standing signals
@@ -2237,6 +2338,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     sig.id,
                     e,
                 )
+                phase_report().failed(describe_error(f"candidate matching for {sig.id}", e))
 
         # Entity overlap only proposes; the decision model judges what each
         # pair actually is (signal_relation: off/shadow/on, never raises).
@@ -2300,12 +2402,14 @@ class IngestOrchestrator(BaseOrchestrator):
             Number of conflict candidate relationships found across all new signals.
         """
         if not meeting_signals:
+            phase_report().skipped("no signals")
             return 0
 
         if not settings.ANTHROPIC_API_KEY:
             logger.info(
                 "[INGEST] DETECT_CONFLICTS: skipping — ANTHROPIC_API_KEY not set"
             )
+            phase_report().skipped("no LLM API key configured")
             return 0
 
         from app.services.signal_store import signal_store as _signal_store
@@ -2318,6 +2422,7 @@ class IngestOrchestrator(BaseOrchestrator):
             logger.warning(
                 "[INGEST] DETECT_CONFLICTS: load_all failed (non-fatal): %s", e
             )
+            phase_report().failed(describe_error("load standing signals", e))
             return 0
 
         # Flatten all standing signals
@@ -2339,6 +2444,7 @@ class IngestOrchestrator(BaseOrchestrator):
                     sig.id,
                     e,
                 )
+                phase_report().failed(describe_error(f"conflict matching for {sig.id}", e))
 
         if total_candidates > 0:
             logger.info(
@@ -2397,6 +2503,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 logger.warning(
                     "[INGEST] Delta report git commit failed (non-fatal): %s", exc
                 )
+                phase_report().failed(describe_error("delta report commit", exc))
 
     async def _phase_persist(self, observation, meeting_signals, bot_id: str) -> None:
         """Phase 5: Persist observation markdown + signals JSON to the git repo.
@@ -2412,6 +2519,7 @@ class IngestOrchestrator(BaseOrchestrator):
         try:
             if not self._git_ops or not hasattr(self._git_ops, "commit_file"):
                 logger.info("[INGEST] Git ops not available, skipping persist phase")
+                phase_report().skipped("git storage unavailable")
                 return
 
             # 1. Persist observation as markdown. Use the `meeting-` prefix so the
@@ -2446,7 +2554,10 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
 
         except Exception as e:
+            # The corpus files are the job's output (files are the source of
+            # truth): the pipeline still runs on, but the job is failed.
             logger.warning(f"[INGEST] Persist phase failed (non-fatal): {e}")
+            phase_report().failed(describe_error("corpus write", e), critical=True)
         else:
             # Only once the signals the candidates name are stored.
             if meeting_signals and meeting_signals.signal_count > 0:
@@ -2487,6 +2598,9 @@ class IngestOrchestrator(BaseOrchestrator):
                     newer_id,
                     e,
                 )
+                phase_report().failed(
+                    describe_error(f"attach reversed supersession candidate to {newer_id}", e)
+                )
         if written:
             logger.info(
                 "[INGEST] DETECT_SUPERSESSION: attached %d reversed candidate(s) to "
@@ -2507,6 +2621,7 @@ class IngestOrchestrator(BaseOrchestrator):
             await self._graph.ingest_files(list(paths))
         except Exception as e:
             logger.warning("[INGEST] Graph document link failed for %s: %s", paths, e)
+            phase_report().failed(describe_error("graph sync", e))
             return
         await self._record_live_files(list(paths))
 
@@ -2529,6 +2644,7 @@ class IngestOrchestrator(BaseOrchestrator):
                         paths.append(rel)
         except Exception as e:  # graph footprint only — never fail the ingest
             logger.warning("[INGEST] Entity file lookup failed: %s", e)
+            phase_report().failed(describe_error("entity file graph sync", e))
             return
         if paths:
             await self._link_document_in_graph(*paths)
@@ -2551,6 +2667,7 @@ class IngestOrchestrator(BaseOrchestrator):
                 await reconciler.record_live_files(paths)
         except Exception as e:
             logger.warning("[INGEST] Manifest record failed for %s: %s", paths, e)
+            phase_report().failed(describe_error("corpus manifest record", e))
 
     # Profiles regenerated per meeting are bounded: each is one model call
     # carrying the meeting transcript.
@@ -2588,15 +2705,22 @@ class IngestOrchestrator(BaseOrchestrator):
                 signal_store.save(meeting_signals)
             except Exception as e:
                 logger.warning("[INGEST] ENRICH_PROFILES: signal_store.save failed: %s", e)
+                phase_report().failed(describe_error("signal store save", e))
 
         # ADR-003 §3: third-party content never feeds entity profiles.
         if getattr(observation, "lane", "record") == "library":
             logger.info("[INGEST] ENRICH_PROFILES: library observation, profiles untouched")
+            phase_report().skipped("library content never feeds entity profiles")
             return result
 
         entity_ids = list(getattr(observation, "entity_ids", None) or [])
-        if not entity_ids or not self._claude:
+        if not self._claude:
             logger.info("[INGEST] ENRICH_PROFILES: nothing to enrich")
+            phase_report().skipped("no LLM client configured")
+            return result
+        if not entity_ids:
+            logger.info("[INGEST] ENRICH_PROFILES: nothing to enrich")
+            phase_report().empty("no entities to enrich")
             return result
 
         try:
@@ -2608,6 +2732,7 @@ class IngestOrchestrator(BaseOrchestrator):
             }
         except Exception as e:
             logger.warning("[INGEST] ENRICH_PROFILES skipped, setup failed: %s", e)
+            phase_report().failed(describe_error("profile setup", e))
             return result
         targets = [e for e in entity_ids if e.split("-", 1)[0] in templated]
         skipped = len(targets) - self.MAX_PROFILES_PER_MEETING
@@ -2643,6 +2768,7 @@ class IngestOrchestrator(BaseOrchestrator):
         for entity_id, outcome in zip(targets, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 logger.warning("[INGEST] ENRICH_PROFILES failed for %s: %s", entity_id, outcome)
+                phase_report().failed(describe_error(f"profile for {entity_id}", outcome))
             else:
                 changed.append(outcome)
         result["rich_profiles_generated"] = len(changed)
@@ -2654,12 +2780,14 @@ class IngestOrchestrator(BaseOrchestrator):
                 )
             except Exception as e:
                 logger.warning("[INGEST] ENRICH_PROFILES commit failed: %s", e)
+                phase_report().failed(describe_error("profile commit", e))
             if self._graph and hasattr(self._graph, "ingest_files"):
                 try:
                     await self._graph.ingest_files(changed)
                     await self._record_live_files(changed)
                 except Exception as e:
                     logger.warning("[INGEST] ENRICH_PROFILES graph refresh failed: %s", e)
+                    phase_report().failed(describe_error("profile graph sync", e))
 
         logger.info("[INGEST] ENRICH_PROFILES: generated %d rich profiles", len(changed))
         return result
@@ -2669,9 +2797,17 @@ class IngestOrchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
 
     async def _run_phase(self, job_store, job_key, phase_name, phase_fn, *args):
-        """Execute a phase, updating job store tracking."""
+        """Execute a phase, updating job store tracking.
+
+        Records the phase's outcome (see ``phase_outcomes``) in
+        ``job["phase_outcomes"]``: what the phase reported via
+        ``phase_report()``, ``ok`` by default, ``failed`` when it raised (the
+        exception still propagates and fails the job).
+        """
         self._advance_phase(job_store, job_key, phase_name)
-        phases_so_far = list(job_store[job_key].get("phases_completed", []))
+        job = job_store[job_key]
+        outcomes = job.setdefault("phase_outcomes", [])
+        phases_so_far = list(job.get("phases_completed", []))
         await self._emit(
             "ingest_phase",
             {
@@ -2680,15 +2816,36 @@ class IngestOrchestrator(BaseOrchestrator):
                 "phases_completed": phases_so_far,
             },
         )
-        result = await phase_fn(*args)
-        job_store[job_key]["phases_completed"].append(phase_name)
-        phases_now = list(job_store[job_key]["phases_completed"])
+        report, token = open_report(phase_name)
+        try:
+            result = await phase_fn(*args)
+        except Exception as e:
+            report.failed(describe_error(phase_name, e))
+            outcomes.append(report.as_record())
+            job["warnings"] = warnings_from(outcomes)
+            raise
+        finally:
+            close_report(token)
+        record = report.as_record()
+        outcomes.append(record)
+        if report.critical:
+            job.setdefault("critical_failures", []).append(phase_name)
+        if record["outcome"] == OUTCOME_FAILED:
+            logger.warning("[INGEST] Phase %s degraded: %s", phase_name, record["detail"])
+        job["warnings"] = warnings_from(outcomes)
+        job["phases_completed"].append(phase_name)
+        phases_now = list(job["phases_completed"])
         await self._emit(
             "ingest_phase",
             {
                 "phase": phase_name,
                 "status": "completed",
                 "phases_completed": phases_now,
+                "outcome": record["outcome"],
+                "detail": record["detail"],
+                "retryable": record["retryable"],
+                "phase_outcomes": list(outcomes),
+                "warnings": list(job["warnings"]),
             },
         )
         return result

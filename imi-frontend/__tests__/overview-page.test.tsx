@@ -234,6 +234,29 @@ describe("Overview page", () => {
     expect(mockFetchDelta).toHaveBeenCalledWith("job-new");
   });
 
+  it("latest intake flags a job that completed with warnings", async () => {
+    mockFetchIngestJobs.mockResolvedValue([
+      {
+        job_id: "job-warn",
+        status: "completed_with_warnings",
+        created_at: "2026-06-10T00:00:00Z",
+        title: "Degraded meeting",
+        warnings: ["PROMOTE_SIGNALS: signal promotion: RuntimeError: boom"],
+      },
+    ]);
+    render(<OverviewPage />);
+
+    expect(await screen.findByText("COMPLETED WITH WARNINGS")).toBeInTheDocument();
+    expect(screen.getByText(/1 pipeline warning/)).toBeInTheDocument();
+    // The delta is still fetched: the content was persisted.
+    expect(mockFetchDelta).toHaveBeenCalledWith("job-warn");
+
+    fireEvent.click(screen.getByRole("button", { name: /view change report/i }));
+    expect(
+      screen.getByText("PROMOTE_SIGNALS: signal promotion: RuntimeError: boom"),
+    ).toBeInTheDocument();
+  });
+
   it("digest card renders markdown content", async () => {
     render(<OverviewPage />);
     const viewers = await screen.findAllByTestId("markdown-viewer");

@@ -109,14 +109,19 @@ def _patch_pipeline(orch: IngestOrchestrator):
                 )
             ),
         ),
+        _patch.object(orch, "_phase_synthesize", AsyncMock(return_value=False)),
+        _patch.object(orch, "_phase_extract_entities", AsyncMock(return_value=0)),
         _patch.object(orch, "_phase_promote_signals", AsyncMock(return_value=None)),
+        _patch.object(orch, "_phase_detect_duplicates", AsyncMock(return_value=None)),
         _patch.object(orch, "_phase_detect_supersession", AsyncMock(return_value=0)),
+        _patch.object(orch, "_phase_detect_conflicts", AsyncMock(return_value=0)),
         _patch.object(
             orch,
             "_phase_enrich_graph",
             AsyncMock(return_value={"signal_count": 0, "edge_count": 0}),
         ),
         _patch.object(orch, "_phase_persist", AsyncMock(return_value=None)),
+        _patch.object(orch, "_phase_enrich_profiles", AsyncMock(return_value={})),
         _patch.object(orch, "_phase_delta_report", AsyncMock(return_value=None)),
     ]
     return patches
