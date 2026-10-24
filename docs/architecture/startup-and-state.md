@@ -70,6 +70,14 @@ stored on a `:_CorpusState` node in Neo4j. On a stateful boot:
 * otherwise diff manifest vs disk and call `Neo4jKnowledgeGraph.ingest_files`
   / `remove_files` and `SemanticaKnowledge.ingest_file` for the delta only.
 
+It keys off the **filesystem** deliberately: the corpus working tree regularly
+contains files git has not committed yet (on one deployment, ~3.8k untracked
+`memory/` records), and "files are the source of truth" means the disk.
+
+Deleted entity-profile files demote their node to a stub (other documents may
+still reference it); deleted documents are removed with their `MENTIONED_IN`
+edges.
+
 ### Corpus sync status
 
 The reconcile outcome is not only logged: `app/services/corpus_sync.py` records
@@ -99,13 +107,17 @@ stays `adopted`. Only a completed full rebuild (`POST /api/admin/rebuild-graph`,
 or the empty-graph startup build) writes a non-adoption source and returns the
 status to `synced`.
 
-It keys off the **filesystem** deliberately: the corpus working tree regularly
-contains files git has not committed yet (on one deployment, ~3.8k untracked
-`memory/` records), and "files are the source of truth" means the disk.
+### Restore drill
 
-Deleted entity-profile files demote their node to a stub (other documents may
-still reference it); deleted documents are removed with their `MENTIONED_IN`
-edges.
+`scripts/restore_drill.py` (nightly in `.github/workflows/restore-drill.yml`) proves
+the restore path end to end: synthetic KB + one decision confirmed through the review
+API → snapshot (graph nodes/edges, audit rows, vector counts) → stop app → tar
+`repo/` + `data/` → wipe both and the graph → restore → boot → clean rebuild +
+memory-index backfill → assert snapshot parity, unchanged audit rows, the decision
+still `can_use_as_instruction`, a graph search hit, and `corpus_sync.status ==
+synced`. The pure parts (tar/restore/compare) are unit-tested in
+`tests/test_restore_drill.py`. Procedure for operators:
+[Backup and restore](../getting-started/git-corpus.md#backup-and-restore).
 
 ## Readiness contract
 

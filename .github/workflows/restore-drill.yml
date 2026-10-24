@@ -1,0 +1,87 @@
+name: Restore drill
+
+# Back up a synthetic KB (corpus + data dir), destroy it and the graph, restore
+# from the tarball, rebuild every derived index, and assert the knowledge base
+# came back: graph parity, governance history, an instruction-grade decision,
+# a graph query, vector counts, and corpus_sync=synced. See
+# scripts/restore_drill.py and docs/getting-started/git-corpus.md.
+#
+# Not a required check: it boots the full stack and takes several minutes.
+# No LLM calls are made — the KB is generated and rebuilt from files — so a
+# placeholder ANTHROPIC_API_KEY is enough.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - app/services/corpus_manifest.py
+      - app/services/corpus_sync.py
+      - app/services/graph_rebuild.py
+      - app/routes/admin.py
+      - scripts/restore_drill.py
+      - scripts/kb_parity_check.py
+      - .github/workflows/restore-drill.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - app/services/corpus_manifest.py
+      - app/services/corpus_sync.py
+      - app/services/graph_rebuild.py
+      - app/routes/admin.py
+      - scripts/restore_drill.py
+      - scripts/kb_parity_check.py
+      - .github/workflows/restore-drill.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT_NAME: imi-drill
+      NEO4J_PASSWORD: drill-${{ github.run_id }}
+      ANTHROPIC_API_KEY: placeholder-restore-drill-makes-no-llm-calls
+      PORT: "8080"
+      NO_PROXY: localhost,127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the drill's only dependency (neo4j driver)
+        run: python -m pip install "$(grep -E '^neo4j[=<>~ ]' requirements.txt | head -1)"
+
+      - name: Boot the stack (stateful mode, empty corpus)
+        run: |
+          mkdir -p repo data
+          docker compose up -d --build --wait --wait-timeout 900
+
+      - name: Run the restore drill
+        run: |
+          sudo --preserve-env=NEO4J_PASSWORD,COMPOSE_PROJECT_NAME,ANTHROPIC_API_KEY,PORT,NO_PROXY \
+            "$(command -v python)" scripts/restore_drill.py \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --repo-dir repo --data-dir data --work-dir "${RUNNER_TEMP}/restore-drill" \
+            --stop-cmd "docker compose stop app" \
+            --start-cmd "docker compose start app"
+
+      - name: App logs on failure
+        if: failure()
+        run: docker compose logs app --tail 300 || true
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v --remove-orphans || true

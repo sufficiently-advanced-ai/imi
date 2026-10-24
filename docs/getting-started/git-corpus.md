@@ -152,13 +152,53 @@ commits.
   boot (`NEO4J_REBUILD_ON_STARTUP=true`, the default). What's *not* in the corpus: the
   SQLite app DB and vector index under `./data` (re-derivable; re-run
   `POST /api/admin/backfill-memory-index` after a restore) and Neo4j's own volume
-  (re-derivable).
+  (re-derivable). See [Backup and restore](#backup-and-restore).
 - **Changing `GIT_REPO_URL` later** repoints the instance wholesale at the next restart —
   same wipe-and-reclone rules. `POST /api/repository/reinitialize` does it without a
   restart.
 - **Conflict behavior**: pulls auto-stash local changes (`app/git_ops.py:256-320`); rejected
   pushes recover with pull-rebase-retry and never force-push, so concurrent writers can't
   destroy each other's work.
+
+## Backup and restore
+
+What a full backup needs, and what can be re-derived:
+
+| Path | Holds | Back up? |
+|---|---|---|
+| `./repo` | the corpus: entities, meetings, documents, `signals/*.json` (governance state) and `signals/audit/*.jsonl` (review history) | **yes** — the source of truth |
+| `./data` | SQLite app DB, `vectors.db` (entity/memory vectors), `corpus_manifest.json` | yes — vectors and the manifest are re-derivable, the app DB may not be |
+| Neo4j volume | the graph | no — rebuilt from `./repo` |
+
+Procedure:
+
+1. Stop the app so SQLite files are quiescent: `docker compose stop app`.
+2. `tar czf imi-backup.tgz repo data` (in remote mode `./repo` is also on GitHub).
+3. To restore: stop the app, empty `./repo` and `./data`, extract the tarball, and
+   `docker compose start app`. A wiped or fresh Neo4j volume is rebuilt automatically by
+   the stateful boot; otherwise run `POST /api/admin/rebuild-graph?clean=true` and wait
+   for `GET /api/admin/rebuild-graph/status` to report `completed`.
+4. `POST /api/admin/backfill-memory-index` to re-index signals, captures and agent
+   memories (poll `GET /api/tasks/{task_id}`).
+5. Check `GET /health/ready`: `corpus_sync.status` should be `synced`. `adopted` means the
+   restored `./data` manifest did not match the graph and the disk was blessed without
+   being ingested — run the rebuild in step 3.
+
+`scripts/restore_drill.py` automates the whole loop on a **scratch** stack and asserts
+that it worked: it seeds a synthetic KB and confirms a decision through the review API,
+snapshots the graph, audit rows and vector counts, stops the app, backs up and wipes
+`./repo`, `./data` and the graph, restores, rebuilds, and checks graph parity, that the
+audit history and the confirmed decision's `can_use_as_instruction` survived, that a
+graph search finds a seeded entity, and that `corpus_sync` is `synced`:
+
+```bash
+docker compose up -d --wait            # a throwaway stack, never one you care about
+NEO4J_PASSWORD=... sudo -E python scripts/restore_drill.py   # needs: pip install neo4j
+```
+
+(`sudo` because files the container writes into `./repo` and `./data` are root-owned.)
+It runs nightly in CI (`.github/workflows/restore-drill.yml`) and on changes to the
+manifest, rebuild and admin code.
 
 ## Troubleshooting
 
