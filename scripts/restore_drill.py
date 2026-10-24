@@ -240,13 +240,16 @@ def entity_name_from_id(entity_id: str) -> str:
 
 
 def search_finds(results: Any, entity_id: str, name: str) -> bool:
+    """Search results are ``{id, name, ...}`` or wrap them as ``{entity: {...}}``."""
     if not isinstance(results, list):
         return False
-    return any(
-        isinstance(r, dict)
-        and (r.get("id") == entity_id or str(r.get("name") or "").lower() == name.lower())
-        for r in results
-    )
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        for hit in (r, r.get("entity") if isinstance(r.get("entity"), dict) else None):
+            if hit and (hit.get("id") == entity_id or str(hit.get("name") or "").lower() == name.lower()):
+                return True
+    return False
 
 
 # ── live stack ────────────────────────────────────────────────────────────────
@@ -487,8 +490,18 @@ def run(args: argparse.Namespace) -> int:
     print(f"restore drill against {stack.base}; repo={stack.repo} data={stack.data} work={work}")
 
     seeded = seed(stack, args.allow_existing)
-    _step("snapshot")
+    _step("snapshot: live graph, then a clean rebuild of the same files (the restore baseline)")
+    live = stack.state()
+    stack.rebuild()
     before = stack.state()
+    # What live writes put in the graph that a rebuild from the same files does
+    # not reproduce is a parity gap (scripts/kb_parity_check.py's domain), not a
+    # restore failure — report it, and fail on it only with --strict-live-parity.
+    live_gap = compare_states(live, before)
+    if live_gap:
+        print("    WARNING: live graph != rebuild of the same files (before any backup):")
+        for p in live_gap:
+            print(f"      {p}")
     entity_id = pick_entity_id(before["graph"]["nodes"])
     (work / "before.json").write_text(json.dumps({**before, **seeded}, indent=1))
     print(
@@ -517,6 +530,8 @@ def run(args: argparse.Namespace) -> int:
     stack.backfill_memory_index()
 
     problems = verify(stack, before, seeded["decision_id"], entity_id)
+    if live_gap and args.strict_live_parity:
+        problems += ["live graph != rebuild of the same files (see WARNING above)"]
     if problems:
         print("\nRESTORE DRILL FAILED:")
         for p in problems:
@@ -539,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=int, default=900, help="seconds per wait")
     ap.add_argument("--allow-existing", action="store_true",
                     help="seed even though the corpus is not empty (it will be destroyed and restored)")
+    ap.add_argument("--strict-live-parity", action="store_true",
+                    help="also fail when the live graph differs from a rebuild of the same files")
     args = ap.parse_args(argv)
     if "NEO4J_PASSWORD" not in os.environ:
         print("NEO4J_PASSWORD must be set", file=sys.stderr)

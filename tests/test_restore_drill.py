@@ -166,6 +166,9 @@ def test_pick_entity_and_search_match():
     assert rd.search_finds([{"id": "person-elena-voss"}], "person-elena-voss", "elena voss")
     assert not rd.search_finds([{"id": "x", "name": "Other"}], "person-elena-voss", "elena voss")
     assert not rd.search_finds({"detail": "error"}, "person-elena-voss", "elena voss")
+    wrapped = [{"title": "Elena Voss", "entity": {"id": "person-elena-voss", "name": "Elena Voss"}}]
+    assert rd.search_finds(wrapped, "person-elena-voss", "elena voss")
+    assert not rd.search_finds([{"entity": "nope"}], "person-elena-voss", "elena voss")
 
 
 def test_main_requires_neo4j_password(monkeypatch, capsys):
