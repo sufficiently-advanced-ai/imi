@@ -64,8 +64,13 @@ REST: POST /api/ingest  {content, title, source_id, participants, source}
 ```
 
 Then **verify**: poll `GET /api/ingest/{job_id}/status` until `completed` or
-`completed_with_warnings` (job status is in-memory — if the app restarted mid-job,
-re-ingest; idempotency makes this safe). Read `GET /api/ingest/{job_id}/delta` for a summary
+`completed_with_warnings`. Jobs survive restarts: a job a restart interrupted shows
+`interrupted` and is re-run automatically under the same `job_id`, so keep polling the same
+`poll_url`. A `failed` job can be re-run with `POST /api/ingest/{job_id}/retry`, or by
+resubmitting the same content / `source_id` (that is not reported as `duplicate`; it re-runs
+the failed job). `duplicate` means the earlier job is pending, running, finished or dropped.
+A `429` (MCP: an `error` with `retry_after_seconds`) means the ingest queue is full: wait for
+`Retry-After` seconds and resend. Read `GET /api/ingest/{job_id}/delta` for a summary
 of what changed, and surface it to the user. `completed_with_warnings` means the content was
 stored but a phase degraded (e.g. signal extraction crashed, so an empty delta is not "nothing
 to learn"): report the `warnings` lines (also in the delta and in `add_call_transcript`'s

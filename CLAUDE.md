@@ -72,8 +72,12 @@ Verification for pipeline/schema changes: real ingest beats unit tests —
 - **MCP tools** are defined in `app/services/mcp_tool_definitions.py` (`TOOL_DEFS`) and
   registered on two surfaces; a few remain inline in `app/routes/mcp_server.py` (migration
   backlog). Follow `docs/mcp_tool_conventions.md` (`max_results` not `limit`, verb taxonomy).
-- The ingest **job store is an in-memory dict** (`app/routes/ingest.py:37`) — job status is
-  lost on restart; don't build on it as durable state.
+- The ingest **job store** (`app/services/ingest_job_store.py`) is a dict-shaped cache
+  written through to the `ingest_jobs` SQLite table, persisted at phase boundaries (the
+  route's SSE emitter), not on every in-place mutation — call `await job_store.persist(id)`
+  after changing a record outside a phase. Pending/running jobs come back `interrupted` at
+  boot and are re-run from the first phase, so pipeline writes must stay idempotent.
+  Orchestrator tests still pass a plain dict.
 - `app/modules/` is router aggregation only — logic lives in `app/services/` and
   `app/routes/`.
 
