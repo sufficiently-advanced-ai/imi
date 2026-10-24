@@ -35,6 +35,8 @@ export interface IngestResponse {
  * Job status vocabulary. `completed_with_warnings`: every phase returned but at
  * least one degraded (e.g. signal promotion crashed) — the content was still
  * persisted; `warnings` / `phase_outcomes` say what went wrong.
+ * `interrupted`: a server restart stopped the job; it is re-run automatically
+ * under the same job_id (keep polling).
  */
 export type IngestJobState =
   | "pending"
@@ -42,7 +44,8 @@ export type IngestJobState =
   | "completed"
   | "completed_with_warnings"
   | "failed"
-  | "dropped";
+  | "dropped"
+  | "interrupted";
 
 /** What one pipeline phase did (mirrors the backend PhaseOutcome). */
 export interface PhaseOutcome {
@@ -64,6 +67,10 @@ export interface IngestJobStatus {
   current_phase: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
+  /** Runs of this job (resubmission / retry / restart re-run add one). */
+  attempts?: number;
+  /** A restart interrupted this job at least once. */
+  interrupted?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -91,7 +91,8 @@ class PhaseOutcome(BaseModel):
 class IngestJobStatus(BaseModel):
     """Status of an ingestion job."""
     job_id: str
-    # pending | running | completed | completed_with_warnings | failed | dropped
+    # pending | running | completed | completed_with_warnings | failed |
+    # dropped | interrupted (a restart stopped it; re-run automatically)
     status: str
     content_type: str | None = None
     phases_completed: list[str] = Field(default_factory=list)
@@ -101,3 +102,7 @@ class IngestJobStatus(BaseModel):
     current_phase: str | None = None
     result: IngestResult | None = None
     error: str | None = None
+    # Runs of this job: 1, plus one per resubmission / retry / restart re-run.
+    attempts: int = 1
+    # A restart interrupted this job at least once.
+    interrupted: bool = False

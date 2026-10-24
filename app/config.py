@@ -177,6 +177,13 @@ class Settings(JSONConfigSettings):
         3600, description="Database pool recycle time in seconds"
     )
 
+    # Ingestion job store (app/services/ingest_job_store.py): jobs persist in
+    # the ingest_jobs table of DATABASE_PATH. POST /api/ingest answers 429
+    # (Retry-After) once INGEST_MAX_PENDING jobs are waiting; terminal jobs
+    # older than INGEST_JOB_RETENTION_DAYS are swept at startup and daily.
+    INGEST_MAX_PENDING: int = Field(200, ge=1)
+    INGEST_JOB_RETENTION_DAYS: int = Field(30, ge=1)
+
     # Standing Jobs Settings (Sprint 3, S3-5)
     STANDING_JOBS_ENABLED: bool = True
     STALENESS_EVAL_INTERVAL_SECONDS: int = Field(21600, ge=60)  # 6 hours

@@ -75,6 +75,10 @@ services:
       - NEO4J_REBUILD_ON_STARTUP=${NEO4J_REBUILD_ON_STARTUP:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
+      # Ingestion job store (ingest_jobs table in /app/data/imi.db)
+      - INGEST_MAX_PENDING=${INGEST_MAX_PENDING:-200}
+      - INGEST_JOB_RETENTION_DAYS=${INGEST_JOB_RETENTION_DAYS:-30}
+
       # AI models (defaults to Claude Sonnet / Haiku)
       - CLAUDE_SONNET_MODEL=${CLAUDE_SONNET_MODEL:-claude-sonnet-4-5-20250929}
       - CLAUDE_HAIKU_MODEL=${CLAUDE_HAIKU_MODEL:-claude-haiku-4-5-20251001}

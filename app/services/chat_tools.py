@@ -1821,6 +1821,12 @@ async def add_call_transcript(
     outcome = await submit_and_wait(request, timeout_s=timeout_s)
     state = outcome.get("state")
 
+    if state == "rejected":
+        return {
+            "error": outcome.get("error") or "Ingest queue is full",
+            "retry_after_seconds": outcome.get("retry_after_s"),
+        }
+
     if state == "failed":
         return {
             "error": f"Ingestion failed: {outcome.get('error') or 'unknown error'}",
