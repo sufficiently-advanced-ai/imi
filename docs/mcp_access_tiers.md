@@ -261,10 +261,16 @@ What the OAuth server enforces ([ADR-010](adr/ADR-010-mcp-authentication.md)):
 
 - Clients register dynamically, but only with redirect URIs listed in
   `MCP_OAUTH_REDIRECT_URIS` (claude.ai's callback by default) or loopback `http` URIs.
+- Registrations the owner never approves are pruned after an hour.
 - PKCE (S256) is required. Authorization codes are single-use and last 5 minutes.
-- Access tokens last 1 hour. Refresh tokens last 30 days and rotate on every use. Revoking a
-  token revokes its whole grant.
-- Five wrong passphrases in 15 minutes lock sign-in for 15 minutes.
+- Access tokens last 1 hour. Refresh tokens last 30 days and rotate on every use. A grant
+  ends 90 days after sign-in. Revoking a token revokes its whole grant, and so does replaying a
+  spent code or refresh token.
+- Five wrong passphrases from one source address in 15 minutes lock that address out for 15
+  minutes. Three wrong passphrases cancel that sign-in. Behind a tunnel, the source address
+  is the last `X-Forwarded-For` entry; Tailscale Funnel sets it.
+- Never approve a sign-in link someone else sent you. Whoever started the sign-in gets the
+  access.
 - Tokens are stored as SHA-256 hashes in the app database.
 - The audit actor for review actions is the token's name (`mcp:token-laptop`) or the OAuth
   client's registered name. It is no longer the client's self-reported name.

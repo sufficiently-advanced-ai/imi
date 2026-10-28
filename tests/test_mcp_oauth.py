@@ -286,11 +286,6 @@ def test_full_flow_refresh_and_revoke(auth_settings):
         rotated = resp.json()
         assert _init(client, access).status_code == 401
         assert _init(client, rotated["access_token"]).status_code == 200
-        replay = client.post(
-            "/oauth/token",
-            data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": client_id},
-        )
-        assert replay.status_code == 400
 
         # Revoking the access token revokes the grant, refresh token included.
         # The SDK's revocation form requires client_secret, empty for public clients.
@@ -303,6 +298,36 @@ def test_full_flow_refresh_and_revoke(auth_settings):
         resp = client.post(
             "/oauth/token",
             data={"grant_type": "refresh_token", "refresh_token": rotated["refresh_token"], "client_id": client_id},
+        )
+        assert resp.status_code == 400
+
+
+def test_refresh_token_replay_revokes_the_grant(auth_settings):
+    """OAuth 2.1 reuse detection: a spent refresh token coming back means two
+    parties hold the grant, so all of it is revoked."""
+    auth_settings("oauth")
+    with _client() as client:
+        client_id, tokens = _sign_in(client)
+        refresh = {"grant_type": "refresh_token", "client_id": client_id}
+        # The "attacker" rotates first...
+        rotated = client.post("/oauth/token", data={**refresh, "refresh_token": tokens["refresh_token"]}).json()
+        assert _init(client, rotated["access_token"]).status_code == 200
+        # ...then the old token is replayed: refused, and the new chain dies too.
+        replay = client.post("/oauth/token", data={**refresh, "refresh_token": tokens["refresh_token"]})
+        assert replay.status_code == 400
+        assert _init(client, rotated["access_token"]).status_code == 401
+        again = client.post("/oauth/token", data={**refresh, "refresh_token": rotated["refresh_token"]})
+        assert again.status_code == 400
+
+
+def test_grant_has_an_absolute_lifetime(auth_settings, monkeypatch):
+    auth_settings("oauth")
+    monkeypatch.setattr(mcp_oauth, "MAX_GRANT_AGE", 0)
+    with _client() as client:
+        client_id, tokens = _sign_in(client)
+        resp = client.post(
+            "/oauth/token",
+            data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": client_id},
         )
         assert resp.status_code == 400
 
@@ -328,9 +353,12 @@ def test_code_is_single_use_and_pkce_bound(auth_settings):
         assert bad.status_code == 400
         ok = client.post("/oauth/token", data={**form, "code_verifier": verifier})
         assert ok.status_code == 200, ok.text
+        assert _init(client, ok.json()["access_token"]).status_code == 200
         again = client.post("/oauth/token", data={**form, "code_verifier": verifier})
         assert again.status_code == 400
         assert again.json()["error"] == "invalid_grant"
+        # RFC 6749 §4.1.2: tokens issued from a replayed code are revoked.
+        assert _init(client, ok.json()["access_token"]).status_code == 401
 
 
 def test_authorize_rejects_other_resources(auth_settings):
@@ -364,18 +392,118 @@ def test_sign_in_page_escapes_and_denies(auth_settings):
         assert client.get("/oauth/login", params={"request": "nope"}).status_code == 400
 
 
-def test_wrong_passphrase_and_lockout(auth_settings):
+def _new_request(client: TestClient, client_id: str) -> str:
+    _, challenge = _pkce()
+    return _request_id(_start_authorize(client, client_id, challenge))
+
+
+def _login(client: TestClient, request_id: str, passphrase: str):
+    return client.post("/oauth/login", data={"request": request_id, "passphrase": passphrase, "action": "approve"})
+
+
+def test_wrong_passphrases_cancel_the_sign_in(auth_settings):
     auth_settings("oauth")
     with _client() as client:
         client_id = _register(client).json()["client_id"]
-        _, challenge = _pkce()
-        request_id = _request_id(_start_authorize(client, client_id, challenge))
-        for _ in range(mcp_oauth.MAX_LOGIN_FAILURES):
-            resp = client.post("/oauth/login", data={"request": request_id, "passphrase": "guess", "action": "approve"})
+        request_id = _new_request(client, client_id)
+        for _ in range(mcp_oauth.MAX_FAILURES_PER_REQUEST - 1):
+            resp = _login(client, request_id, "guess")
             assert resp.status_code == 401
             assert "Wrong passphrase" in resp.text
-        resp = client.post("/oauth/login", data={"request": request_id, "passphrase": PASSPHRASE, "action": "approve"})
-        assert resp.status_code == 429
+        resp = _login(client, request_id, "guess")
+        assert resp.status_code == 401
+        assert "Sign-in cancelled" in resp.text
+        assert _login(client, request_id, PASSPHRASE).status_code == 400
+
+
+def test_lockout_is_per_source_ip(auth_settings):
+    auth_settings("oauth")
+    with _client() as client:
+        client_id = _register(client).json()["client_id"]
+        for _ in range(mcp_oauth.MAX_LOGIN_FAILURES):
+            assert _login(client, _new_request(client, client_id), "guess").status_code == 401
+        # This source is locked out, even with the right passphrase...
+        assert _login(client, _new_request(client, client_id), PASSPHRASE).status_code == 429
+    guard = mcp_oauth.LoginGuard()
+    for _ in range(mcp_oauth.MAX_LOGIN_FAILURES):
+        guard.fail("203.0.113.9")
+    # ...but other sources are not.
+    assert guard.locked("203.0.113.9")
+    assert not guard.locked("198.51.100.7")
+
+
+def test_concurrent_guesses_cannot_outrun_the_lockout(auth_settings):
+    """Checks are serialised: parallel wrong passphrases get at most
+    MAX_LOGIN_FAILURES real checks before the source is locked out."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    auth_settings("oauth")
+    with _client() as client:
+        client_id = _register(client).json()["client_id"]
+        requests = [_new_request(client, client_id) for _ in range(mcp_oauth.MAX_PENDING_PER_IP)]
+        attempts = [r for r in requests for _ in range(2)]
+        with ThreadPoolExecutor(max_workers=len(attempts)) as pool:
+            codes = list(pool.map(lambda r: _login(client, r, "guess").status_code, attempts))
+        assert codes.count(401) == mcp_oauth.MAX_LOGIN_FAILURES
+        assert codes.count(429) == len(attempts) - mcp_oauth.MAX_LOGIN_FAILURES
+
+
+def test_client_ip_trusts_only_the_nearest_proxy():
+    def scope(peer, xff=None):
+        headers = [(b"x-forwarded-for", xff.encode())] if xff else []
+        return {"client": (peer, 1234), "headers": headers}
+
+    assert mcp_oauth.client_ip(scope("203.0.113.9", "1.2.3.4")) == "203.0.113.9"
+    assert mcp_oauth.client_ip(scope("127.0.0.1", "6.6.6.6, 198.51.100.7")) == "198.51.100.7"
+    assert mcp_oauth.client_ip(scope("127.0.0.1")) == "127.0.0.1"
+
+
+def test_pending_sign_ins_are_capped_per_ip_and_overall(auth_settings, monkeypatch):
+    auth_settings("oauth")
+    with _client() as client:
+        client_id = _register(client).json()["client_id"]
+        first = _new_request(client, client_id)
+        for _ in range(mcp_oauth.MAX_PENDING_PER_IP):
+            _new_request(client, client_id)
+        # One source can only evict its own oldest pending sign-in.
+        assert client.get("/oauth/login", params={"request": first}).status_code == 400
+        # Per-IP eviction runs first and leaves MAX_PENDING_PER_IP - 1 pending.
+        monkeypatch.setattr(mcp_oauth, "MAX_PENDING", mcp_oauth.MAX_PENDING_PER_IP - 1)
+        _, challenge = _pkce()
+        location = _start_authorize(client, client_id, challenge)
+        assert parse_qs(urlsplit(location).query)["error"] == ["temporarily_unavailable"]
+
+
+def test_unapproved_registrations_are_evicted_not_refused(auth_settings, monkeypatch):
+    auth_settings("oauth")
+    monkeypatch.setattr(mcp_oauth, "MAX_UNAPPROVED_CLIENTS", 3)
+    with _client() as client:
+        approved_id, _ = _sign_in(client)
+        ids = [_register(client).json()["client_id"] for _ in range(5)]
+        assert client.get("/.well-known/oauth-authorization-server").status_code == 200
+        _, challenge = _pkce()
+        params = {"response_type": "code", "redirect_uri": CALLBACK, "code_challenge": challenge}
+        # Oldest unapproved registrations are gone; the newest and the approved one remain.
+        assert client.get("/oauth/authorize", params={**params, "client_id": ids[0]}).status_code == 400
+        assert client.get("/oauth/authorize", params={**params, "client_id": ids[-1]}).status_code == 302
+        assert client.get("/oauth/authorize", params={**params, "client_id": approved_id}).status_code == 302
+
+
+def test_double_submit_is_not_a_server_error(auth_settings):
+    auth_settings("oauth")
+    with _client() as client:
+        client_id = _register(client).json()["client_id"]
+        request_id = _new_request(client, client_id)
+        assert _login(client, request_id, PASSPHRASE).status_code == 302
+        assert _login(client, request_id, PASSPHRASE).status_code == 400
+        assert client.post("/oauth/login", data={"request": request_id, "action": "deny"}).status_code == 400
+
+
+def test_login_body_is_size_limited(auth_settings):
+    auth_settings("oauth")
+    with _client() as client:
+        resp = client.post("/oauth/login", data={"request": "x", "passphrase": "a" * (mcp_oauth.LOGIN_BODY_LIMIT + 1)})
+        assert resp.status_code == 413
 
 
 def test_static_token_still_works_in_oauth_mode(auth_settings):

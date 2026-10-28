@@ -31,6 +31,7 @@ def upgrade() -> None:
             sa.Column("client_name", sa.String(length=256), nullable=True),
             sa.Column("client_info", sa.Text(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         )
         op.create_index(
             "ix_mcp_oauth_clients_created_at", "mcp_oauth_clients", ["created_at"]

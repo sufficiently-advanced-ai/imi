@@ -49,6 +49,7 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -74,11 +75,12 @@ from mcp.server.auth.routes import (
     create_protected_resource_routes,
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.server.transport_security import RequestBodyLimitMiddleware
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, request_response
 
 logger = logging.getLogger(__name__)
 
@@ -93,16 +95,31 @@ OWNER_SUBJECT = "owner"
 
 AUTH_CODE_TTL = 300
 PENDING_TTL = 600
-MAX_PENDING = 50
-MAX_CLIENTS = 500
-# Registrations with no live grant are pruned after a day (DCR is open to anyone).
-STALE_CLIENT_AGE = 86400
-# Owner sign-in lockout: this many wrong passphrases within the window lock
-# sign-in for the window. Global, not per IP: there is one owner.
+# Pending sign-ins: capped per source IP (oldest evicted) and overall (new
+# ones refused), so nobody can push the owner's pending sign-in out.
+MAX_PENDING = 500
+MAX_PENDING_PER_IP = 10
+# Dynamic registration is open to anyone. Clients the owner never approved are
+# pruned after an hour, and beyond the cap the oldest unapproved one is
+# evicted, so registrations can't fill the table. Approved clients are kept.
+MAX_UNAPPROVED_CLIENTS = 200
+UNAPPROVED_CLIENT_AGE = 3600
+# A grant ends this long after sign-in however often it is refreshed.
+MAX_GRANT_AGE = 90 * 86400
+# Owner sign-in: this many wrong passphrases from one source IP within the
+# window lock that IP out for the window; a pending sign-in is dropped after
+# MAX_FAILURES_PER_REQUEST wrong passphrases. Checks run one at a time.
 MAX_LOGIN_FAILURES = 5
+MAX_FAILURES_PER_REQUEST = 3
 LOGIN_WINDOW = 900
+MAX_PASSPHRASE_LEN = 1024
+LOGIN_BODY_LIMIT = 16 * 1024
 
 _LOOPBACK_REDIRECT_HOSTS = ("localhost", "127.0.0.1", "::1")
+_LOOPBACK_PEERS = ("127.0.0.1", "::1", "localhost")
+
+# scrypt runs here, not on the default thread pool the rest of the app shares.
+_SCRYPT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-oauth-scrypt")
 
 
 # ---------------------------------------------------------------------------
@@ -344,25 +361,26 @@ class OAuthStore:
         raw = await self._run(_get)
         return OAuthClientInformationFull.model_validate_json(raw) if raw else None
 
-    async def add_client(self, info: OAuthClientInformationFull) -> bool:
-        """Store a registration; False when the client limit is reached."""
+    async def add_client(self, info: OAuthClientInformationFull) -> None:
+        """Store a registration, pruning clients the owner never approved."""
 
-        def _add() -> bool:
-            from sqlalchemy import delete, func, select
+        def _add() -> None:
+            from sqlalchemy import delete, select
 
-            from app.user_models.mcp_oauth_models import McpOAuthClient, McpOAuthToken
+            from app.user_models.mcp_oauth_models import McpOAuthClient
 
             with self._session() as s:
-                cutoff = datetime.fromtimestamp(time.time() - STALE_CLIENT_AGE, UTC)
-                live = select(McpOAuthToken.client_id).where(McpOAuthToken.expires_at > time.time())
-                s.execute(
-                    delete(McpOAuthClient).where(
-                        McpOAuthClient.created_at < cutoff, McpOAuthClient.client_id.not_in(live)
-                    )
-                )
-                if s.scalar(select(func.count()).select_from(McpOAuthClient)) >= MAX_CLIENTS:
-                    s.commit()
-                    return False
+                unapproved = McpOAuthClient.approved_at.is_(None)
+                cutoff = datetime.fromtimestamp(time.time() - UNAPPROVED_CLIENT_AGE, UTC)
+                s.execute(delete(McpOAuthClient).where(unapproved, McpOAuthClient.created_at < cutoff))
+                surplus = s.scalars(
+                    select(McpOAuthClient.client_id)
+                    .where(unapproved)
+                    .order_by(McpOAuthClient.created_at.desc())
+                    .offset(MAX_UNAPPROVED_CLIENTS - 1)
+                ).all()
+                if surplus:
+                    s.execute(delete(McpOAuthClient).where(McpOAuthClient.client_id.in_(surplus)))
                 s.add(
                     McpOAuthClient(
                         client_id=info.client_id,
@@ -372,9 +390,20 @@ class OAuthStore:
                     )
                 )
                 s.commit()
-                return True
 
-        return await self._run(_add)
+        await self._run(_add)
+
+    async def mark_client_approved(self, client_id: str) -> None:
+        def _mark():
+            from app.user_models.mcp_oauth_models import McpOAuthClient
+
+            with self._session() as s:
+                row = s.get(McpOAuthClient, client_id)
+                if row is not None and row.approved_at is None:
+                    row.approved_at = datetime.now(UTC)
+                    s.commit()
+
+        await self._run(_mark)
 
     async def list_clients(self) -> list[dict[str, Any]]:
         def _list():
@@ -395,6 +424,7 @@ class OAuthStore:
                         "client_id": c.client_id,
                         "client_name": c.client_name,
                         "created_at": c.created_at.isoformat() if c.created_at else None,
+                        "approved_at": c.approved_at.isoformat() if c.approved_at else None,
                         "live_grants": grants.get(c.client_id, 0),
                     }
                     for c in s.query(McpOAuthClient).order_by(McpOAuthClient.created_at)
@@ -449,23 +479,37 @@ class OAuthStore:
 
         return await self._run(_get)
 
-    async def take_token(self, token: str, kind: str) -> dict[str, Any] | None:
-        """Delete and return a single-use token (code, refresh); None if absent,
-        so a concurrent second use fails."""
+    async def find_token(self, token: str) -> dict[str, Any] | None:
+        """Any row for *token*, whatever its kind or expiry."""
 
-        def _take():
+        def _find():
             from app.user_models.mcp_oauth_models import McpOAuthToken
 
             with self._session() as s:
                 row = s.get(McpOAuthToken, hash_token(token))
-                if row is None or row.kind != kind:
+                return _row_dict(row) if row is not None else None
+
+        return await self._run(_find)
+
+    async def use_token(self, token: str, kind: str) -> dict[str, Any] | None:
+        """Spend a single-use token (code, refresh): its row becomes a
+        ``<kind>_used`` marker until it would have expired, so a second use is
+        detected (and revokes the grant) instead of looking like a bad token.
+        None when absent, already used or expired."""
+
+        def _use():
+            from app.user_models.mcp_oauth_models import McpOAuthToken
+
+            with self._session() as s:
+                row = s.get(McpOAuthToken, hash_token(token))
+                if row is None or row.kind != kind or row.expires_at < time.time():
                     return None
                 data = _row_dict(row)
-                s.delete(row)
+                row.kind = f"{kind}_used"
                 s.commit()
-                return data if data["expires_at"] >= time.time() else None
+                return data
 
-        return await self._run(_take)
+        return await self._run(_use)
 
     async def revoke_grant(self, grant_id: str, kinds: tuple[str, ...] | None = None) -> None:
         def _revoke():
@@ -501,38 +545,85 @@ def _row_dict(row) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+_request_ip: ContextVar[str] = ContextVar("mcp_oauth_request_ip", default="unknown")
+
+
+def client_ip(scope: dict) -> str:
+    """Source address of a request. Behind a local tunnel or proxy (peer on
+    loopback, as with Tailscale Funnel) it is the last ``X-Forwarded-For``
+    entry: the one the nearest proxy added, which the caller can't forge."""
+    peer = (scope.get("client") or ("unknown", 0))[0]
+    if peer in _LOOPBACK_PEERS or peer.startswith("127."):
+        for key, value in scope.get("headers") or []:
+            if key == b"x-forwarded-for":
+                last = value.decode("latin-1").split(",")[-1].strip()
+                if last:
+                    return last
+    return peer
+
+
+class _WithRequestIP:
+    """ASGI wrapper exposing :func:`client_ip` to the provider (the SDK's
+    authorize handler doesn't pass the request through)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        token = _request_ip.set(client_ip(scope))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_ip.reset(token)
+
+
 @dataclass
 class _Pending:
     client_id: str
     client_name: str | None
     params: AuthorizationParams
     expires_at: float
+    source_ip: str = "unknown"
+    failures: int = 0
 
 
 class LoginGuard:
-    """Global lockout after repeated wrong passphrases."""
+    """Per-source-IP lockout after repeated wrong passphrases.
+
+    ``lock`` serialises passphrase checks so concurrent guesses can't all pass
+    the lockout check before any failure is recorded."""
 
     def __init__(self, max_failures: int = MAX_LOGIN_FAILURES, window: int = LOGIN_WINDOW):
         self.max_failures = max_failures
         self.window = window
-        self._failures: deque[float] = deque()
-        self._locked_until = 0.0
+        self.lock = asyncio.Lock()
+        self._failures: dict[str, deque[float]] = {}
+        self._locked_until: dict[str, float] = {}
 
-    def locked(self) -> bool:
-        return time.time() < self._locked_until
+    def locked(self, ip: str) -> bool:
+        return time.time() < self._locked_until.get(ip, 0.0)
 
-    def fail(self) -> None:
+    def fail(self, ip: str) -> None:
         now = time.time()
-        self._failures.append(now)
-        while self._failures and self._failures[0] < now - self.window:
-            self._failures.popleft()
-        if len(self._failures) >= self.max_failures:
-            self._locked_until = now + self.window
-            self._failures.clear()
-            logger.warning("MCP OAuth sign-in locked for %ss after repeated wrong passphrases", self.window)
+        if len(self._failures) > 1000:
+            self._prune(now)
+        failures = self._failures.setdefault(ip, deque())
+        failures.append(now)
+        while failures and failures[0] < now - self.window:
+            failures.popleft()
+        if len(failures) >= self.max_failures:
+            self._locked_until[ip] = now + self.window
+            failures.clear()
+            logger.warning("MCP OAuth sign-in locked for %s for %ss after repeated wrong passphrases", ip, self.window)
 
-    def succeed(self) -> None:
-        self._failures.clear()
+    def succeed(self, ip: str) -> None:
+        self._failures.pop(ip, None)
+
+    def _prune(self, now: float) -> None:
+        for ip in [ip for ip, f in self._failures.items() if not f or f[-1] < now - self.window]:
+            del self._failures[ip]
+        for ip in [ip for ip, until in self._locked_until.items() if until < now]:
+            del self._locked_until[ip]
 
 
 class ImiOAuthProvider:
@@ -563,8 +654,7 @@ class ImiOAuthProvider:
                     "invalid_redirect_uri",
                     f"redirect URI {uri} is not allowed by this server (MCP_OAUTH_REDIRECT_URIS)",
                 )
-        if not await self.store.add_client(client_info):
-            raise RegistrationError("invalid_client_metadata", "client registration limit reached")
+        await self.store.add_client(client_info)
         logger.info(
             "MCP OAuth: registered client %s (%s)", client_info.client_id, client_info.client_name
         )
@@ -575,16 +665,22 @@ class ImiOAuthProvider:
         if params.resource is not None and _normalize_resource(params.resource) != self.config.resource_url:
             raise AuthorizeError("invalid_request", f"unknown resource {params.resource}")
         now = time.time()
+        ip = _request_ip.get()
         for key in [k for k, p in self._pending.items() if p.expires_at < now]:
             del self._pending[key]
-        while len(self._pending) >= MAX_PENDING:
-            self._pending.popitem(last=False)
+        same_ip = [k for k, p in self._pending.items() if p.source_ip == ip]
+        for key in same_ip[: max(0, len(same_ip) - MAX_PENDING_PER_IP + 1)]:
+            del self._pending[key]
+        if len(self._pending) >= MAX_PENDING:
+            logger.warning("MCP OAuth: pending sign-in limit reached; refusing authorize from %s", ip)
+            raise AuthorizeError("temporarily_unavailable", "too many sign-ins in progress; try again shortly")
         request_id = secrets.token_urlsafe(24)
         self._pending[request_id] = _Pending(
             client_id=client.client_id,
             client_name=client.client_name,
             params=params,
             expires_at=now + PENDING_TTL,
+            source_ip=ip,
         )
         return f"{self.config.issuer_url}{LOGIN_PATH}?request={request_id}"
 
@@ -594,9 +690,15 @@ class ImiOAuthProvider:
             return None
         return pending
 
-    async def approve(self, request_id: str) -> str:
-        """Issue a code for a pending request; returns the client redirect URL."""
-        pending = self._pending.pop(request_id)
+    def drop(self, request_id: str) -> None:
+        self._pending.pop(request_id, None)
+
+    async def approve(self, request_id: str) -> str | None:
+        """Issue a code for a pending request; returns the client redirect URL,
+        or None when the request is gone (double submit, approve racing deny)."""
+        pending = self._pending.pop(request_id, None)
+        if pending is None:
+            return None
         code = secrets.token_urlsafe(32)
         p = pending.params
         await self.store.add_tokens(
@@ -618,11 +720,14 @@ class ImiOAuthProvider:
                 }
             ]
         )
+        await self.store.mark_client_approved(pending.client_id)
         logger.info("MCP OAuth: owner approved client %s (%s)", pending.client_id, pending.client_name)
         return construct_redirect_uri(str(p.redirect_uri), code=code, state=p.state)
 
-    def deny(self, request_id: str) -> str:
-        pending = self._pending.pop(request_id)
+    def deny(self, request_id: str) -> str | None:
+        pending = self._pending.pop(request_id, None)
+        if pending is None:
+            return None
         p = pending.params
         return construct_redirect_uri(
             str(p.redirect_uri), error="access_denied", error_description="The owner denied access", state=p.state
@@ -631,7 +736,7 @@ class ImiOAuthProvider:
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        row = await self.store.get_token(authorization_code, "code")
+        row = await self._find_unreplayed(authorization_code, "code")
         if row is None or row["client_id"] != client.client_id:
             return None
         payload = row["payload"] or {}
@@ -650,16 +755,36 @@ class ImiOAuthProvider:
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        row = await self.store.take_token(authorization_code.code, "code")
+        row = await self.store.use_token(authorization_code.code, "code")
         if row is None:
             raise TokenError("invalid_grant", "authorization code already used or expired")
-        return await self._issue(row["client_id"], row["client_name"], row["grant_id"], row["scopes"])
+        return await self._issue(row["client_id"], row["client_name"], row["grant_id"], row["scopes"], time.time())
+
+    async def _find_unreplayed(self, token: str, kind: str) -> dict[str, Any] | None:
+        """The live *kind* row for *token*. A spent one means the token was
+        replayed, so someone else may hold the grant: revoke all of it
+        (OAuth 2.1 refresh-token reuse detection; RFC 6749 §4.1.2 for codes)."""
+        row = await self.store.find_token(token)
+        if row is None:
+            return None
+        if row["kind"] == f"{kind}_used":
+            logger.warning(
+                "MCP OAuth: %s reused for client %s; revoking its grant", kind, row["client_id"]
+            )
+            await self.store.revoke_grant(row["grant_id"])
+            return None
+        if row["kind"] != kind or row["expires_at"] < time.time():
+            return None
+        return row
 
     # -- tokens ------------------------------------------------------------
 
-    async def _issue(self, client_id: str, client_name: str | None, grant_id: str, scopes: list[str]) -> OAuthToken:
+    async def _issue(
+        self, client_id: str, client_name: str | None, grant_id: str, scopes: list[str], grant_started: float
+    ) -> OAuthToken:
         access, refresh = f"imi_at_{secrets.token_urlsafe(32)}", f"imi_rt_{secrets.token_urlsafe(32)}"
         now = time.time()
+        refresh_expires = min(now + self.config.refresh_ttl, grant_started + MAX_GRANT_AGE)
         common = {
             "client_id": client_id,
             "grant_id": grant_id,
@@ -670,7 +795,13 @@ class ImiOAuthProvider:
         await self.store.add_tokens(
             [
                 {"token_hash": hash_token(access), "kind": "access", "expires_at": now + self.config.access_ttl, **common},
-                {"token_hash": hash_token(refresh), "kind": "refresh", "expires_at": now + self.config.refresh_ttl, **common},
+                {
+                    "token_hash": hash_token(refresh),
+                    "kind": "refresh",
+                    "expires_at": refresh_expires,
+                    "payload": {"grant_started": grant_started},
+                    **common,
+                },
             ]
         )
         return OAuthToken(
@@ -682,7 +813,7 @@ class ImiOAuthProvider:
         )
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
-        row = await self.store.get_token(refresh_token, "refresh")
+        row = await self._find_unreplayed(refresh_token, "refresh")
         if row is None or row["client_id"] != client.client_id:
             return None
         return RefreshToken(
@@ -697,12 +828,15 @@ class ImiOAuthProvider:
     async def exchange_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]
     ) -> OAuthToken:
-        row = await self.store.take_token(refresh_token.token, "refresh")
+        row = await self.store.use_token(refresh_token.token, "refresh")
         if row is None:
             raise TokenError("invalid_grant", "refresh token already used or expired")
         # Rotation: the grant's outstanding access tokens go with the old refresh token.
         await self.store.revoke_grant(row["grant_id"], kinds=("access",))
-        return await self._issue(row["client_id"], row["client_name"], row["grant_id"], scopes or row["scopes"])
+        grant_started = (row["payload"] or {}).get("grant_started", time.time())
+        return await self._issue(
+            row["client_id"], row["client_name"], row["grant_id"], scopes or row["scopes"], grant_started
+        )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         name = self.static_token_name(token)
@@ -808,6 +942,7 @@ def build_auth_routes(provider: ImiOAuthProvider) -> list[Route]:
     metadata.registration_endpoint = AnyHttpUrl(f"{base}{OAUTH_PREFIX}/register")
     metadata.revocation_endpoint = AnyHttpUrl(f"{base}{OAUTH_PREFIX}/revoke")
     metadata.token_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic", "none"]
+    metadata.revocation_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic", "none"]
 
     routes: list[Route] = [
         Route(
@@ -821,7 +956,8 @@ def build_auth_routes(provider: ImiOAuthProvider) -> list[Route]:
     for route in sdk_routes:
         if route.path.startswith("/.well-known/"):
             continue
-        routes.append(Route(f"{OAUTH_PREFIX}{route.path}", endpoint=route.endpoint, methods=route.methods))
+        endpoint = _WithRequestIP(route.endpoint) if route.path == "/authorize" else route.endpoint
+        routes.append(Route(f"{OAUTH_PREFIX}{route.path}", endpoint=endpoint, methods=route.methods))
 
     prm = create_protected_resource_routes(
         resource_url=AnyHttpUrl(config.resource_url),
@@ -837,14 +973,20 @@ def build_auth_routes(provider: ImiOAuthProvider) -> list[Route]:
 
     login = _LoginPage(provider)
     routes.append(Route(LOGIN_PATH, endpoint=login.get, methods=["GET"]))
-    routes.append(Route(LOGIN_PATH, endpoint=login.post, methods=["POST"]))
+    routes.append(
+        Route(
+            LOGIN_PATH,
+            endpoint=_WithRequestIP(RequestBodyLimitMiddleware(request_response(login.post), LOGIN_BODY_LIMIT)),
+            methods=["POST"],
+        )
+    )
     return routes
 
 
 _PAGE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",
 }
 
@@ -857,27 +999,54 @@ class _LoginPage:
         request_id = request.query_params.get("request", "")
         pending = self.provider.pending(request_id)
         if pending is None:
-            return _page("Sign-in expired", "<p>This sign-in link has expired. Start the connection again from your client.</p>", 400)
+            return _expired()
         return _page("Connect to imi", _form(request_id, pending))
 
     async def post(self, request: Request) -> Response:
         form = await request.form()
         request_id = str(form.get("request", ""))
-        pending = self.provider.pending(request_id)
-        if pending is None:
-            return _page("Sign-in expired", "<p>This sign-in link has expired. Start the connection again from your client.</p>", 400)
         if form.get("action") == "deny":
-            return RedirectResponse(self.provider.deny(request_id), status_code=302, headers=_PAGE_HEADERS)
-        if self.provider.guard.locked():
-            return _page("Connect to imi", _form(request_id, pending, "Too many wrong passphrases. Try again in 15 minutes."), 429)
-        passphrase = str(form.get("passphrase", ""))
-        ok = await asyncio.to_thread(verify_passphrase, passphrase, self.provider.config.passphrase_hash)
-        if not ok:
-            self.provider.guard.fail()
-            logger.warning("MCP OAuth: wrong passphrase for client %s", pending.client_id)
-            return _page("Connect to imi", _form(request_id, pending, "Wrong passphrase."), 401)
-        self.provider.guard.succeed()
-        return RedirectResponse(await self.provider.approve(request_id), status_code=302, headers=_PAGE_HEADERS)
+            target = self.provider.deny(request_id)
+            if target is None:
+                return _expired()
+            return RedirectResponse(target, status_code=302, headers=_PAGE_HEADERS)
+        ip = _request_ip.get()
+        guard = self.provider.guard
+        passphrase = str(form.get("passphrase", ""))[:MAX_PASSPHRASE_LEN]
+        async with guard.lock:
+            pending = self.provider.pending(request_id)
+            if pending is None:
+                return _expired()
+            if guard.locked(ip):
+                return _page("Connect to imi", _form(request_id, pending, "Too many wrong passphrases. Try again in 15 minutes."), 429)
+            ok = await asyncio.get_running_loop().run_in_executor(
+                _SCRYPT_EXECUTOR, verify_passphrase, passphrase, self.provider.config.passphrase_hash
+            )
+            if not ok:
+                guard.fail(ip)
+                pending.failures += 1
+                logger.warning("MCP OAuth: wrong passphrase from %s for client %s", ip, pending.client_id)
+                if pending.failures >= MAX_FAILURES_PER_REQUEST:
+                    self.provider.drop(request_id)
+                    return _page(
+                        "Sign-in cancelled",
+                        "<p>Too many wrong passphrases for this sign-in. Start the connection again from your client.</p>",
+                        401,
+                    )
+                return _page("Connect to imi", _form(request_id, pending, "Wrong passphrase."), 401)
+            guard.succeed(ip)
+            target = await self.provider.approve(request_id)
+        if target is None:
+            return _expired()
+        return RedirectResponse(target, status_code=302, headers=_PAGE_HEADERS)
+
+
+def _expired() -> HTMLResponse:
+    return _page(
+        "Sign-in expired",
+        "<p>This sign-in link has expired. Start the connection again from your client.</p>",
+        400,
+    )
 
 
 def _form(request_id: str, pending: _Pending, error: str | None = None) -> str:
@@ -888,7 +1057,8 @@ def _form(request_id: str, pending: _Pending, error: str | None = None) -> str:
 <p>A client calling itself <strong>{esc(pending.client_name or "unnamed client")}</strong>
 wants to use this imi instance's MCP tools. They can read and change the knowledge graph.</p>
 <p>After approval you return to <strong>{esc(target.scheme)}://{esc(target.netloc)}</strong>.
-Approve only if you just started connecting from there.</p>
+Approve only if <em>you</em> just started connecting from there yourself. Never approve a
+sign-in link someone sent you: whoever started this sign-in gets the access.</p>
 {error_html}
 <form method="post" action="{LOGIN_PATH}">
   <input type="hidden" name="request" value="{esc(request_id)}">

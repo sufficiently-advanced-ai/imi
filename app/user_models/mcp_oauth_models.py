@@ -24,19 +24,24 @@ class McpOAuthClient(Base):
     # SDK's client authenticator compares against at /token).
     client_info = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Set when the owner first approves a sign-in for this client. Clients
+    # never approved are pruned (registration is open to anyone).
+    approved_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class McpOAuthToken(Base):
     __tablename__ = "mcp_oauth_tokens"
 
     token_hash = Column(String(64), primary_key=True)
-    kind = Column(String(16), nullable=False)  # code | access | refresh
+    # code | access | refresh, or code_used / refresh_used: a spent single-use
+    # token kept until its expiry so a replay is detected and revokes the grant.
+    kind = Column(String(16), nullable=False)
     client_id = Column(String(64), nullable=False, index=True)
     grant_id = Column(String(64), nullable=False, index=True)
     client_name = Column(String(256), nullable=True)
     scopes = Column(JSON, nullable=False, default=list)
     resource = Column(Text, nullable=True)
-    # Authorization codes only: PKCE challenge and redirect URI binding.
+    # Codes: PKCE challenge and redirect URI binding. Refresh tokens: grant start.
     payload = Column(JSON, nullable=True)
     expires_at = Column(Float, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
