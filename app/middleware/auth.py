@@ -1,5 +1,6 @@
 """Authentication middleware for protecting routes."""
 
+import functools
 import logging
 import os
 from collections.abc import Callable
@@ -11,6 +12,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.auth import PUBLIC_ENDPOINTS, get_auth_service
 
 logger = logging.getLogger(__name__)
+
+
+@functools.cache
+def _mcp_auth_paths() -> tuple[str, ...]:
+    """MCP and OAuth paths that authenticate themselves when MCP_AUTH is on (ADR-010)."""
+    from app.services.mcp_oauth import load_auth_config, public_paths
+
+    try:
+        return public_paths(load_auth_config())
+    except ValueError:
+        return ()  # mount_mcp refuses to start with a bad config
 
 
 class AuthenticationMiddleware(BaseHTTPMiddleware):
@@ -34,7 +46,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             path == endpoint
             or (endpoint.endswith("/") and path.startswith(endpoint))
             or path.startswith(endpoint + "/")
-            for endpoint in PUBLIC_ENDPOINTS
+            for endpoint in (*PUBLIC_ENDPOINTS, *_mcp_auth_paths())
         )
 
         # If public endpoint, proceed without auth check
