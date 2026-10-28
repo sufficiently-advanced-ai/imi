@@ -91,6 +91,12 @@ services:
       # MCP access tiers (docs/mcp_access_tiers.md). Empty = local tier only.
       - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
       - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+      - MCP_REVIEW_ACTIONS=${MCP_REVIEW_ACTIONS:-true}
+      # MCP authentication (ADR-010): none | token | oauth
+      - MCP_AUTH=${MCP_AUTH:-none}
+      - MCP_STATIC_TOKENS=${MCP_STATIC_TOKENS:-}
+      - MCP_OAUTH_PASSPHRASE_HASH=${MCP_OAUTH_PASSPHRASE_HASH:-}
+      - MCP_OAUTH_REDIRECT_URIS=${MCP_OAUTH_REDIRECT_URIS:-https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback}
 
       # Optional observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}

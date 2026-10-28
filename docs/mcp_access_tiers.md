@@ -1,17 +1,20 @@
-# MCP Access Tiers — Local, Relayed, Remote
+# MCP Access Tiers — Local, Relayed, Remote, Public
 
 > **Audience:** operators connecting MCP clients to an imi instance ·
-> **Decision record:** [ADR-008](adr/ADR-008-remote-mcp-access.md) ·
+> **Decision records:** [ADR-008](adr/ADR-008-remote-mcp-access.md),
+> [ADR-010](adr/ADR-010-mcp-authentication.md) ·
 > **Source of truth:** `app/routes/mcp_server.py` (`build_mcp_app`, `mount_mcp`,
-> `_build_allowed_hosts`, `log_mcp_access_tier`), `app/config.py` (`MCP_ALLOWED_HOSTS`,
-> `MCP_PUBLIC_URL`) · **See also:** [MCP & API](architecture/mcp-and-api.md)
+> `_build_allowed_hosts`, `log_mcp_access_tier`), `app/services/mcp_oauth.py`,
+> `app/config.py` (`MCP_ALLOWED_HOSTS`, `MCP_PUBLIC_URL`, `MCP_AUTH`, `MCP_*TOKEN*`,
+> `MCP_OAUTH_*`) · **See also:** [MCP & API](architecture/mcp-and-api.md)
 
-> **Warning: imi's MCP server has no authentication.** Anyone who can open a connection to
-> the endpoint can call every tool, including the `graph_*` mutations, `delete_signal`, and
-> `update_signal` review actions. The community edition is meant for one machine or a
-> private network (a home server, a VPN or tailnet). If you expose it beyond that, the access
-> control is yours: a tunnel or reverse proxy that authenticates. Authentication (tokens,
-> OAuth, SSO, per-user audit) is a hosted-edition feature.
+> **Warning: by default (`MCP_AUTH=none`) imi's MCP server has no authentication.** Anyone
+> who can open a connection to the endpoint can call every tool, including the `graph_*`
+> mutations, `delete_signal`, and `update_signal` review actions. Keep an unauthenticated
+> instance on one machine or a private network (a home server, a VPN or tailnet). To reach
+> it from the internet, turn on `MCP_AUTH=token` or `MCP_AUTH=oauth` first: see the
+> [public tier](#public-tier). Per-user identity, SSO and per-tool scopes are hosted-edition
+> features.
 
 ## Endpoints
 
@@ -32,6 +35,7 @@ Both run in every tier. Local clients can use either one.
 | **Local** | one user, same machine | SSE or Streamable HTTP | none; loopback only | default |
 | **Relayed** | one user, cloud sessions via their desktop app | as Local | none (loopback) | works with the defaults |
 | **Remote** | scheduled tasks and teammates on a private network | Streamable HTTP | none in imi; the operator's network | opt-in, off by default |
+| **Public** | claude.ai connectors, Claude Duet, cloud agents | Streamable HTTP | bearer tokens / OAuth 2.1 (`MCP_AUTH`) | opt-in, off by default |
 
 ### Defaults are closed
 
@@ -41,6 +45,7 @@ Both run in every tier. Local clients can use either one.
 | `MCP_ALLOWED_HOSTS` | localhost only | the private hostname(s) clients use |
 | `MCP_PUBLIC_URL` | unset, so the remote tier is off | the URL clients use. `http://` is accepted (a tailnet already encrypts traffic) and logs a startup warning |
 | `MCP_REVIEW_ACTIONS` | `true`: MCP clients may perform review actions | **recommended `false`**: review in the UI instead (see [below](#review-actions-over-mcp)) |
+| `MCP_AUTH` | `none` | `none` on a private network; `token` or `oauth` for the [public tier](#public-tier) |
 
 With the defaults, only loopback can connect. Requests with any other `Host` header get
 `421 Invalid Host header`.
@@ -168,6 +173,110 @@ tier is declared explicitly.
 
 ---
 
+## Public tier
+
+Use this tier when a client can't join your private network: a **claude.ai custom
+connector** (which also makes imi available in **Claude Duet**, since Duet uses the connectors
+on your claude.ai account), a cloud sandbox, or an agent on someone else's infrastructure.
+imi is then reachable from the internet, so it must authenticate every MCP request.
+
+| `MCP_AUTH` | Clients send | Use it for |
+|---|---|---|
+| `token` | `Authorization: Bearer <static token>` | clients that can set a header: Claude Code (`--header`), the Claude API MCP connector (`authorization_token`), agent SDKs |
+| `oauth` | an OAuth 2.1 access token, **or** a static token | claude.ai custom connectors / Claude Duet, plus everything `token` covers |
+
+With either mode on, **every** MCP client needs a token, local ones included: traffic from a
+tunnel arrives from loopback too, so imi can't tell local from remote. Give each existing
+client a static token.
+
+### 1. Mint the secrets
+
+```bash
+# One static token per client (shown once; keep the name meaningful, it labels the audit actor)
+docker exec imi-app python scripts/mcp_auth.py new-token laptop
+# oauth only: the passphrase you'll type when a connector signs in (12+ characters)
+docker exec -it imi-app python scripts/mcp_auth.py hash-passphrase
+```
+
+### 2. Configure `.env` and restart
+
+```bash
+MCP_AUTH=oauth                                   # or token
+MCP_PUBLIC_URL=https://imi.example.ts.net/api/mcp/http
+MCP_STATIC_TOKENS=laptop:<sha256>,cowork:<sha256>
+MCP_OAUTH_PASSPHRASE_HASH=scrypt:32768:8:1:...   # oauth only
+MCP_REVIEW_ACTIONS=false                         # recommended
+```
+
+`MCP_PUBLIC_URL` must be the exact URL clients use. With `oauth` it must be `https://` and is
+also the OAuth issuer (its origin) and the resource tokens are bound to. A misconfigured mode
+stops the app at startup rather than serving MCP with less protection.
+
+### 3. Expose only what's needed
+
+Expose only the MCP endpoint, the `/.well-known/` metadata and `/oauth/`. **Never expose
+`/`**, because the UI and REST API sit behind `AUTH_MODE`, which may be `none`. With Tailscale
+Funnel (public ports 443, 8443 or 10000), and imi on port 8080:
+
+```bash
+tailscale funnel --bg --https=443 --set-path /api/mcp/http http://127.0.0.1:8080/api/mcp/http
+tailscale funnel --bg --https=443 --set-path /.well-known  http://127.0.0.1:8080/.well-known
+tailscale funnel --bg --https=443 --set-path /oauth        http://127.0.0.1:8080/oauth
+tailscale funnel status
+```
+
+Any other tunnel or reverse proxy works the same way. It must forward the original `Host`, and
+it must route only these three prefixes.
+
+### 4. Connect
+
+**claude.ai / Claude Duet:** Customize → Connectors → Add custom connector. Enter the
+`MCP_PUBLIC_URL`. If the dialog asks, choose **Sign in when needed** (or **Sign in now**) and
+**Register automatically**. claude.ai opens imi's sign-in page, which names the client and
+the site you'll return to. Type the passphrase and approve. The connector then appears in
+Claude Duet too.
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http imi https://imi.example.ts.net/api/mcp/http \
+  --header "Authorization: Bearer <static token>"
+```
+
+(Claude Code can also sign in through OAuth with a loopback callback.)
+
+### Managing access
+
+```bash
+docker exec imi-app python scripts/mcp_auth.py list-clients
+docker exec imi-app python scripts/mcp_auth.py revoke --client <client_id>   # sign one connector out
+docker exec imi-app python scripts/mcp_auth.py revoke --all
+```
+
+Revocation takes effect on the next request. To revoke a static token, remove it from
+`MCP_STATIC_TOKENS` and restart. To change the passphrase, re-hash it and restart; existing
+grants keep working until they're revoked.
+
+What the OAuth server enforces ([ADR-010](adr/ADR-010-mcp-authentication.md)):
+
+- Clients register dynamically, but only with redirect URIs listed in
+  `MCP_OAUTH_REDIRECT_URIS` (claude.ai's callback by default) or loopback `http` URIs.
+- Registrations the owner never approves are pruned after an hour.
+- PKCE (S256) is required. Authorization codes are single-use and last 5 minutes.
+- Access tokens last 1 hour. Refresh tokens last 30 days and rotate on every use. A grant
+  ends 90 days after sign-in. Revoking a token revokes its whole grant, and so does replaying a
+  spent code or refresh token.
+- Five wrong passphrases from one source address in 15 minutes lock that address out for 15
+  minutes. Three wrong passphrases cancel that sign-in. Behind a tunnel, the source address
+  is the last `X-Forwarded-For` entry; Tailscale Funnel sets it.
+- Never approve a sign-in link someone else sent you. Whoever started the sign-in gets the
+  access.
+- Tokens are stored as SHA-256 hashes in the app database.
+- The audit actor for review actions is the token's name (`mcp:token-laptop`) or the OAuth
+  client's registered name. It is no longer the client's self-reported name.
+
+---
+
 ## What network access does not change
 
 Network access decides *who can reach the server*.
@@ -205,4 +314,8 @@ your private network.
 | `403 Invalid Origin header` | a browser-style client sent an `Origin` header | browser clients aren't supported; use a native MCP client |
 | `406 Not Acceptable` on `/api/mcp/http` | the client didn't send `Accept: application/json, text/event-stream` | use an MCP client, or add the header to curl |
 | `404` on `/api/mcp/http` | imi is older than ADR-008 | upgrade, or use `/api/mcp/sse` |
+| `401` with `WWW-Authenticate: Bearer` | `MCP_AUTH` is on and the request had no valid token | send `Authorization: Bearer <token>`; OAuth clients follow the `resource_metadata` link |
+| app won't start: `MCP_AUTH=... needs ...` | an enabled auth mode is missing a setting | set what the message names; see the [public tier](#public-tier) |
+| claude.ai: "redirect URI is not allowed" | its callback isn't in `MCP_OAUTH_REDIRECT_URIS` | add the callback URL claude.ai reports |
+| claude.ai connects, then tools fail with `401` | `MCP_PUBLIC_URL` differs from the URL in the connector (tokens are bound to it) | make them identical, restart, reconnect |
 | Connection refused from another machine | the port is bound to loopback | step 1 of the remote tier |

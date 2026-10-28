@@ -1,13 +1,16 @@
 """Who may review a signal over MCP, and under what name (ADR-009).
 
-MCP has no authentication (ADR-008), so nothing an MCP client sends about its
-own identity can be trusted. This module keeps two rules in one place for every
-MCP-originated path into ``chat_tools.update_signal`` (the ``update_signal``
-tool and the ``ask_kb`` sub-agent when mutations are allowed):
+Nothing an MCP client sends about its own identity can be trusted. MCP is
+unauthenticated by default (ADR-008); with ``MCP_AUTH`` on (ADR-010) the
+bearer token identifies the client, not the person behind it. This module
+keeps two rules in one place for every MCP-originated path into
+``chat_tools.update_signal`` (the ``update_signal`` tool and the ``ask_kb``
+sub-agent when mutations are allowed):
 
-- The audit ``actor`` is stamped server-side as ``mcp`` or ``mcp:<client>``,
-  where ``<client>`` is the ``clientInfo.name`` the session sent at initialize
-  time (itself self-reported, so it only labels the channel). The caller's
+- The audit ``actor`` is stamped server-side as ``mcp`` or ``mcp:<client>``.
+  ``<client>`` is the authenticated token's name or OAuth client name when
+  ``MCP_AUTH`` is on, else the self-reported ``clientInfo.name`` the session
+  sent at initialize time, which only labels the channel. The caller's
   ``actor`` argument is kept as ``claimed_actor``, unverified data.
 - ``MCP_REVIEW_ACTIONS`` (default True) decides whether MCP may perform review
   actions at all. When False, ``review_action`` is rejected over MCP; the

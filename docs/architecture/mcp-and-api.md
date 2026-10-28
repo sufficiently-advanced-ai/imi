@@ -145,16 +145,27 @@ top of imi.
 
 Health, auth, docs, static, and the GitHub webhook are on a public allowlist
 (`auth.py:172-192`); the webhook instead verifies GitHub's `X-Hub-Signature-256` HMAC when a
-webhook secret is configured (see [Git corpus](../getting-started/git-corpus.md)). The **MCP endpoint has no bearer auth in community edition** — access
-control is network-level (bind to loopback / nginx allowlist) plus a DNS-rebinding Host-header
-allowlist seeded from `MCP_ALLOWED_HOSTS` and the host of `MCP_PUBLIC_URL`
-(`_build_allowed_hosts()` in `mcp_server.py`), shared by both transports. Do not expose port
-8080 to untrusted networks without a proxy in front; see
-[MCP access tiers](../mcp_access_tiers.md) (ADR-008).
+webhook secret is configured (see [Git corpus](../getting-started/git-corpus.md)). **MCP
+auth is separate from `AUTH_MODE`** and set by `MCP_AUTH` (ADR-010,
+`app/services/mcp_oauth.py`):
 
-Because MCP is unauthenticated, review actions over MCP are MCP-originated by construction
-(ADR-009): the `update_signal` handler stamps the audit `actor` as `mcp:<clientInfo.name>`
-server-side and keeps the caller's `actor` argument as an unverified `claimed_actor`
+- `none` (default) — no MCP auth; access control is network-level (bind to loopback / nginx
+  allowlist).
+- `token` — every MCP request needs a static bearer token from `MCP_STATIC_TOKENS`.
+- `oauth` — static tokens plus a single-owner OAuth 2.1 authorization server (SDK
+  `mcp.server.auth` handlers under `/oauth/*` and `/.well-known/*`, a passphrase sign-in page,
+  SQLite tables `mcp_oauth_clients` / `mcp_oauth_tokens`), for claude.ai custom connectors and
+  Claude Duet.
+
+In every mode both transports also share a DNS-rebinding Host-header allowlist, built from
+`MCP_ALLOWED_HOSTS` and the host of `MCP_PUBLIC_URL` (`_build_allowed_hosts()` in
+`mcp_server.py`). Do not expose port 8080 to untrusted networks with `MCP_AUTH=none`; see
+[MCP access tiers](../mcp_access_tiers.md) (ADR-008, ADR-010).
+
+Review actions over MCP are MCP-originated by construction (ADR-009): the `update_signal`
+handler stamps the audit `actor` server-side as `mcp:<name>`. `<name>` is the verified token
+name or OAuth client name when `MCP_AUTH` is on, and the self-reported `clientInfo.name`
+otherwise. The caller's `actor` argument is kept as an unverified `claimed_actor`
 (`app/services/review_authority.py`). `MCP_REVIEW_ACTIONS` (default `true`; recommended
 `false` for the remote tier, which logs a startup warning otherwise) switches review actions
 over MCP off entirely, for both `update_signal` and the `ask_kb` sub-agent.

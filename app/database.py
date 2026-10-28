@@ -245,6 +245,7 @@ async def initialize_database(config: DatabaseConfig | None = None) -> None:
                 # Import all model modules to register them with Base.metadata
                 import app.user_models.db_models  # noqa: F401
                 import app.user_models.ingest_job_models  # noqa: F401
+                import app.user_models.mcp_oauth_models  # noqa: F401
 
                 # Create user tables if they don't exist
                 logger.debug("Creating user management tables")

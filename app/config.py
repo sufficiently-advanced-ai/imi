@@ -304,6 +304,44 @@ class Settings(JSONConfigSettings):
         env="MCP_REVIEW_ACTIONS",
         description="Allow review actions (confirm/reject/...) over MCP; recommended false for the remote tier",
     )
+    # ADR-010: MCP authentication. "none" (default) keeps the ADR-008 behaviour;
+    # "token" requires a static bearer token from MCP_STATIC_TOKENS on every MCP
+    # request; "oauth" also serves an OAuth 2.1 authorization server (dynamic
+    # client registration + PKCE, one owner passphrase) so claude.ai custom
+    # connectors (and Claude Duet) can connect over the public internet.
+    MCP_AUTH: Literal["none", "token", "oauth"] = Field(
+        "none",
+        env="MCP_AUTH",
+        description="'none' | 'token' | 'oauth' — authentication on the MCP endpoints (ADR-010)",
+    )
+    # Comma-separated name:sha256hex entries; mint with `python scripts/mcp_auth.py new-token NAME`.
+    MCP_STATIC_TOKENS: SecretStr = Field(
+        SecretStr(""),
+        env="MCP_STATIC_TOKENS",
+        description="Static MCP bearer tokens as name:sha256hex,... (token and oauth modes)",
+    )
+    # scrypt hash of the owner passphrase typed on the OAuth sign-in page;
+    # make with `python scripts/mcp_auth.py hash-passphrase`.
+    MCP_OAUTH_PASSPHRASE_HASH: SecretStr = Field(
+        SecretStr(""),
+        env="MCP_OAUTH_PASSPHRASE_HASH",
+        description="scrypt hash of the passphrase that approves OAuth sign-ins (oauth mode)",
+    )
+    # OAuth redirect URIs a client may register, besides loopback http URIs
+    # (native clients such as Claude Code), which are always allowed.
+    MCP_OAUTH_REDIRECT_URIS: str = Field(
+        "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback",
+        env="MCP_OAUTH_REDIRECT_URIS",
+        description="Comma-separated OAuth redirect URIs clients may register (oauth mode)",
+    )
+    MCP_OAUTH_ACCESS_TOKEN_TTL: int = Field(
+        3600, env="MCP_OAUTH_ACCESS_TOKEN_TTL", description="OAuth access token lifetime, seconds"
+    )
+    MCP_OAUTH_REFRESH_TOKEN_TTL: int = Field(
+        30 * 86400,
+        env="MCP_OAUTH_REFRESH_TOKEN_TTL",
+        description="OAuth refresh token lifetime, seconds (rotated on every use)",
+    )
 
     # Demo Mode Settings (Epic #783)
     DEMO_MODE: bool = Field(False, env="DEMO_MODE", description="Enable demo video data injection routes")

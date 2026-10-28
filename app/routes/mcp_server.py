@@ -3,7 +3,10 @@ MCP Server — Exposes knowledge graph tools via Model Context Protocol.
 
 Two transports serve the same tool set behind the same DNS-rebinding / Host
 allowlist (ADR-008): legacy HTTP+SSE at ``/api/mcp/sse`` and Streamable HTTP
-at ``/api/mcp/http``. Neither is authenticated — see docs/mcp_access_tiers.md.
+at ``/api/mcp/http``. Both are unauthenticated by default (``MCP_AUTH=none``,
+docs/mcp_access_tiers.md); ``MCP_AUTH=token|oauth`` puts them behind bearer
+tokens and, for ``oauth``, adds an OAuth 2.1 authorization server (ADR-010,
+``app/services/mcp_oauth.py``).
 
 Wraps existing query tools (chat_tools.py) and mutation tools (graph_node_tools.py,
 graph_edge_tools.py) so Claude Code can call them natively from the CLI.
@@ -23,8 +26,10 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import TextContent, Tool
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.routing import Route
 
+from app.services import mcp_oauth
 from app.services.mcp_tool_definitions import build_mcp_tool
 
 logger = logging.getLogger(__name__)
@@ -131,6 +136,20 @@ def _build_allowed_hosts() -> list[str]:
 def log_mcp_access_tier() -> None:
     """Log, once at startup, which ADR-008 access tier the config implies."""
     from app.config import settings
+
+    auth_mode = (getattr(settings, "MCP_AUTH", "none") or "none").strip().lower()
+    if auth_mode != "none":
+        # ADR-010: authenticated MCP. load_auth_config() already refused a
+        # misconfigured mode at mount time, so this only reports.
+        logger.info(
+            "MCP access: MCP_AUTH=%s — every MCP request needs a bearer token%s. "
+            "MCP_PUBLIC_URL=%s",
+            auth_mode,
+            " (static or OAuth-issued)" if auth_mode == "oauth" else " (static)",
+            getattr(settings, "MCP_PUBLIC_URL", "") or "(unset)",
+        )
+        _warn_remote_review_actions(settings)
+        return
 
     raw_url = (getattr(settings, "MCP_PUBLIC_URL", "") or "").strip()
     public = _parse_public_url(raw_url)
@@ -464,15 +483,24 @@ async def handle_list_tools() -> list[Tool]:
 
 
 def _mcp_client_name() -> str | None:
-    """``clientInfo.name`` the current MCP session sent at initialize, if any.
+    """Name for the audit actor of the current MCP request (ADR-009).
 
-    Self-reported by the client (MCP has no authentication), so it only labels
-    the channel in the audit actor; it is never treated as a verified identity.
+    With MCP auth on (ADR-010) this is the verified caller: the static token's
+    name (``token-<name>``) or the OAuth client's registered name. Otherwise
+    it is the ``clientInfo.name`` the session sent at initialize, which is
+    self-reported and only labels the channel.
     """
     try:
-        params = server.request_context.session.client_params
+        ctx = server.request_context
     except (LookupError, AttributeError):
         return None
+    request = getattr(ctx, "request", None)
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict):
+        verified = mcp_oauth.principal_name(scope.get("user"))
+        if verified:
+            return verified
+    params = getattr(getattr(ctx, "session", None), "client_params", None)
     info = getattr(params, "clientInfo", None) if params is not None else None
     name = getattr(info, "name", None)
     return name if isinstance(name, str) else None
@@ -1075,33 +1103,92 @@ class _StreamableHTTPHandler:
 #   scope["root_path"] + sse._endpoint
 # When the app is mounted at /api/mcp, root_path = "/api/mcp",
 # so the client gets: "/api/mcp/messages/?session_id=..."
-def build_mcp_app() -> tuple[Starlette, StreamableHTTPSessionManager]:
+def build_mcp_app(
+    auth: "mcp_oauth.McpAuthConfig | None" = None,
+    verifier: Any = None,
+) -> tuple[Starlette, StreamableHTTPSessionManager]:
     """Build the MCP Starlette app and its Streamable HTTP session manager.
 
     The session manager's ``run()`` must wrap the host app's lifespan (Starlette
     does not run a mounted sub-app's lifespan) and can run only once, so every
     app gets a fresh one — use :func:`mount_mcp`.
+
+    With *auth* enabled (ADR-010) every route requires a bearer token that
+    *verifier* accepts; a missing or bad token gets 401 with a
+    ``WWW-Authenticate`` header pointing OAuth clients at the protected-resource
+    metadata. The SDK transports bind each session to the token's principal.
     """
     session_manager = StreamableHTTPSessionManager(
         app=server, security_settings=_security
     )
     http_handler = _StreamableHTTPHandler(session_manager)
     http_methods = ["GET", "POST", "DELETE"]
+    endpoints = {
+        "/sse": (_SseHandler(), ["GET"]),
+        "/messages/": (_MessageHandler(), ["POST"]),
+        "/http": (http_handler, http_methods),
+        "/http/": (http_handler, http_methods),
+    }
+    middleware: list[Middleware] = []
+    if auth is not None and auth.enabled:
+        from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+        from mcp.server.auth.middleware.bearer_auth import (
+            BearerAuthBackend,
+            RequireAuthMiddleware,
+        )
+        from pydantic import AnyHttpUrl
+        from starlette.middleware.authentication import AuthenticationMiddleware
+
+        resource = AnyHttpUrl(auth.resource_url) if auth.resource_url else None
+        metadata_url = auth.resource_metadata_url
+        endpoints = {
+            path: (
+                RequireAuthMiddleware(
+                    handler,
+                    required_scopes=[],
+                    resource_metadata_url=AnyHttpUrl(metadata_url) if metadata_url else None,
+                ),
+                methods,
+            )
+            for path, (handler, methods) in endpoints.items()
+        }
+        middleware = [
+            Middleware(
+                AuthenticationMiddleware,
+                backend=BearerAuthBackend(verifier, resource_server_url=resource),
+            ),
+            Middleware(AuthContextMiddleware),
+        ]
     app = Starlette(
         debug=False,
         routes=[
-            Route("/sse", endpoint=_SseHandler(), methods=["GET"]),
-            Route("/messages/", endpoint=_MessageHandler(), methods=["POST"]),
-            Route("/http", endpoint=http_handler, methods=http_methods),
-            Route("/http/", endpoint=http_handler, methods=http_methods),
+            Route(path, endpoint=handler, methods=methods)
+            for path, (handler, methods) in endpoints.items()
         ],
+        middleware=middleware,
     )
     return app, session_manager
 
 
 def mount_mcp(app, path: str = "/api/mcp") -> None:
-    """Mount both MCP transports on *app* and tie the session manager to its lifespan."""
-    mcp_app, session_manager = build_mcp_app()
+    """Mount both MCP transports on *app* and tie the session manager to its lifespan.
+
+    With ``MCP_AUTH=oauth`` this also adds the OAuth authorization-server,
+    protected-resource-metadata and sign-in routes to *app* and opens their
+    token store for the app's lifetime. A misconfigured ``MCP_AUTH`` raises
+    here, so the app does not start with less protection than asked for.
+    """
+    auth = mcp_oauth.load_auth_config()
+    provider = None
+    verifier = None
+    if auth.mode == mcp_oauth.MODE_OAUTH:
+        provider = mcp_oauth.ImiOAuthProvider(auth)
+        verifier = mcp_oauth.ProviderVerifier(provider)
+        for route in mcp_oauth.build_auth_routes(provider):
+            app.router.routes.append(route)
+    elif auth.mode == mcp_oauth.MODE_TOKEN:
+        verifier = mcp_oauth.StaticTokenVerifier(auth)
+    mcp_app, session_manager = build_mcp_app(auth, verifier)
     app.mount(path, mcp_app)
     inner_lifespan = app.router.lifespan_context
 
@@ -1111,7 +1198,15 @@ def mount_mcp(app, path: str = "/api/mcp") -> None:
         # cancelled before shutdown handlers close shared services.
         async with inner_lifespan(asgi_app) as state:
             log_mcp_access_tier()
-            async with session_manager.run():
-                yield state
+            if provider is not None:
+                from app.config import settings
+
+                await provider.store.open(settings.DATABASE_PATH)
+            try:
+                async with session_manager.run():
+                    yield state
+            finally:
+                if provider is not None:
+                    await provider.store.close()
 
     app.router.lifespan_context = _lifespan_with_mcp
