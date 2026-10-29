@@ -448,7 +448,7 @@ def test_concurrent_guesses_cannot_outrun_the_lockout(auth_settings):
         assert codes.count(429) == len(attempts) - mcp_oauth.MAX_LOGIN_FAILURES
 
 
-def test_client_ip_trusts_only_the_nearest_proxy():
+def test_client_ip_skips_proxy_hops_but_not_forged_entries():
     def scope(peer, xff=None):
         headers = [(b"x-forwarded-for", xff.encode())] if xff else []
         return {"client": (peer, 1234), "headers": headers}
@@ -456,6 +456,12 @@ def test_client_ip_trusts_only_the_nearest_proxy():
     assert mcp_oauth.client_ip(scope("203.0.113.9", "1.2.3.4")) == "203.0.113.9"
     assert mcp_oauth.client_ip(scope("127.0.0.1", "6.6.6.6, 198.51.100.7")) == "198.51.100.7"
     assert mcp_oauth.client_ip(scope("127.0.0.1")) == "127.0.0.1"
+    # Funnel -> container nginx: nginx appends the Docker gateway after the caller.
+    assert mcp_oauth.client_ip(scope("127.0.0.1", "6.6.6.6, 198.51.100.7, 172.20.0.1")) == "198.51.100.7"
+    # Tailnet callers are callers, not proxy hops.
+    assert mcp_oauth.client_ip(scope("127.0.0.1", "100.101.102.103, 172.20.0.1")) == "100.101.102.103"
+    # Only proxy hops: fall back to the outermost one.
+    assert mcp_oauth.client_ip(scope("127.0.0.1", "172.20.0.1")) == "172.20.0.1"
 
 
 def test_pending_sign_ins_are_capped_per_ip_and_overall(auth_settings, monkeypatch):

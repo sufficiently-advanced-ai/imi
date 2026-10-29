@@ -43,6 +43,7 @@ import base64
 import hashlib
 import hmac
 import html
+import ipaddress
 import logging
 import secrets
 import time
@@ -117,6 +118,13 @@ LOGIN_BODY_LIMIT = 16 * 1024
 
 _LOOPBACK_REDIRECT_HOSTS = ("localhost", "127.0.0.1", "::1")
 _LOOPBACK_PEERS = ("127.0.0.1", "::1", "localhost")
+# Proxy hops in front of imi: the container's nginx, the Docker bridge, a LAN
+# reverse proxy. Tailscale's 100.64/10 is deliberately absent: tailnet peers
+# are callers.
+_PROXY_NETWORKS = tuple(
+    ipaddress.ip_network(n)
+    for n in ("127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+)
 
 # scrypt runs here, not on the default thread pool the rest of the app shares.
 _SCRYPT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-oauth-scrypt")
@@ -548,17 +556,30 @@ def _row_dict(row) -> dict[str, Any]:
 _request_ip: ContextVar[str] = ContextVar("mcp_oauth_request_ip", default="unknown")
 
 
+def _is_proxy_hop(addr: str) -> bool:
+    """Loopback or RFC 1918 / ULA: a proxy in front of imi, not a caller."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return any(ip in net for net in _PROXY_NETWORKS)
+
+
 def client_ip(scope: dict) -> str:
-    """Source address of a request. Behind a local tunnel or proxy (peer on
-    loopback, as with Tailscale Funnel) it is the last ``X-Forwarded-For``
-    entry: the one the nearest proxy added, which the caller can't forge."""
+    """Source address of a request. Behind local proxies (peer on loopback, as
+    with the container's nginx in front of Tailscale Funnel) it is the
+    rightmost ``X-Forwarded-For`` entry that isn't itself a proxy hop: the
+    address the outermost proxy saw, which the caller can't forge."""
     peer = (scope.get("client") or ("unknown", 0))[0]
     if peer in _LOOPBACK_PEERS or peer.startswith("127."):
         for key, value in scope.get("headers") or []:
             if key == b"x-forwarded-for":
-                last = value.decode("latin-1").split(",")[-1].strip()
-                if last:
-                    return last
+                hops = [h.strip() for h in value.decode("latin-1").split(",") if h.strip()]
+                for hop in reversed(hops):
+                    if not _is_proxy_hop(hop):
+                        return hop
+                if hops:
+                    return hops[0]
     return peer
 
 

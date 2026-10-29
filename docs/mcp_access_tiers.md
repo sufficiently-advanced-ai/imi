@@ -268,7 +268,8 @@ What the OAuth server enforces ([ADR-010](adr/ADR-010-mcp-authentication.md)):
   spent code or refresh token.
 - Five wrong passphrases from one source address in 15 minutes lock that address out for 15
   minutes. Three wrong passphrases cancel that sign-in. Behind a tunnel, the source address
-  is the last `X-Forwarded-For` entry; Tailscale Funnel sets it.
+  is the rightmost `X-Forwarded-For` entry that isn't a loopback or private-network proxy
+  hop (the container's nginx adds the Docker gateway after the address Funnel saw).
 - Never approve a sign-in link someone else sent you. Whoever started the sign-in gets the
   access.
 - Tokens are stored as SHA-256 hashes in the app database.
