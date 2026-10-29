@@ -41,6 +41,12 @@ class CapturedMemory(BaseModel):
     summary: str | None = Field(None, description="Optional enrichment summary")
     tags: list[str] = Field(default_factory=list)
     source_date: str | None = Field(None, description="Original publish/sent date")
+    time_source: str | None = Field(
+        None,
+        description="How source_date was obtained (ADR-004 vocabulary: explicit, "
+        "content_header, inferred, fallback_now). None on records written before "
+        "it was kept",
+    )
     enrichment: dict = Field(
         default_factory=dict,
         description="LLM-extracted metadata (type/topics/people/action_items/dates)",

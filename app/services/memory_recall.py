@@ -36,6 +36,7 @@ from app.services.signal_retrieval import (
 from app.services.signal_retrieval import (
     recency_weight as _recency_weight_fn,
 )
+from app.utils.event_time import TIME_SOURCE_FALLBACK, TIME_SOURCE_UNRECORDED
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,20 @@ def _is_stale(stale_after: str | None) -> bool:
         return False  # unparseable horizon never hides a record
 
 
+def _published_at(record: Any, meta: dict) -> tuple[str | None, str]:
+    """(event time, time_source) for recency (ADR-004). A capture's
+    ``source_date`` is when its content was published or sent; ingest time
+    (``created_at``) is only the fallback, flagged ``fallback_now`` — a
+    backfill must not rank old content as new."""
+    source_date = getattr(record, "source_date", None)
+    if source_date:
+        return source_date, getattr(record, "time_source", None) or TIME_SOURCE_UNRECORDED
+    return getattr(record, "created_at", None) or meta.get("created_at"), TIME_SOURCE_FALLBACK
+
+
 def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> dict:
     """OB1 recall-response memory shape from re-hydrated data."""
+    published_at, time_source = _published_at(record, meta)
     return {
         "record_id": meta["id"],
         "record_kind": meta["content_type"],
@@ -237,6 +250,8 @@ def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> d
             "requires_confirmation": record.review_status == "pending",
         },
         "freshness": {
+            "published_at": published_at,
+            "time_source": time_source,
             "created_at": getattr(record, "created_at", None),
             "stale_after": getattr(record, "stale_after", None),
             "valid_to": getattr(record, "valid_to", None),
@@ -348,7 +363,7 @@ async def recall(
             score = similarity
             if request.recency_weight > 0:
                 recency = _recency_weight_fn(
-                    _age_seconds(meta.get("created_at")), request.half_life_days
+                    _age_seconds(_published_at(record, meta)[0]), request.half_life_days
                 )
                 score = blend_score(similarity, recency, request.recency_weight)
             score += authority_bonus(hydrated)

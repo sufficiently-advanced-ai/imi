@@ -199,3 +199,54 @@ def test_owner_falls_back_to_kb_owner_name(monkeypatch):
     assert la.owner_name() == "Ada Lovelace"
     monkeypatch.setattr(settings, "KB_OWNER_NAME", None, raising=False)
     assert la.owner_name() == la.DEFAULT_OWNER
+
+
+LIVE_ALERT = (
+    "# Live video with Dr Sam Illingworth and Orel now: Can AI detection hurt your brand?\n\n"
+    "From: Substack <no-reply@substack.com>\nDate: Thu, 20 Aug 2026 12:00:00 +0000\n\nWatch now"
+)
+NEWSLETTER = (
+    "# Overwhelmed by new AI tools?\n\n"
+    "From: \"Nate from Nate's Zero to AI\" <nateszerotoai@substack.com>\nDate: Thu\n\nBody"
+)
+
+
+@pytest.mark.asyncio
+async def test_platform_notification_is_dropped_by_subject_rule():
+    fake = _Fake()
+    d = await la.admit(LIVE_ALERT, "mail", client=fake)
+    assert d.drop and d.reason.startswith("rule: notification (Live video with")
+    assert fake.calls == []
+
+
+def test_subject_rules_apply_to_mail_only():
+    # An article titled "... is Live" is content, not a notification.
+    assert la.drop_rule("# The Atproto Spaces Alpha is Live\n\nBody", "web") is None
+    assert la.drop_rule("# Is going live\n\nNo sender line", "mail") is None
+
+
+def test_configured_drop_subjects_and_vendor_senders(monkeypatch, tmp_path):
+    cfg = tmp_path / "lanes.yaml"
+    cfg.write_text(
+        "drop_senders: ['@grain.com']\ndrop_subjects: ['^tomorrow: .* live .*sessions', '[']\n"
+    )
+    monkeypatch.setenv("LANES_CONFIG_PATH", str(cfg))
+    la.reset_lanes_config()
+    assert la.drop_rule("# Updates\n\nFrom: Jeff <jeff@grain.com>\n", "mail").startswith("listed")
+    mail = "# Tomorrow: 2 live Littlebird sessions + 6 new features\n\nFrom: LB <hello@lb.ai>\n"
+    assert la.drop_rule(mail, "mail").startswith("notification")  # the bad '[' is skipped
+
+
+@pytest.mark.asyncio
+async def test_kept_sources_are_never_dropped(monkeypatch, tmp_path):
+    cfg = tmp_path / "lanes.yaml"
+    cfg.write_text("keep_sources: [nateszerotoai@substack.com, interconnects.ai]\n")
+    monkeypatch.setenv("LANES_CONFIG_PATH", str(cfg))
+    la.reset_lanes_config()
+    kept_alert = LIVE_ALERT.replace("no-reply@substack.com", "nateszerotoai@substack.com")
+    assert la.drop_rule(kept_alert, "mail") is None
+    d = await la.admit(NEWSLETTER, "mail", client=_Fake(junk=0.99))
+    assert not d.drop and d.reason.startswith("kept (nateszerotoai@substack.com)")
+    web = await la.admit("Post", "web", source_id="https://www.interconnects.ai/p/x",
+                         client=_Fake(junk=0.99))
+    assert not web.drop

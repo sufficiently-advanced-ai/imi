@@ -175,3 +175,31 @@ def test_lanes_are_validated():
     with pytest.raises(ValidationError):
         RecallRequest(query="q", lanes=[])
     assert RecallRequest(query="q").lanes == ["record"]
+
+
+@pytest.mark.asyncio
+async def test_library_recency_is_publish_time_not_ingest_time(store, maker):
+    # Both ingested today; the backfilled August issue must not rank as new.
+    now = datetime.now(UTC)
+    old = _cap("Risky Bulletin: August issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=70)).isoformat(), "time_source": "explicit"}
+    )
+    new = _cap("Risky Bulletin: this week's issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=2)).isoformat(), "time_source": "inferred"}
+    )
+    undated = _cap("An undated page.", lane="library")
+    for r in (old, new, undated):
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, [old, new, undated], maker, lanes=["library"], recency_weight=1.0,
+        half_life_days=14,
+    )
+
+    ranked = [m["record_id"] for m in result["background"]]
+    assert ranked.index(new.id) < ranked.index(old.id)
+    fresh = {m["record_id"]: m["freshness"] for m in result["background"]}
+    assert fresh[old.id]["published_at"] == old.source_date
+    assert fresh[new.id]["time_source"] == "inferred"
+    assert fresh[undated.id]["time_source"] == "fallback_now"
+    assert fresh[undated.id]["published_at"] == undated.created_at

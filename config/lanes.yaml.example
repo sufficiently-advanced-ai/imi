@@ -40,6 +40,18 @@ mcp_trusted_sources: []
 drop_senders:
   - notifications@example-vendor.com
 
+# Extra mail subjects to drop (case-insensitive regex), on top of the built-in
+# platform-notification rule ("Live video with … now:", "is going live",
+# "posted new notes", "thanks for attending", "confirm your subscription", …).
+# Every drop is logged with its reason under memory/admission/.
+drop_subjects:
+  - "^your weekly digest\\b"
+
+# Sources that are never dropped — not by a rule, not by the model. Substring
+# match (case-insensitive) on the From: line or the URL.
+keep_sources:
+  - newsletter@example-writer.com
+
 # ---- Library and recall policy (ADR-006) ------------------------------------
 # Every key is optional; the values below are the defaults and reproduce
 # ADR-003 exactly. A bad value is logged and replaced by its default — it never
