@@ -328,6 +328,22 @@ def test_capture_title_prefers_heading_then_summary():
     assert capture_title(_memory(content="Just a line\nmore")) == "Just a line"
 
 
+def test_capture_title_strips_markdown_and_skips_site_chrome():
+    from app.services.graph.capture_graph_writer import capture_title
+
+    linked = _memory(content="# [Connecting every app](https://blog.val.town/connectors)\nbody")
+    assert capture_title(linked) == "Connecting every app"
+    spaced = _memory(content="# Top Official   Hired **Lawyer**\nbody")
+    assert capture_title(spaced) == "Top Official Hired Lawyer"
+    home = _memory(content="# [National Vulnerability Database](https://nvd.nist.gov/home)\n"
+                           "# National Vulnerability Database\n# NVD\n### CVE-2026-1234 Detail\nbody",
+                   summary="NVD entry for CVE-2026-1234. More.")
+    assert capture_title(home) == "NVD entry for CVE-2026-1234"
+    crumb = _memory(content="# Computer Science > Human-Computer Interaction\n"
+                            "# Title:Kale: A Spreadsheet System\nbody")
+    assert capture_title(crumb) == "Kale: A Spreadsheet System"
+
+
 def test_mutate_refuses_to_overwrite_an_unreadable_file(tmp_path):
     store = CaptureLinkStore(repo_root=tmp_path)
     store.dir.mkdir(parents=True)

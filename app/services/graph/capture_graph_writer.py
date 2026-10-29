@@ -13,6 +13,7 @@ Edge directions follow ADR-011 §4: ``MENTIONED_IN`` runs entity -> Document
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -38,24 +39,48 @@ def capture_doc_id(capture_path: str) -> str:
 
 
 _HEADING_LINES = 40  # an article's H1 sits near the top, after any scraped nav
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_SITE_ROOT_LINK = re.compile(r"^\[([^\]]*)\]\(https?://[^/)]+(/|/home|/index\.html?)?\)$")
+_TITLE_LABEL = re.compile(r"^title:\s*", re.IGNORECASE)
+_MIN_HEADING_CHARS = 5  # "NVD", "Home": a site badge, not an item title
+
+
+def _clean_title(text: str) -> str:
+    """Inline markdown links reduced to their text, emphasis markers dropped,
+    a scraped ``Title:`` label removed, whitespace runs collapsed."""
+    text = _MD_LINK.sub(r"\1", text)
+    text = re.sub(r"[*_`]+", "", text)
+    text = _TITLE_LABEL.sub("", text.strip())
+    return " ".join(text.split())[:_TITLE_CHARS]
 
 
 def capture_title(memory: Any) -> str:
     """The content's first H1, else the first sentence of the summary, else
     the first line. Scraped pages often open with navigation or cookie
-    banners, so the first line alone is a poor title."""
+    banners, so the first line alone is a poor title. Site-chrome H1s are
+    skipped the same way: a lone link to the site root (logo/home link) and
+    any repeat of its text, a breadcrumb trail (``A > B``), a short badge."""
     lines = (getattr(memory, "content", "") or "").splitlines()
+    site_names: set[str] = set()
     for line in lines[:_HEADING_LINES]:
         line = line.strip()
-        if line.startswith("# ") and line[2:].strip():
-            return line[2:].strip()[:_TITLE_CHARS]
+        if not (line.startswith("# ") and line[2:].strip()):
+            continue
+        heading = line[2:].strip()
+        if root := _SITE_ROOT_LINK.match(heading):
+            site_names.add(_clean_title(root.group(1)).casefold())
+            continue
+        title = _clean_title(heading)
+        if " > " in heading or len(title) < _MIN_HEADING_CHARS or title.casefold() in site_names:
+            continue
+        return title
     summary = (getattr(memory, "summary", None) or "").strip()
     if summary:
-        return summary.split(". ", 1)[0].rstrip(".")[:_TITLE_CHARS]
+        return _clean_title(summary.split(". ", 1)[0].rstrip("."))
     for line in lines:
-        line = line.strip().lstrip("#").strip()
+        line = _clean_title(line.strip().lstrip("#"))
         if line:
-            return line[:_TITLE_CHARS]
+            return line
     return getattr(memory, "id", "")[:_TITLE_CHARS]
 
 
