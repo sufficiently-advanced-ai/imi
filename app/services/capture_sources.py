@@ -17,7 +17,12 @@ from urllib.parse import urlparse
 
 from app.services.entity_utils import slugify
 
-_CHANNEL_RE = re.compile(r"^\**Channel:?\**:?\s*(.+?)\s*$", re.I | re.M)
+# The forwarder writes ``**Channel:** X | **Date:** … | **Duration:** …`` on one
+# line; the channel ends at the next ``| **Field:**`` marker, not at the first
+# pipe (channel names contain them: "Nate Herk | AI Automation").
+_CHANNEL_RE = re.compile(
+    r"^\**Channel:?\**:?\s*(.+?)\s*(?:\|\s*\*\*[A-Za-z ]+:\*\*.*)?$", re.I | re.M
+)
 _FROM_RE = re.compile(r"^From:\s*(.+?)\s*$", re.M)
 _ADDRESS_RE = re.compile(r"<\s*([^<>\s]+@[^<>\s]+)\s*>|([^\s<>\"]+@[^\s<>\"]+)")
 _YOUTUBE_HOSTS = ("youtube.com", "youtu.be")
