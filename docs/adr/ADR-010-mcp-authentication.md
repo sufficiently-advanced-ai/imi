@@ -43,8 +43,8 @@ MCP session to its token's principal). imi supplies the storage and the sign-in 
   page. The owner approves by typing the passphrase whose scrypt hash is
   `MCP_OAUTH_PASSPHRASE_HASH`. Passphrase checks run one at a time. Five wrong passphrases
   from one source address in 15 minutes lock that address out for 15 minutes, and a pending
-  sign-in is dropped after three wrong ones. Behind a local tunnel, the source address is the
-  last `X-Forwarded-For` entry. Pending sign-ins are capped per source address, and in total,
+  sign-in is dropped after three wrong ones. Behind local proxies, the source address is the
+  rightmost `X-Forwarded-For` entry that isn't a loopback or RFC 1918 hop. Pending sign-ins are capped per source address, and in total,
   so nobody can push the owner's sign-in out.
 - **Codes only go to Claude or to localhost.** Dynamic registration accepts only redirect URIs
   in `MCP_OAUTH_REDIRECT_URIS` (claude.ai's callback by default) or loopback `http` URIs.
