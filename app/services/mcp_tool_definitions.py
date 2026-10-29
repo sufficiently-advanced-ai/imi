@@ -310,7 +310,12 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "revision, Slack channel + ts), so re-runs over an overlapping window "
             "dedup instead of duplicating.\n"
             "  - source_date: when the content was sent/published/happened, taken from "
-            "the content — never the time you fetched it."
+            "the content — never the time you fetched it.\n\n"
+            "about (optional): entities or captures this note is about — entity ids or "
+            "names, or capture ids. Each one that resolves gets an owner 'about' link "
+            "(a library capture named here is kept from decaying out of recall); names "
+            "that do not resolve are returned under about.unresolved and never create "
+            "an entity. The lane is still decided by the server."
         ),
         "inputSchema": {
             "type": "object",
@@ -346,8 +351,76 @@ TOOL_DEFS: dict[str, ToolDef] = {
                         "never the fetch time"
                     ),
                 },
+                "about": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Entity ids or names, or capture ids, this note is about "
+                        "(owner links; unresolved names are returned, never created)"
+                    ),
+                },
             },
             "required": ["content"],
+        },
+    },
+    "graph_add_capture_link": {
+        "name": "graph_add_capture_link",
+        "description": (
+            "Link a captured item (article, newsletter, video, note) to an entity or to "
+            "another capture, as the owner. Use this to file something you read under "
+            "the client, person, topic, storyline or essay it matters to; graph_add_edge "
+            "only links entities to each other. edge: 'about' (default; also the only "
+            "edge to another capture), 'mentions', 'advances' (to a storyline) or "
+            "'evidence_for' (to an essay, with stance supports | challenges | context). "
+            "Linking a library capture keeps it from decaying out of recall. Never "
+            "creates an entity: a name that does not resolve is returned as unresolved. "
+            "Writes the capture's link file and commits it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "capture_id": {"type": "string", "description": "The capture to link from"},
+                "target": {
+                    "type": "string",
+                    "description": "Entity id or exact name, or another capture's id",
+                },
+                "edge": {
+                    "type": "string",
+                    "enum": ["about", "mentions", "advances", "evidence_for"],
+                    "description": "Edge type (default about)",
+                },
+                "stance": {
+                    "type": "string",
+                    "enum": ["supports", "challenges", "context"],
+                    "description": "For evidence_for only (default context)",
+                },
+            },
+            "required": ["capture_id", "target"],
+        },
+    },
+    "graph_delete_capture_link": {
+        "name": "graph_delete_capture_link",
+        "description": (
+            "Remove a link the owner made with graph_add_capture_link (links the "
+            "automatic linker made are undone by reverting its run, not here). "
+            "Removing the last owner link on a library capture lets it decay again. "
+            "Writes the capture's link file and commits it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "capture_id": {"type": "string", "description": "The capture the link is from"},
+                "target": {
+                    "type": "string",
+                    "description": "Entity id or exact name, or another capture's id",
+                },
+                "edge": {
+                    "type": "string",
+                    "enum": ["about", "mentions", "advances", "evidence_for"],
+                    "description": "Edge type (default about)",
+                },
+            },
+            "required": ["capture_id", "target"],
         },
     },
     "memory_writeback": {

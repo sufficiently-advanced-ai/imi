@@ -64,6 +64,24 @@ library:
   # Types a claim's source (authors / publisher) resolves to, in order.
   # Default: whichever of person, contact, organization, company the domain has.
   # attribution_types: [person, organization]
+  # Capture linking (ADR-011, docs/architecture/capture-linking.md): the LINK
+  # phase (POST /api/captures/link) links library captures to their source,
+  # seeded topics/storylines/essays (seeds/<role>.yaml in the corpus) and the
+  # entities they discuss. create_types above is the corroborated tier.
+  linking:
+    mode: off                     # off | shadow (files + audit only) | on
+    batch_size: 10                # captures per capture_linking call
+    concurrency: 2                # calls in flight per run
+    min_confidence: 0.6           # model confidence needed to keep a link
+    roles:                        # domain type per role; null disables the role
+      source: source
+      topic: topic
+      storyline: storyline
+      essay: essay
+    corroboration:                # bar for creating a create_types entity
+      min_captures: 3
+      min_sources: 2
+      window_days: 30             # by event time (occurred_at)
 recall:
   default_lanes: [record]         # e.g. [record, library]: library hits are
                                   # ranked separately under `background`

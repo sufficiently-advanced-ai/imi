@@ -56,6 +56,7 @@ _GOVERNANCE_FIELDS = (
     # stale vector must not move a record between lanes.
     "lane",
     "stale_after",
+    "pinned_by",  # ADR-011 §5: an owner link keeps a library capture in recall
 )
 
 
@@ -332,8 +333,13 @@ async def recall(
             hydrated["confidence"] = getattr(record, "confidence", None)
             if hydrated["lane"] != lane:
                 continue  # vector metadata is stale; the record is authoritative
-            if lane == "library" and decay and _is_stale(hydrated.get("stale_after")):
-                continue  # ADR-003 §5: decayed library is out of recall, not deleted
+            if (
+                lane == "library"
+                and decay
+                and not hydrated.get("pinned_by")
+                and _is_stale(hydrated.get("stale_after"))
+            ):
+                continue  # ADR-003 §5: decayed library is out of recall unless pinned
             if not _passes_governance(
                 hydrated, request.authority, request.include_rejected
             ):

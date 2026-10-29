@@ -80,6 +80,12 @@ class CapturedMemory(BaseModel):
         description="Library decay horizon (ISO); a stale library record is "
         "excluded from recall until a record cites it (ADR-003 §5)",
     )
+    pinned_by: list[str] = Field(
+        default_factory=list,
+        description="Owner links that pin this record against decay (ADR-003 §5, "
+        "ADR-011 §5). Non-empty: never stale; stale_after is kept so unpinning "
+        "restores decay. Server-maintained; never accepted from clients",
+    )
     channel: str | None = Field(
         None,
         description="Intake channel (ADR-007), e.g. 'mcp'. Stamped by the transport "

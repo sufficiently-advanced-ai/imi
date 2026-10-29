@@ -123,6 +123,24 @@ async def test_stale_library_is_excluded_but_record_stale_after_is_not(store, ma
 
 
 @pytest.mark.asyncio
+async def test_pinned_stale_library_stays_in_recall(store, maker):
+    """ADR-011 §5: an owner link pins a library capture; its horizon is kept,
+    so unpinning restores decay."""
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    pinned = _cap("Pinned newsletter.", lane="library", stale_after=past).model_copy(
+        update={"pinned_by": ["note-1:ABOUT:capture-x"]}
+    )
+    unpinned = _cap("Unpinned newsletter.", lane="library", stale_after=past)
+    for r in (pinned, unpinned):
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(store, [pinned, unpinned], maker, lanes=["record", "library"])
+
+    assert [m["record_id"] for m in result["background"]] == [pinned.id]
+    assert pinned.stale_after == past
+
+
+@pytest.mark.asyncio
 async def test_record_lane_wins_over_stale_vector_metadata(store, maker):
     """Indexed as record, later re-laned to library: recall must follow the
     authoritative record, not the vector."""
