@@ -184,6 +184,20 @@ class LinkAuditLog:
     def relative_path(self, now: datetime | None = None) -> str:
         return str(self.path(now).relative_to(self.repo_root))
 
+    def iter_rows(self) -> Iterator[dict[str, Any]]:
+        """Every row of every month, oldest file first. Unreadable lines are skipped."""
+        if not self.dir.is_dir():
+            return
+        for path in sorted(self.dir.glob("links-*.jsonl")):
+            with path.open(encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        yield row
+
     def append_many(self, rows: list[dict[str, Any]], now: datetime | None = None) -> Path | None:
         if not rows:
             return None

@@ -255,6 +255,10 @@ async def test_revert_removes_links_and_unreferenced_entities(world):
     run = await capture_linker.run_link(10, ctx=world.ctx())
     first = world.made[0]
     await capture_linker.attach(first.id, "Old Corp", "about", ctx=world.ctx())
+    # A clean rebuild keeps only declared attributes: revert must not need them.
+    for node in world.kg.nodes.values():
+        node.metadata.pop("run_id", None)
+        node.metadata.pop("created_by", None)
 
     summary = await capture_linker.revert_run(run["run_id"], ctx=world.ctx())
 

@@ -458,6 +458,7 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
                         ref.name,
                         source_id,
                         {"medium": ref.medium, "source_key": ref.key, "created_by": LINK_PHASE,
+                         "source": LINK_OPERATION,
                          "run_id": log.run_id, **({"url": ref.url} if ref.url else {})},
                     )
                     log.sources_created.append(source_id)
@@ -763,7 +764,8 @@ async def _corroborate(ctx: LinkContext, log: Changelog, records: dict[str, Capt
                 audit_rows.append({"run_id": log.run_id, "mode": mode, "action": "would_create",
                                    **entry, "tier": "topic" if is_topic else "corroborated"})
                 continue
-            props: dict[str, Any] = {"created_by": LINK_PHASE, "run_id": log.run_id}
+            props: dict[str, Any] = {"created_by": LINK_PHASE, "run_id": log.run_id,
+                                     "source": LINK_OPERATION}
             if is_topic:
                 props["seed_status"] = PROVISIONAL
             elif _is_person_type(entity_type):
@@ -776,7 +778,8 @@ async def _corroborate(ctx: LinkContext, log: Changelog, records: dict[str, Capt
             entry["id"] = target
             (log.provisional_topics if is_topic else log.entities_created).append(entry)
             audit_rows.append({"run_id": log.run_id, "mode": mode, "action": "create_entity",
-                               **entry, "tier": "topic" if is_topic else "corroborated",
+                               "entity_id": target, **entry,
+                               "tier": "topic" if is_topic else "corroborated",
                                "evidence": sorted(cluster.members)})
         if mode != "on" or not target:
             continue
@@ -919,21 +922,29 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
             logger.warning("[LINK] Revert projection failed (files are written): %s", e, exc_info=True)
             projection_error = str(e)
 
+    # What the run created comes from its audit rows (in the corpus), not from
+    # node properties: a rebuild keeps only the domain's declared attributes.
+    created = list(dict.fromkeys(
+        row["entity_id"] for row in ctx.audit.iter_rows()
+        if row.get("run_id") == run_id and row.get("action") == "create_entity"
+        and row.get("mode") == "on" and isinstance(row.get("entity_id"), str)
+    ))
+    await _ensure_graph(ctx)
+    nodes = getattr(ctx.kg, "nodes", None) or {}
     referenced = {link.target_id for record in ctx.links.iter_all() for link in record.links}
     archived, kept = [], []
-    for node in list((getattr(ctx.kg, "nodes", None) or {}).values()):
-        metadata = getattr(node, "metadata", None) or {}
-        if metadata.get("run_id") != run_id or metadata.get("created_by") != LINK_PHASE:
-            continue
-        if node.id in referenced or await _has_other_edges(ctx.kg, node.id):
-            kept.append(node.id)
+    for entity_id in created:
+        if entity_id not in nodes:
+            continue  # already gone
+        if entity_id in referenced or await _has_other_edges(ctx.kg, entity_id):
+            kept.append(entity_id)
             continue
         try:
-            await ctx.entities.archive(node.id)
-            archived.append(node.id)
+            await ctx.entities.archive(entity_id)
+            archived.append(entity_id)
         except Exception as e:
-            logger.warning("[LINK] Archiving %s failed: %s", node.id, e)
-            kept.append(node.id)
+            logger.warning("[LINK] Archiving %s failed: %s", entity_id, e)
+            kept.append(entity_id)
 
     summary = {"run_id": run_id, "captures_changed": len(changed), "links_removed": removed,
                "entities_archived": archived, "entities_kept": kept}
