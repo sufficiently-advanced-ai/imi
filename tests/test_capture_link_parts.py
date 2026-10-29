@@ -94,6 +94,16 @@ def test_youtube_source_is_the_channel():
     assert ref.entity_id("source") == "source-dwarkesh-patel"
 
 
+def test_youtube_channel_stops_at_the_next_header_field():
+    # The forwarder's real header: all fields on one line, channel names with pipes.
+    one_line = "# Talk\n**Channel:** Dwarkesh Patel | **Date:** 2026-10-19 | **Duration:** 1:58\n"
+    assert derive_source("youtube", None, one_line).key == "youtube:dwarkesh patel"
+    piped = "# Vid\n**Channel:** Nate Herk | AI Automation | **Date:** 2026-09-03 | **Duration:** 5:42\n"
+    ref = derive_source("youtube", None, piped)
+    assert (ref.key, ref.name) == ("youtube:nate herk | ai automation", "Nate Herk | AI Automation")
+    assert ref.entity_id("source") == "source-nate-herk-ai-automation"
+
+
 def test_mail_source_is_the_sender_address():
     content = '# Subject\n\nFrom: "Nate from Nate\'s Zero to AI" <NatesZeroToAI@substack.com>\nDate: x\n'
     ref = derive_source("mail", "1a145e0891fe6686", content)
