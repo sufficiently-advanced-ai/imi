@@ -24,7 +24,12 @@ from app.services.capture_link_store import (
     CaptureLinkFile,
     CaptureLinkStore,
 )
-from app.utils.event_time import TIME_SOURCE_CONTENT, TIME_SOURCE_FALLBACK, to_utc
+from app.utils.event_time import (
+    TIME_SOURCE_CONTENT,
+    TIME_SOURCE_FALLBACK,
+    to_utc,
+    validate_time_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +109,11 @@ def document_props(memory: Any, path: str) -> dict[str, Any]:
         "source": getattr(memory, "source", None),
         "url": capture_url(memory),
         "recorded_at": to_utc(getattr(memory, "created_at", None)),
-        "time_source": TIME_SOURCE_CONTENT if occurred else TIME_SOURCE_FALLBACK,
+        "time_source": (
+            validate_time_source(getattr(memory, "time_source", None) or TIME_SOURCE_CONTENT)
+            if occurred
+            else TIME_SOURCE_FALLBACK
+        ),
     }
     if occurred is not None:
         props["occurred_at"] = occurred
