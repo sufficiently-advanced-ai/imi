@@ -153,9 +153,14 @@ class CaptureLinkStore:
     ) -> CaptureLinkFile | None:
         """Read-modify-write one link file under the store lock. ``fn`` gets
         the current file (a fresh owner-mode one when none exists) and returns
-        the new record, or None to leave the file untouched."""
+        the new record, or None to leave the file untouched. A file that exists
+        but cannot be read raises ValueError rather than being replaced."""
         with _lock:
-            current = self.get(capture_id) or CaptureLinkFile(capture_id=capture_id, mode="owner")
+            current = self.get(capture_id)
+            if current is None:
+                if self._path(capture_id).exists():
+                    raise ValueError(f"Link file for {capture_id!r} is unreadable; not overwriting it")
+                current = CaptureLinkFile(capture_id=capture_id, mode="owner")
             updated = fn(current.model_copy(deep=True))
             if updated is not None:
                 self.save(updated)

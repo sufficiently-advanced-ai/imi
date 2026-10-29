@@ -119,7 +119,9 @@ class CaptureGraphWriter:
             doc_ids.append(doc_id)
             if not record.projected():
                 continue
-            docs.append({"id": doc_id, "props": document_props(memory, path)})
+            # The projection owns every property of a capture document:
+            # replace them, so a cleared date/summary/url does not linger.
+            docs.append({"id": doc_id, "props": {**document_props(memory, path), "id": doc_id}})
             lane = getattr(memory, "lane", None) or "record"
             for link in record.graph_links():
                 if link.edge not in EDGE_TYPES:
@@ -153,7 +155,7 @@ class CaptureGraphWriter:
             )
         for chunk in _chunks(docs):
             await self.neo4j.execute_write(
-                "UNWIND $rows AS row MERGE (d:Document {id: row.id}) SET d += row.props",
+                "UNWIND $rows AS row MERGE (d:Document {id: row.id}) SET d = row.props",
                 {"rows": chunk},
             )
         written = 0
@@ -209,13 +211,9 @@ class CaptureGraphWriter:
             memory = capture_store.get(target_id)
             if memory is not None:
                 items.append((memory, CaptureLinkFile(capture_id=target_id, mode="owner")))
-        bare = [(m, r) for m, r in items if not r.links]
-        stats = {"documents": 0, "edges": 0}
-        for group in (bare, [(m, r) for m, r in items if r.links]):
-            for chunk in _chunks(group):
-                result = await self.write(chunk)
-                stats["documents"] += result["documents"]
-                stats["edges"] += result["edges"]
+        # One write: it creates every document before any edge, so an edge to
+        # a capture projected later in the list still finds its node.
+        stats = await self.write(items)
         if missing:
             logger.warning("[GRAPH] %d capture link file(s) name a missing capture", missing)
         return stats

@@ -313,10 +313,10 @@ async def test_project_all_adds_owner_target_captures(tmp_path):
     stats = await writer.project_all(links, SimpleNamespace(get=captures.get))
 
     assert stats == {"documents": 2, "edges": 1}
-    merged = [r["id"] for q, p in neo4j.writes if q.startswith("UNWIND $rows AS row MERGE (d:Document")
-              for r in p["rows"]]
-    assert merged.index(f"doc:memory/captures/{article.id}.json") < merged.index(
-        f"doc:memory/captures/{note.id}.json")
+    queries = [q for q, _ in neo4j.writes]
+    last_doc = max(i for i, q in enumerate(queries) if q.startswith("UNWIND $rows AS row MERGE (d:Document"))
+    first_edge = min(i for i, q in enumerate(queries) if "MERGE (d)-[r:" in q or "MERGE (e)-[r:" in q)
+    assert last_doc < first_edge  # every document exists before any edge is written
 
 
 def test_capture_title_prefers_heading_then_summary():
@@ -326,3 +326,24 @@ def test_capture_title_prefers_heading_then_summary():
     nav = _memory(content="| | |\nSkip to content\nbody", summary="An article about X. More text.")
     assert capture_title(nav) == "An article about X"
     assert capture_title(_memory(content="Just a line\nmore")) == "Just a line"
+
+
+def test_mutate_refuses_to_overwrite_an_unreadable_file(tmp_path):
+    store = CaptureLinkStore(repo_root=tmp_path)
+    store.dir.mkdir(parents=True)
+    (store.dir / "c1.json").write_text("{not json")
+    with pytest.raises(ValueError):
+        store.mutate("c1", lambda r: r)
+    assert (store.dir / "c1.json").read_text() == "{not json"
+
+
+@pytest.mark.asyncio
+async def test_document_properties_are_replaced_not_merged():
+    neo4j = _Neo4j()
+    writer = CaptureGraphWriter(neo4j, lambda cid: f"memory/captures/{cid}.json")
+    memory = _memory(source_date=None)
+    await writer.write([(memory, CaptureLinkFile(capture_id=memory.id, mode="on"))])
+    query, params = next((q, p) for q, p in neo4j.writes if "MERGE (d:Document" in q)
+    assert "SET d = row.props" in query
+    row = params["rows"][0]
+    assert row["props"]["id"] == row["id"] and "occurred_at" not in row["props"]
