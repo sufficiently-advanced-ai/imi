@@ -655,6 +655,10 @@ class ImiOAuthProvider:
         self.store = store or OAuthStore()
         self.guard = LoginGuard()
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
+        # request_id -> (expires_at, redirect origin) for sign-ins just approved,
+        # so a repeated submit (browsers and in-app sign-in windows do this)
+        # gets "approved" instead of "expired". Holds no secrets.
+        self._approved: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
     # -- registration ------------------------------------------------------
 
@@ -714,6 +718,13 @@ class ImiOAuthProvider:
     def drop(self, request_id: str) -> None:
         self._pending.pop(request_id, None)
 
+    def recently_approved(self, request_id: str) -> str | None:
+        """Redirect origin of a sign-in approved in the last PENDING_TTL, else None."""
+        entry = self._approved.get(request_id or "")
+        if entry is None or entry[0] < time.time():
+            return None
+        return entry[1]
+
     async def approve(self, request_id: str) -> str | None:
         """Issue a code for a pending request; returns the client redirect URL,
         or None when the request is gone (double submit, approve racing deny)."""
@@ -742,6 +753,10 @@ class ImiOAuthProvider:
             ]
         )
         await self.store.mark_client_approved(pending.client_id)
+        target = urlsplit(str(p.redirect_uri))
+        self._approved[request_id] = (time.time() + PENDING_TTL, f"{target.scheme}://{target.netloc}")
+        while len(self._approved) > MAX_PENDING:
+            self._approved.popitem(last=False)
         logger.info("MCP OAuth: owner approved client %s (%s)", pending.client_id, pending.client_name)
         return construct_redirect_uri(str(p.redirect_uri), code=code, state=p.state)
 
@@ -1020,7 +1035,7 @@ class _LoginPage:
         request_id = request.query_params.get("request", "")
         pending = self.provider.pending(request_id)
         if pending is None:
-            return _expired()
+            return _expired_or_approved(self.provider, request_id)
         return _page("Connect to imi", _form(request_id, pending))
 
     async def post(self, request: Request) -> Response:
@@ -1037,7 +1052,7 @@ class _LoginPage:
         async with guard.lock:
             pending = self.provider.pending(request_id)
             if pending is None:
-                return _expired()
+                return _expired_or_approved(self.provider, request_id)
             if guard.locked(ip):
                 return _page("Connect to imi", _form(request_id, pending, "Too many wrong passphrases. Try again in 15 minutes."), 429)
             ok = await asyncio.get_running_loop().run_in_executor(
@@ -1058,8 +1073,19 @@ class _LoginPage:
             guard.succeed(ip)
             target = await self.provider.approve(request_id)
         if target is None:
-            return _expired()
+            return _expired_or_approved(self.provider, request_id)
         return RedirectResponse(target, status_code=302, headers=_PAGE_HEADERS)
+
+
+def _expired_or_approved(provider: ImiOAuthProvider, request_id: str) -> HTMLResponse:
+    origin = provider.recently_approved(request_id)
+    if origin is None:
+        return _expired()
+    return _page(
+        "Approved",
+        f"<p>This sign-in is approved. You can close this window and return to "
+        f"<strong>{html.escape(origin)}</strong>.</p>",
+    )
 
 
 def _expired() -> HTMLResponse:
