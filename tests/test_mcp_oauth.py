@@ -495,14 +495,22 @@ def test_unapproved_registrations_are_evicted_not_refused(auth_settings, monkeyp
         assert client.get("/oauth/authorize", params={**params, "client_id": approved_id}).status_code == 302
 
 
-def test_double_submit_is_not_a_server_error(auth_settings):
+def test_double_submit_after_approval_says_approved(auth_settings):
     auth_settings("oauth")
     with _client() as client:
         client_id = _register(client).json()["client_id"]
         request_id = _new_request(client, client_id)
         assert _login(client, request_id, PASSPHRASE).status_code == 302
-        assert _login(client, request_id, PASSPHRASE).status_code == 400
+        # A repeated submit (or reload) of an approved sign-in says so, with no
+        # second redirect: the code was single-use. Even a wrong passphrase
+        # learns nothing beyond "approved".
+        for resp in (_login(client, request_id, PASSPHRASE), _login(client, request_id, "guess"),
+                     client.get("/oauth/login", params={"request": request_id})):
+            assert resp.status_code == 200
+            assert "is approved" in resp.text
+            assert "https://claude.ai" in resp.text
         assert client.post("/oauth/login", data={"request": request_id, "action": "deny"}).status_code == 400
+        assert _login(client, "unknown", PASSPHRASE).status_code == 400
 
 
 def test_login_body_is_size_limited(auth_settings):
