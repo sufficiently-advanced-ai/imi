@@ -413,9 +413,7 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
         log.errors.append("no active domain: entity types unknown")
         return log.as_dict()
 
-    build = getattr(ctx.kg, "build_graph", None)
-    if build is not None:
-        await build()
+    await _ensure_graph(ctx)
 
     # 1. seeds (owner content: synced in shadow too)
     for role in SEEDED_ROLES:
@@ -981,6 +979,13 @@ class AttachError(ValueError):
     pass
 
 
+async def _ensure_graph(ctx: LinkContext) -> None:
+    """Load the graph mirror the resolver reads (a no-op when it is fresh)."""
+    build = getattr(ctx.kg, "build_graph", None)
+    if build is not None:
+        await build()
+
+
 def resolve_target(ctx: LinkContext, target: str) -> tuple[str, str] | None:
     """(target_id, target_type) for an entity id or name, or a capture id.
     Names resolve on exact or alias matches only; an ambiguous name raises."""
@@ -1036,6 +1041,7 @@ async def attach(capture_id: str, target: str, edge: str = "about", stance: str 
     memory = ctx.captures.get(capture_id)
     if memory is None:
         raise AttachError(f"Capture {capture_id!r} not found")
+    await _ensure_graph(ctx)
     resolved = resolve_target(ctx, target)
     if resolved is None:
         return {"linked": False, "unresolved": target}
@@ -1095,6 +1101,7 @@ async def detach(capture_id: str, target: str, edge: str = "about", actor: str |
     edge_type = OWNER_EDGES.get((edge or "").lower())
     if edge_type is None:
         raise AttachError(f"edge must be one of {sorted(OWNER_EDGES)}")
+    await _ensure_graph(ctx)
     resolved = resolve_target(ctx, target)
     target_id = resolved[0] if resolved else target
     target_type = resolved[1] if resolved else None

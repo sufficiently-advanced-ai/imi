@@ -37,13 +37,26 @@ def capture_doc_id(capture_path: str) -> str:
     return f"doc:{capture_path}"
 
 
+_HEADING_LINES = 40  # an article's H1 sits near the top, after any scraped nav
+
+
 def capture_title(memory: Any) -> str:
-    """First heading or line of the content, else the summary."""
-    for line in (getattr(memory, "content", "") or "").splitlines():
+    """The content's first H1, else the first sentence of the summary, else
+    the first line. Scraped pages often open with navigation or cookie
+    banners, so the first line alone is a poor title."""
+    lines = (getattr(memory, "content", "") or "").splitlines()
+    for line in lines[:_HEADING_LINES]:
+        line = line.strip()
+        if line.startswith("# ") and line[2:].strip():
+            return line[2:].strip()[:_TITLE_CHARS]
+    summary = (getattr(memory, "summary", None) or "").strip()
+    if summary:
+        return summary.split(". ", 1)[0].rstrip(".")[:_TITLE_CHARS]
+    for line in lines:
         line = line.strip().lstrip("#").strip()
         if line:
             return line[:_TITLE_CHARS]
-    return (getattr(memory, "summary", None) or getattr(memory, "id", ""))[:_TITLE_CHARS]
+    return getattr(memory, "id", "")[:_TITLE_CHARS]
 
 
 def capture_url(memory: Any) -> str | None:

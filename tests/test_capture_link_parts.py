@@ -317,3 +317,12 @@ async def test_project_all_adds_owner_target_captures(tmp_path):
               for r in p["rows"]]
     assert merged.index(f"doc:memory/captures/{article.id}.json") < merged.index(
         f"doc:memory/captures/{note.id}.json")
+
+
+def test_capture_title_prefers_heading_then_summary():
+    from app.services.graph.capture_graph_writer import capture_title
+
+    assert capture_title(_memory(content="Privacy preferences\n\n# Real Title\nbody")) == "Real Title"
+    nav = _memory(content="| | |\nSkip to content\nbody", summary="An article about X. More text.")
+    assert capture_title(nav) == "An article about X"
+    assert capture_title(_memory(content="Just a line\nmore")) == "Just a line"
