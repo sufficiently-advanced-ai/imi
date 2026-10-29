@@ -897,10 +897,17 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
         nonlocal removed
         keep = [link for link in record.links
                 if not (link.created_by == LINK_PHASE and link.run_id == run_id)]
-        if len(keep) == len(record.links):
+        # The file's own extraction run also left its unresolved names: they
+        # are the corroboration ledger, so a reverted run's names must not go
+        # on to create entities (they stay in the audit log). A later run's
+        # back-link into this file does not own them.
+        extracted_here = record.run_id == run_id
+        if len(keep) == len(record.links) and not (extracted_here and record.unresolved):
             return None
         removed += len(record.links) - len(keep)
         record.links = keep
+        if extracted_here:
+            record.unresolved = []
         if run_id not in record.reverted_runs:
             record.reverted_runs.append(run_id)
         return record

@@ -347,3 +347,52 @@ async def test_document_properties_are_replaced_not_merged():
     assert "SET d = row.props" in query
     row = params["rows"][0]
     assert row["props"]["id"] == row["id"] and "occurred_at" not in row["props"]
+
+
+def test_rebuild_keeps_lifecycle_fields_the_domain_does_not_declare():
+    from app.services.graph.neo4j_models import build_node_properties
+
+    entity_def = SimpleNamespace(attributes=[])
+    props = build_node_properties(
+        {"name": "Old theme", "seed_status": "retired", "seed_file": "seeds/topic.yaml",
+         "relationship": "public", "run_id": "link-1", "created_by": "link_phase",
+         "source_key": "web:x.com"},
+        entity_def, "topic-old-theme",
+    )
+    assert props["seed_status"] == "retired" and props["seed_file"] == "seeds/topic.yaml"
+    assert (props["relationship"], props["run_id"], props["created_by"], props["source_key"]) == (
+        "public", "link-1", "link_phase", "web:x.com")
+
+
+class _ExistenceNeo4j:
+    """Drops edge rows whose endpoint Document does not exist yet, as MATCH would."""
+
+    def __init__(self):
+        self.docs, self.edges = set(), []
+
+    async def execute_write(self, query, params=None):
+        rows = (params or {}).get("rows") or []
+        if "MERGE (d:Document" in query:
+            self.docs.update(r["id"] for r in rows)
+        elif "t:Document" in query:
+            self.edges += [r for r in rows if r["doc"] in self.docs and r["target"] in self.docs]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_rebuild_keeps_capture_edges_into_a_later_chunk(tmp_path):
+    neo4j = _ExistenceNeo4j()
+    memories = [_memory() for _ in range(501)]
+    captures = {m.id: m for m in memories}
+    links = CaptureLinkStore(repo_root=tmp_path)
+    for m in memories:
+        links.save(CaptureLinkFile(capture_id=m.id, mode="on", links=[
+            CaptureLink(edge="FROM_SOURCE", target_id="source-x", target_type="source")]))
+    first, last = sorted(captures)[0], sorted(captures)[-1]
+    links.save(CaptureLinkFile(capture_id=first, mode="on", links=[
+        CaptureLink(edge="ABOUT", target_id=last, target_type="capture", created_by="owner")]))
+    writer = CaptureGraphWriter(neo4j, lambda cid: f"memory/captures/{cid}.json")
+
+    await writer.project_all(links, SimpleNamespace(get=captures.get))
+
+    assert [e["target"] for e in neo4j.edges] == [f"doc:memory/captures/{last}.json"]

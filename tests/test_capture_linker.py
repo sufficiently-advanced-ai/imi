@@ -412,3 +412,21 @@ async def test_recreating_an_archived_entity_unarchives_its_file():
     writer.update = fake_update
     await writer.create("organization", "Acme", "organization-acme", {})
     assert calls == [("organization-acme", {"is_archived": False})]
+
+
+@pytest.mark.asyncio
+async def test_reverted_unresolved_names_never_corroborate(world):
+    bar = Corroboration(min_captures=3, min_sources=2)
+    first = await capture_linker.run_link(
+        2, ctx=world.ctx(corroboration=bar)
+    )  # the two newest captures: Acme below the bar, as text
+    assert first["entities_created"] == []
+    assert all(r.unresolved for r in world.links.iter_all())
+
+    summary = await capture_linker.revert_run(first["run_id"], ctx=world.ctx())
+    assert summary["captures_changed"] == 2
+    assert all(not r.unresolved and first["run_id"] in r.reverted_runs
+               for r in world.links.iter_all())
+
+    third = await capture_linker.run_link(10, ctx=world.ctx(corroboration=bar))
+    assert third["processed"] == 1 and third["entities_created"] == []
