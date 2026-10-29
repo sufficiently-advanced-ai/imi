@@ -44,6 +44,8 @@ SCHEMA_VERSION = "imi.memory.recall.v1"
 RESPONSE_SCHEMA_VERSION = "imi.memory.recall_response.v1"
 
 RECORD_KINDS = ("signal", "capture", "agent_memory")
+CANDIDATE_FACTOR = 3  # vector candidates per requested result
+RECENCY_CANDIDATE_FACTOR = 20  # with recency blended in (see _candidate_k)
 
 # Governance fields re-hydrated from the authoritative record before filtering.
 _GOVERNANCE_FIELDS = (
@@ -217,6 +219,15 @@ def _is_stale(stale_after: str | None) -> bool:
         return False  # unparseable horizon never hides a record
 
 
+def _candidate_k(request: RecallRequest) -> int:
+    """Vector candidates per lane. Recency reorders only what similarity
+    already fetched; on a broad query hundreds of records are about equally
+    similar, so a 3x pool would hold none of last week's. With recency on,
+    fetch a wider pool for it to choose from."""
+    factor = RECENCY_CANDIDATE_FACTOR if request.recency_weight > 0 else CANDIDATE_FACTOR
+    return request.limit * factor
+
+
 def _published_at(record: Any, meta: dict) -> tuple[str | None, str]:
     """(event time, time_source) for recency (ADR-004). A capture's
     ``source_date`` is when its content was published or sent; ingest time
@@ -309,7 +320,7 @@ async def recall(
         """Rank one lane. Each lane gets its own store-side filtered top-k so
         a large library can never crowd record results out (or vice versa)."""
         results = vector_store.search_vectors(
-            embedding, k=request.limit * 3, filter=_metadata_filter(kinds, lane)
+            embedding, k=_candidate_k(request), filter=_metadata_filter(kinds, lane)
         )
 
         # Dedup by record id keeping the best-scoring vector (FAISS append caveat).

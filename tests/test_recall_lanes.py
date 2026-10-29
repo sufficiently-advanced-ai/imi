@@ -203,3 +203,28 @@ async def test_library_recency_is_publish_time_not_ingest_time(store, maker):
     assert fresh[new.id]["time_source"] == "inferred"
     assert fresh[undated.id]["time_source"] == "fallback_now"
     assert fresh[undated.id]["published_at"] == undated.created_at
+
+
+@pytest.mark.asyncio
+async def test_recency_widens_the_candidate_pool(store, maker):
+    # Forty old records are all similar; one recent one must still be a
+    # candidate for recency to lift it.
+    now = datetime.now(UTC)
+    old = [
+        _cap(f"Old roundup {i}.", lane="library").model_copy(
+            update={"source_date": (now - timedelta(days=200)).isoformat()}
+        )
+        for i in range(40)
+    ]
+    new = _cap("This week's roundup.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=1)).isoformat()}
+    )
+    records = [*old, new]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["library"], limit=3, recency_weight=0.5
+    )
+
+    assert result["background"][0]["record_id"] == new.id
