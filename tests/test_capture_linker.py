@@ -278,6 +278,8 @@ async def test_owner_links_pin_and_survive_relinking(world):
     assert about["linked"] == [{"target_id": article.id, "target_type": "capture"},
                                {"target_id": "person-jane-doe", "target_type": "person"}]
     assert about["unresolved"] == ["Nobody Known"]
+    to_person = await capture_linker.attach(note.id, "Jane Doe", "mentions", ctx=world.ctx())
+    assert to_person["pinned"] is False  # a record note is never pinned
     pinned = world.captures.get(article.id)
     assert pinned.pinned_by == [f"{note.id}:ABOUT:{article.id}"]
     assert world.captures.get(note.id).pinned_by == []  # record notes do not decay

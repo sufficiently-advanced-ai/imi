@@ -1078,8 +1078,12 @@ async def attach(capture_id: str, target: str, edge: str = "about", stance: str 
                                 **({"stance": stance} if stance else {})}])
         paths.append(ctx.audit.relative_path())
     committed = await _commit(ctx, paths, f"link: owner {edge_type} {capture_id} -> {target_id}")
+    pinned = any(
+        (m := ctx.captures.get(cid)) is not None and pin in m.pinned_by
+        for cid in {capture_id, target_id if target_type == CAPTURE_TARGET else capture_id}
+    )
     return {"linked": True, "created": changed, "capture_id": capture_id, "edge": edge_type,
-            "target_id": target_id, "target_type": target_type, "pinned": bool(paths),
+            "target_id": target_id, "target_type": target_type, "pinned": pinned,
             "committed": committed}
 
 

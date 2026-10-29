@@ -233,8 +233,8 @@ shares capacity with live intake.
 
 ## Migration (personal deployment)
 
-1. Add `source`, `organization`, `technology`, `storyline` and `essay` types to `personal.yaml`
-   (`topic` and `source` exist), and set `lanes.yaml` `library.entities` to `allowlist` with
+1. Add `organization`, `technology`, `storyline` and `essay` types to `personal.yaml` (`topic`
+   and `source` exist), and set `lanes.yaml` `library.entities` to `allowlist` with
    `create_types: [organization, technology, person]`.
 2. Write the seed files `seeds/topic.yaml`, `seeds/storyline.yaml` and `seeds/essay.yaml` in the
    corpus (generated separately; format in `docs/architecture/capture-linking.md`). Each run
