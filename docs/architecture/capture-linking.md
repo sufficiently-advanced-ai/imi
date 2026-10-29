@@ -18,7 +18,8 @@ that created them.
 curl -X POST localhost:8000/api/captures/link -H 'content-type: application/json' \
      -d '{"max_results": 50}'
 # undo one run
-curl -X POST localhost:8000/api/captures/link/revert -d '{"run_id": "link-20261029T..."}'
+curl -X POST localhost:8000/api/captures/link/revert -H 'content-type: application/json' \
+     -d '{"run_id": "link-20261029T..."}'
 ```
 
 A deployment's scheduler only calls the endpoint; its cadence sets the daily pace and the

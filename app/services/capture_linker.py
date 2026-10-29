@@ -103,6 +103,12 @@ class LibraryEntityWriter:
         aliases: list[str] | tuple[str, ...] = (),
     ) -> str:
         node = await self.kg.add_node(entity_type, name, entity_id=entity_id, properties=properties)
+        # An id whose file was archived (e.g. by a revert) keeps that file, so
+        # add_node's write-through skips it: un-archive through the file layer
+        # or the next rebuild drops the node again.
+        is_archived = getattr(self.kg, "_is_entity_archived", None)
+        if is_archived is not None and is_archived(node["id"]):
+            await self.update(node["id"], {"is_archived": False})
         if aliases:
             # add_node strips aliases (identity field); set them as an update.
             await self.update(node["id"], {"aliases": list(aliases)})
@@ -501,19 +507,22 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
             return ids, None
         return ids, {refs[ref].id: answer for ref, answer in answers.items() if ref in refs}
 
-    # A capture the model answered for (even with nothing) is linked; one
-    # whose call failed stays unlinked, so the next run retries it.
+    # A capture the model answered for (even with empty lists) is linked; one
+    # whose call failed, or that the answer left out, stays unlinked so the
+    # next run retries it.
     selections: dict[str, dict[str, Any]] = {}
     failed: list[str] = []
     for ids, answers in await asyncio.gather(*(select(c) for c in chunks)):
         if answers is None:
             failed.extend(ids)
-        else:
-            selections.update(answers)
+            continue
+        selections.update(answers)
+        failed.extend(i for i in ids if i not in answers)
     if failed:
         log.errors.append(
             f"{len(failed)} capture(s) left unlinked: "
-            + ("no Claude client" if ctx.claude_client is None else "capture_linking call failed")
+            + ("no Claude client" if ctx.claude_client is None
+               else "capture_linking call failed or left them out")
         )
         for capture_id in failed:
             records.pop(capture_id, None)
@@ -881,6 +890,7 @@ async def revert_run(run_id: str, ctx: LinkContext | None = None) -> dict[str, A
 async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
     changed: list[str] = []
     removed = 0
+    projection_error: str | None = None
 
     def strip(record: CaptureLinkFile) -> CaptureLinkFile | None:
         nonlocal removed
@@ -905,7 +915,11 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
             record = ctx.links.get(capture_id)
             if memory is not None and record is not None:
                 items.append((memory, record))
-        await ctx.graph.write(items)
+        try:
+            await ctx.graph.write(items)
+        except Exception as e:
+            logger.warning("[LINK] Revert projection failed (files are written): %s", e, exc_info=True)
+            projection_error = str(e)
 
     referenced = {link.target_id for record in ctx.links.iter_all() for link in record.links}
     archived, kept = [], []
@@ -925,6 +939,8 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
 
     summary = {"run_id": run_id, "captures_changed": len(changed), "links_removed": removed,
                "entities_archived": archived, "entities_kept": kept}
+    if projection_error:
+        summary["errors"] = [f"graph projection: {projection_error}"]
     ctx.audit.append_many([{"run_id": run_id, "action": "revert", **summary}])
     summary["committed"] = await _commit(
         ctx, [ctx.links.relative_path(c) for c in changed] + [ctx.audit.relative_path()],

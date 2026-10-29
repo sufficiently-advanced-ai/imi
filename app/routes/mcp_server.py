@@ -1053,14 +1053,15 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 return _error("capture_id is required")
             if not isinstance(target, str) or not target.strip():
                 return _error("target is required")
+            actor = mcp_actor(_mcp_client_name())
             if name == "graph_add_capture_link":
                 result = await chat_tools.graph_add_capture_link(
                     capture_id, target, args.get("edge") or "about", args.get("stance"),
-                    actor=mcp_actor(),
+                    actor=actor,
                 )
             else:
                 result = await chat_tools.graph_delete_capture_link(
-                    capture_id, target, args.get("edge") or "about", actor=mcp_actor(),
+                    capture_id, target, args.get("edge") or "about", actor=actor,
                 )
             if result.get("error"):
                 return _error(str(result["error"]))

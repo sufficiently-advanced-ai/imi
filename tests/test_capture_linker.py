@@ -365,3 +365,44 @@ async def test_owner_link_added_mid_run_is_not_clobbered(world):
 
     owner = [link for link in world.links.get(article.id).links if link.created_by == "owner"]
     assert [(link.edge, link.target_id) for link in owner] == [("ABOUT", "organization-old-corp")]
+
+
+@pytest.mark.asyncio
+async def test_capture_left_out_of_the_answer_stays_unlinked(world):
+    left_out = world.made[1]
+    real = world.claude.generate_message
+
+    async def drop_one(**kw):
+        response = await real(**kw)
+        data = json.loads(response.content[0].text)
+        payload = world.claude.payloads[-1]
+        refs = {c["ref"] for c in payload["captures"] if c["title"] == "Acme agents, take two"}
+        data["captures"] = [c for c in data["captures"] if c["ref"] not in refs]
+        return SimpleNamespace(content=[SimpleNamespace(text=json.dumps(data))])
+
+    world.claude.generate_message = drop_one
+    result = await capture_linker.run_link(10, ctx=world.ctx())
+
+    assert result["processed"] == 2 and result["remaining"] == 1
+    assert world.links.get(left_out.id) is None
+
+
+@pytest.mark.asyncio
+async def test_recreating_an_archived_entity_unarchives_its_file():
+    calls = []
+
+    class _KGArchived:
+        async def add_node(self, entity_type, name, entity_id=None, properties=None):
+            return {"id": entity_id}
+
+        def _is_entity_archived(self, entity_id):
+            return True
+
+    writer = capture_linker.LibraryEntityWriter(_KGArchived())
+
+    async def fake_update(entity_id, changes):
+        calls.append((entity_id, changes))
+
+    writer.update = fake_update
+    await writer.create("organization", "Acme", "organization-acme", {})
+    assert calls == [("organization-acme", {"is_archived": False})]
