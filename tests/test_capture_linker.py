@@ -332,3 +332,36 @@ async def test_concurrent_run_is_refused(world):
     async with capture_linker._run_lock:
         with pytest.raises(capture_linker.LinkRunBusy):
             await capture_linker.run_link(10, ctx=world.ctx())
+
+
+@pytest.mark.asyncio
+async def test_failed_model_call_leaves_captures_unlinked(world):
+    class _Broken:
+        async def generate_message(self, **kw):
+            return SimpleNamespace(content=[SimpleNamespace(text="not json")])
+
+    ctx = world.ctx()
+    ctx.claude_client = _Broken()
+    result = await capture_linker.run_link(10, ctx=ctx)
+
+    assert result["processed"] == 0 and result["remaining"] == 3
+    assert "capture_linking call failed" in result["errors"][0]
+    assert list(world.links.iter_all()) == []
+    retry = await capture_linker.run_link(10, ctx=world.ctx())
+    assert retry["processed"] == 3
+
+
+@pytest.mark.asyncio
+async def test_owner_link_added_mid_run_is_not_clobbered(world):
+    article = world.made[0]
+    real = world.claude.generate_message
+
+    async def attach_then_answer(**kw):
+        await capture_linker.attach(article.id, "Old Corp", "about", ctx=world.ctx())
+        return await real(**kw)
+
+    world.claude.generate_message = attach_then_answer
+    await capture_linker.run_link(10, ctx=world.ctx())
+
+    owner = [link for link in world.links.get(article.id).links if link.created_by == "owner"]
+    assert [(link.edge, link.target_id) for link in owner] == [("ABOUT", "organization-old-corp")]
