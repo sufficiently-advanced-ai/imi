@@ -118,7 +118,8 @@ _DOCUMENTS_IN_WINDOW = (
     "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(d:Document) "
     "WHERE d.occurred_at > $start AND d.occurred_at <= $end "
     "RETURN d.id AS id, d.path AS path, d.title AS title, d.occurred_at AS occurred_at, "
-    "d.recorded_at AS recorded_at, d.time_source AS time_source "
+    "d.recorded_at AS recorded_at, d.time_source AS time_source, "
+    "d.lane AS lane, d.url AS url "
     "ORDER BY occurred_at ASC"
 )
 
@@ -165,7 +166,8 @@ _RECORDED_LATE = (
     "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(d:Document) "
     "WHERE d.occurred_at <= $start AND d.recorded_at > $start AND d.recorded_at <= $end "
     "RETURN d.id AS id, d.path AS path, d.title AS title, d.occurred_at AS occurred_at, "
-    "d.recorded_at AS recorded_at, d.time_source AS time_source "
+    "d.recorded_at AS recorded_at, d.time_source AS time_source, "
+    "d.lane AS lane, d.url AS url "
     "ORDER BY occurred_at ASC"
 )
 

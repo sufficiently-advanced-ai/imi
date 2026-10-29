@@ -812,6 +812,8 @@ When users ask to update or remove signals (decisions, action items, key points,
                 "mcp__chat__graph_add_edge",
                 "mcp__chat__graph_update_edge",
                 "mcp__chat__graph_delete_edge",
+                "mcp__chat__graph_add_capture_link",
+                "mcp__chat__graph_delete_capture_link",
                 # Decision intelligence tools
                 "mcp__chat__find_decision_precedents",
                 "mcp__chat__decision_chain",

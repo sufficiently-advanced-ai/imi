@@ -14,6 +14,8 @@
 | A whole setup for one kind of work — domain, lanes, inbound recipes, skills, sample + proof | `use-cases/<pack>/` (ADR-005) | [Use-case packs](../../use-cases/README.md) |
 | Which intake sources are record vs library, extra senders to drop, whose knowledge base it is, which sources MCP agents may assert as record (`mcp_trusted_sources`) | `config/lanes.yaml` | [ADR-003](../adr/ADR-003-record-and-library-lanes.md), [ADR-007](../adr/ADR-007-agent-mediated-intake.md), `config/lanes.yaml.example` |
 | Library policy for library-primary deployments: decay on/off and horizons, whether library may create entity types (through entity admission), library relationship inference, claim attribution types, default recall lanes | `config/lanes.yaml` (`library:`, `recall:`) | [ADR-006](../adr/ADR-006-library-primary-deployments.md), `config/lanes.yaml.example` |
+| Linking library captures into the graph: mode (off/shadow/on), batch size, confidence floor, which types play source/topic/storyline/essay, the corroboration bar | `config/lanes.yaml` (`library.linking`) | [Capture Linking](../architecture/capture-linking.md), [ADR-011](../adr/ADR-011-library-capture-enrichment.md) |
+| The topics, storylines and essays library captures link to | `seeds/topic.yaml`, `seeds/storyline.yaml`, `seeds/essay.yaml` in the corpus | [Capture Linking](../architecture/capture-linking.md#seed-files) |
 | Per-meeting-type processing (processors, thresholds, agent model) | `config/workflows/<id>.yaml` | [Configuration](../getting-started/configuration.md#workflows-config-optional) |
 | Backends, auth mode, models, telemetry | `.env` | [Configuration](../getting-started/configuration.md) |
 
@@ -33,6 +35,7 @@ versions by hash — **run the evals after prompt changes**.
 | `extract_relationships.xml` | relationship inference between entities |
 | `person_update.xml`, `project_update.xml`, `team_update.xml` | entity profile updates |
 | `meeting_finalize.xml` | meeting finalization (summary + title envelope) |
+| `capture_linking.xml` | which seeded topics / storylines / essays a library capture links to, and what counts as a substantive mention (ADR-011) |
 | `metadata.xml`, `metadata_with_entities.xml` | document metadata analysis |
 | `digest.xml`, `explain-diff.xml`, `search.xml` | digests, diff explanations, `/api/query` |
 | `generate_insights.xml`, `extract_patterns.xml` | analysis & insight generation |

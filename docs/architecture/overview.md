@@ -36,7 +36,9 @@ UI) and agents (MCP) in real time.
      files are the source of truth and graph writes roll back if the file write fails;
    - the **signal/memory stores + vector index** — governed records with semantic recall
      (SQLite vectors by default).
-   → [Entities & Graph](entities-and-graph.md) · [Memory & Vectors](memory.md)
+   Library captures join the graph in batches through the LINK phase.
+   → [Entities & Graph](entities-and-graph.md) · [Memory & Vectors](memory.md) ·
+   [Capture Linking](capture-linking.md)
 
 5. **Everything is queryable** over MCP (~30 tools: search, traversal, Cypher, signals,
    memory recall/writeback, graph mutations) and REST. Governance is enforced at this

@@ -59,7 +59,7 @@ against).
 | `get_constitution` | The full decision "constitution" rendered as markdown |
 | `update_signal` | Update signal fields **or** run a governance transition (`review_action`) — the only governance entry point |
 | `delete_signal` | Permanently remove a signal (JSON + git + Neo4j) |
-| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed). `source` is the connector it came from; omitted = `unknown`, judged per item; the handler stamps `channel: mcp` (ADR-007) |
+| `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed). `source` is the connector it came from; omitted = `unknown`, judged per item; the handler stamps `channel: mcp` (ADR-007). Optional `about`: owner links from the note to named entities or captures (ADR-011 §5) |
 | `memory_writeback` | Batch write typed operational memories after a task (idempotent, safety-gated) |
 | `memory_recall` | Unified governed recall across signals + captures + agent memories |
 | `record_memory_usage` | Close the recall feedback loop (which memories were used/ignored) |
@@ -79,6 +79,7 @@ against).
 | `graph_add_node` / `graph_update_node` / `graph_delete_node` | Entity CRUD (delete is soft + archives the source file) |
 | `graph_merge_nodes` | Merge a duplicate entity into a primary |
 | `graph_add_edge` / `graph_update_edge` / `graph_delete_edge` | Relationship mutations, validated against the active domain schema |
+| `graph_add_capture_link` / `graph_delete_capture_link` | Owner links from a capture to an entity or another capture (`about`, `mentions`, `advances`, `evidence_for`); pin library captures against decay ([Capture Linking](capture-linking.md)) |
 
 **Point in time** ([ADR-004](../adr/ADR-004-event-time-on-evidence.md)) — answers are dated by
 when things happened, not by when they were recorded, so backfilled content lands in the right
@@ -132,7 +133,7 @@ top of imi.
 | Entities | `entity_crud.py`, `entity_search.py`, `entity_profile.py`, `entity_management.py`, `entity_bulk.py`, `entity_enrichment.py`, `entity_suggestions.py`, … | `/api/entities*`, `GET /api/entities/{id}/profile` |
 | Graph & domain | `domain_graph.py`, `domain_config.py`, `type_registry.py`, `knowledge_explorer.py` | `/api/domain-graph`, `GET /api/domain/config`, `/api/type-registry`, `POST /api/query` |
 | Signals & governance | `signal_feed.py`, `signal_mutations.py`, `decisions.py`, `judge.py`, `supersession.py`, `conflicts.py` | `/api/signals`, `/api/decisions`, `POST /api/judge/recall`, `POST /api/judge/decisions` |
-| Memory | `captures.py`, `agent_memory.py`, `memories_review.py`, `memory.py` | `/api/captures`, `/api/agent-memory`, `/api/memories` (review queue) |
+| Memory | `captures.py`, `agent_memory.py`, `memories_review.py`, `memory.py` | `/api/captures`, `POST /api/captures/link` (+ `/link/revert`, ADR-011), `/api/agent-memory`, `/api/memories` (review queue) |
 | Agent/tool execution | `agent_tools.py`, `command.py`, `workflows.py`, `analysis.py`, `streaming_chat.py` | tool discovery + `POST` execute over `AgentToolRegistry` |
 | Ops | `health.py`, `admin.py`, `metrics.py`, `production_monitoring.py`, `sse_status.py` | `GET /health`, `GET /health/ready`, `POST /api/admin/backfill-memory-index` |
 

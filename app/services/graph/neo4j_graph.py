@@ -338,6 +338,10 @@ class Neo4jKnowledgeGraph:
         if reingest_signals:
             await self._reingest_signals()
 
+        # Linked captures (ADR-011): projected from their link files, which
+        # no replay re-creates, so this runs on every tier.
+        await self._reingest_captures()
+
         self.last_build = datetime.utcnow()
 
         # Clean up bad stub entities after every build (not just clean builds)
@@ -1124,7 +1128,8 @@ class Neo4jKnowledgeGraph:
         """Build CO_OCCURRENCE relationships between entities sharing documents."""
         query = (
             "MATCH (a:Entity)-[:MENTIONED_IN]->(d:Document)<-[:MENTIONED_IN]-(b:Entity) "
-            "WHERE a.id < b.id "
+            # Captures never infer entity relationships (ADR-003 §3, ADR-011 §4).
+            "WHERE a.id < b.id AND coalesce(d.kind, '') <> 'capture' "
             "WITH a, b, collect(d.path) AS shared_docs, count(d) AS doc_count "
             "MERGE (a)-[r:CO_OCCURRENCE]-(b) "
             "SET r.strength = CASE WHEN doc_count > 5 THEN 1.0 "
@@ -1183,6 +1188,29 @@ class Neo4jKnowledgeGraph:
             )
         except Exception as e:
             logger.warning("[GRAPH] Signal reingestion failed: %s", e, exc_info=True)
+
+    async def _reingest_captures(self) -> None:
+        """Project capture link files into Neo4j (ADR-011 §1). Non-fatal."""
+        try:
+            from pathlib import Path
+
+            from app.services.capture_link_store import CaptureLinkStore
+            from app.services.graph.capture_graph_writer import CaptureGraphWriter
+            from app.services.memory_capture import CaptureStore
+
+            repo = Path(self.git_ops.repo_path)
+            links = CaptureLinkStore(repo_root=repo)
+            if not links.dir.is_dir():
+                return
+            captures = CaptureStore(capture_dir=repo / "memory" / "captures", repo_root=repo)
+            writer = CaptureGraphWriter(self.neo4j, captures.relative_path)
+            stats = await writer.project_all(links, captures)
+            logger.info(
+                "[GRAPH] Projected %d linked capture(s), %d edge(s)",
+                stats["documents"], stats["edges"],
+            )
+        except Exception as e:
+            logger.warning("[GRAPH] Capture projection failed: %s", e, exc_info=True)
 
     # ──────────────────────────────────────────────────────────────
     # Timestamp helpers
@@ -1246,8 +1274,10 @@ class Neo4jKnowledgeGraph:
             )
 
         # Load document nodes too
+        # Capture documents (ADR-011) stay out of the mirror: it feeds entity
+        # profiles, which library never feeds as first-party fact (ADR-006 §2).
         doc_results = await self.neo4j.execute_read(
-            "MATCH (d:Document) RETURN d"
+            "MATCH (d:Document) WHERE coalesce(d.kind, '') <> 'capture' RETURN d"
         )
         for record in doc_results:
             doc_data = record["d"]
@@ -1296,6 +1326,7 @@ class Neo4jKnowledgeGraph:
         # Load document-entity associations
         mentioned_results = await self.neo4j.execute_read(
             "MATCH (e:Entity)-[:MENTIONED_IN]->(d:Document) "
+            "WHERE coalesce(d.kind, '') <> 'capture' "
             "RETURN e.id AS entity_id, d.path AS doc_path"
         )
         for record in mentioned_results:

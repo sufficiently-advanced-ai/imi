@@ -469,6 +469,9 @@ TOOLS = [
     build_mcp_tool("get_entity_provenance"),
     # --- Claims timeline (ADR-006) ---
     build_mcp_tool("list_claims"),
+    # --- Owner capture links (ADR-011) ---
+    build_mcp_tool("graph_add_capture_link"),
+    build_mcp_tool("graph_delete_capture_link"),
 ]
 
 
@@ -623,6 +626,11 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             source = args.get("source")
             if source is not None and not isinstance(source, str):
                 return _error("Invalid 'source': expected a string")
+            about = args.get("about")
+            if about is not None and (
+                not isinstance(about, list) or not all(isinstance(a, str) for a in about)
+            ):
+                return _error("Invalid 'about': expected a list of strings")
             result = await capture_thought(
                 content,
                 source=source,
@@ -630,6 +638,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 tags=args.get("tags"),
                 source_date=args.get("source_date"),
                 channel=MCP_CHANNEL,  # ADR-007: stamped here, never from args
+                about=about,
             )
             return _text(result)
 
@@ -1031,6 +1040,29 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 max_results=args.get("max_results", 50),
                 include_stale=bool(args.get("include_stale", False)),
             )
+            if result.get("error"):
+                return _error(str(result["error"]))
+            return _text(result)
+
+        elif name in ("graph_add_capture_link", "graph_delete_capture_link"):
+            from app.services import chat_tools
+            from app.services.review_authority import mcp_actor
+
+            capture_id, target = args.get("capture_id"), args.get("target")
+            if not isinstance(capture_id, str) or not capture_id.strip():
+                return _error("capture_id is required")
+            if not isinstance(target, str) or not target.strip():
+                return _error("target is required")
+            actor = mcp_actor(_mcp_client_name())
+            if name == "graph_add_capture_link":
+                result = await chat_tools.graph_add_capture_link(
+                    capture_id, target, args.get("edge") or "about", args.get("stance"),
+                    actor=actor,
+                )
+            else:
+                result = await chat_tools.graph_delete_capture_link(
+                    capture_id, target, args.get("edge") or "about", actor=actor,
+                )
             if result.get("error"):
                 return _error(str(result["error"]))
             return _text(result)
