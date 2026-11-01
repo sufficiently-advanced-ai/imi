@@ -332,3 +332,37 @@ def test_length_cap_leaves_signals_whole_but_include_content_false_does_not():
     assert _fit_content(shape, RecallRequest(query="q", max_content_chars=100)) == shape
     hidden = _fit_content(shape, RecallRequest(query="q", include_content=False))
     assert hidden["content"] is None and hidden["content_chars"] == 500
+
+
+@pytest.mark.asyncio
+async def test_date_cutoff_widens_past_a_pool_of_old_near_matches(store, maker):
+    now = datetime.now(UTC)
+    old = [
+        _cap(f"Old issue {i}.", lane="library").model_copy(
+            update={"source_date": (now - timedelta(days=200)).isoformat(), "time_source": "explicit"}
+        )
+        for i in range(60)
+    ]
+    new = _cap("A new issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=1)).isoformat(), "time_source": "explicit"}
+    )
+    records = [*old, new]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    calls = []
+    real_search = store.search_vectors
+
+    def search(embedding, k, filter=None):
+        calls.append(k)
+        hits = real_search(embedding, k=len(records), filter=filter)
+        return sorted(hits, key=lambda h: h["metadata"]["id"] == new.id)[:k]  # new ranks last
+
+    store.search_vectors = search
+    result = await _recall(
+        store, records, maker, lanes=["library"], limit=1,
+        published_after=(now - timedelta(days=7)).isoformat(),
+    )
+
+    assert [m["record_id"] for m in result["background"]] == [new.id]
+    assert calls[0] == 20 and calls[-1] > calls[0]

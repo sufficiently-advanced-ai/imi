@@ -51,6 +51,8 @@ RESPONSE_SCHEMA_VERSION = "imi.memory.recall_response.v1"
 RECORD_KINDS = ("signal", "capture", "agent_memory")
 CANDIDATE_FACTOR = 3  # vector candidates per requested result
 RECENCY_CANDIDATE_FACTOR = 20  # with recency blended in (see _candidate_k)
+CANDIDATE_GROWTH = 4  # pool growth per pass under a date cutoff
+MAX_CANDIDATES = 8000  # each candidate re-hydrates its record from the store
 
 # Governance fields re-hydrated from the authoritative record before filtering.
 _GOVERNANCE_FIELDS = (
@@ -371,11 +373,12 @@ async def recall(
     if isinstance(embedding, np.ndarray) and embedding.ndim > 1:
         embedding = embedding[0]
 
-    def search_lane(lane: str) -> list[dict]:
-        """Rank one lane. Each lane gets its own store-side filtered top-k so
-        a large library can never crowd record results out (or vice versa)."""
+    def rank_candidates(lane: str, k: int) -> tuple[list[dict], int]:
+        """Rank one lane's top-k vectors. Returns (eligible, vectors fetched).
+        Each lane gets its own store-side filtered top-k so a large library
+        can never crowd record results out (or vice versa)."""
         results = vector_store.search_vectors(
-            embedding, k=_candidate_k(request), filter=_metadata_filter(kinds, lane)
+            embedding, k=k, filter=_metadata_filter(kinds, lane)
         )
 
         # Dedup by record id keeping the best-scoring vector (FAISS append caveat).
@@ -448,6 +451,28 @@ async def recall(
             )
 
         scored.sort(key=lambda s: s["score"], reverse=True)
+        return scored, len(results or [])
+
+    def search_lane(lane: str) -> list[dict]:
+        """The lane's best ``limit``. Similarity picks the candidates, so a date
+        cutoff can reject a whole pool of old near-matches: widen until enough
+        records pass or the lane runs out."""
+        k = _candidate_k(request)
+        while True:
+            scored, fetched = rank_candidates(lane, k)
+            if (
+                request.published_after is None
+                or len(scored) >= request.limit
+                or fetched < k
+            ):
+                break
+            if k >= MAX_CANDIDATES:
+                warnings.append(
+                    f"published_after: searched {k} {lane} candidates; older matches "
+                    "may hide more results"
+                )
+                break
+            k = min(k * CANDIDATE_GROWTH, MAX_CANDIDATES)
         return scored[: request.limit]
 
     top = search_lane("record") if "record" in request.lanes else []
