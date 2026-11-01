@@ -657,6 +657,29 @@ When users ask to update or remove signals (decisions, action items, key points,
             f"file system tools, shell commands, or sub-agents."
         )
 
+    def _inference_options(self) -> dict[str, Any]:
+        """SDK options that follow the ``chat_agent`` inference routing.
+
+        The CLI inherits the server's environment, so on an ``agent_sdk``
+        (subscription) endpoint it would otherwise send ANTHROPIC_API_KEY,
+        which may be a placeholder there, and never reach ~/.claude's
+        credentials. Other deployments keep that key and the configured model.
+        """
+        from app.services.claude_client import ClaudeClient
+        from app.services.inference import get_inference_registry
+
+        endpoint = get_inference_registry().resolve(self.model, "chat_agent")
+        if not getattr(endpoint, "is_agent_sdk", False):
+            return {"model": self.model}
+        return {
+            "model": endpoint.model,
+            "env": ClaudeClient._dispatch_agent_sdk_env(),
+            # Subscription logins bring claude.ai connectors and user settings
+            # with them; chat gets the chat server's tools and nothing else.
+            "strict_mcp_config": True,
+            "setting_sources": [],
+        }
+
     # ------------------------------------------------------------------
     # Citation extraction (preserved from old ChatAgent)
     # ------------------------------------------------------------------
@@ -828,7 +851,7 @@ When users ask to update or remove signals (decisions, action items, key points,
             # 3. Configure SDK client options
             system_prompt = self._build_system_prompt()
             options = ClaudeAgentOptions(
-                model=self.model,
+                **self._inference_options(),
                 system_prompt=system_prompt,
                 mcp_servers={"chat": mcp_server},
                 allowed_tools=allowed_tools,

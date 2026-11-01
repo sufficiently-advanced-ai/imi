@@ -12,7 +12,8 @@ Covers:
 - make_decision delegation
 """
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -369,3 +370,28 @@ class TestCitationExtraction:
         text = "I don't have any relevant documents to cite."
         citations = agent._extract_citations(text)
         assert citations == []
+
+
+# ---------------------------------------------------------------------------
+# Inference routing
+# ---------------------------------------------------------------------------
+
+
+class TestInferenceOptions:
+    def _route(self, **endpoint):
+        registry = MagicMock()
+        registry.resolve.return_value = SimpleNamespace(**endpoint)
+        return patch("app.services.inference.get_inference_registry", return_value=registry)
+
+    def test_agent_sdk_endpoint_blanks_inherited_auth(self, agent):
+        with self._route(is_agent_sdk=True, model="routed-model"):
+            options = agent._inference_options()
+
+        assert options["model"] == "routed-model"
+        assert options["env"]["ANTHROPIC_API_KEY"] == ""
+        assert options["strict_mcp_config"] is True
+        assert options["setting_sources"] == []
+
+    def test_other_endpoints_keep_the_inherited_key(self, agent):
+        with self._route(is_agent_sdk=False, model="routed-model"):
+            assert agent._inference_options() == {"model": agent.model}
