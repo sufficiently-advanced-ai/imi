@@ -564,6 +564,32 @@ TOOL_DEFS: dict[str, ToolDef] = {
                     "default": 0,
                     "description": "0 = pure similarity; >0 blends recency decay",
                 },
+                "half_life_days": {
+                    "type": "number",
+                    "default": 90,
+                    "description": "Age at which the recency score halves",
+                },
+                "published_after": {
+                    "type": "string",
+                    "description": (
+                        "ISO date; keep only records published or sent on or after it. "
+                        "Library records with no known publish date are excluded."
+                    ),
+                },
+                "include_content": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "false returns summaries and dates without content",
+                },
+                "max_content_chars": {
+                    "type": "integer",
+                    "default": 2000,
+                    "description": (
+                        "Cut each capture or agent memory's content to this length. A cut "
+                        "record has content_truncated and content_chars; inspect_memory "
+                        "returns it whole. Signals are not cut."
+                    ),
+                },
                 "task_id": {
                     "type": "string",
                     "description": "Originating task id (for the recall trace)",

@@ -6,6 +6,7 @@ decayed library records drop out; the record's lane (not the vector's) wins.
 """
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,7 +19,13 @@ from app.core.tenancy.backends.sqlite_vector_store import SqliteVectorStore
 from app.database import Base
 from app.models.captured_memory import CapturedMemory
 from app.services.memory_capture import capture_memory
-from app.services.memory_recall import RecallRequest, recall
+from app.services.memory_recall import (
+    RecallRequest,
+    _fit_content,
+    _published_at,
+    _published_since,
+    recall,
+)
 from app.services.signal_retrieval import index_capture
 
 
@@ -228,3 +235,134 @@ async def test_recency_widens_the_candidate_pool(store, maker):
     )
 
     assert result["background"][0]["record_id"] == new.id
+
+
+@pytest.mark.asyncio
+async def test_content_budget_cuts_both_lanes_and_says_so(store, maker):
+    long_record = _cap("r" * 500)
+    long_library = _cap("l" * 500, lane="library")
+    short = _cap("short")
+    records = [long_record, long_library, short]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["record", "library"], max_content_chars=100
+    )
+
+    rows = {m["record_id"]: m for m in result["memories"] + result["background"]}
+    for cut in (long_record, long_library):
+        assert rows[cut.id]["content"] == cut.content[:100]
+        assert rows[cut.id]["content_truncated"] is True
+        assert rows[cut.id]["content_chars"] == 500
+    assert rows[short.id]["content"] == "short"
+    assert "content_truncated" not in rows[short.id]
+
+
+@pytest.mark.asyncio
+async def test_include_content_false_keeps_the_triage_fields(store, maker):
+    record = _cap("some content")
+    index_capture(store, _Embedder(), record)
+
+    result = await _recall(store, [record], maker, include_content=False)
+
+    row = result["memories"][0]
+    assert row["content"] is None
+    assert row["content_chars"] == len(record.content)
+    assert row["freshness"]["published_at"] == record.created_at
+
+
+@pytest.mark.asyncio
+async def test_published_after_is_event_time_and_excludes_undated_library(store, maker):
+    now = datetime.now(UTC)
+    old = _cap("An old issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=70)).isoformat(), "time_source": "explicit"}
+    )
+    new = _cap("A new issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=2)).isoformat(), "time_source": "explicit"}
+    )
+    undated = _cap("An undated page.", lane="library")
+    note = _cap("An undated note of ours.")
+    records = [old, new, undated, note]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["record", "library"],
+        published_after=(now - timedelta(days=7)).isoformat(),
+    )
+
+    assert [m["record_id"] for m in result["background"]] == [new.id]
+    assert [m["record_id"] for m in result["memories"]] == [note.id]
+
+
+def test_published_after_must_be_a_date():
+    with pytest.raises(ValidationError):
+        RecallRequest(query="q", published_after="last week")
+
+
+def _signal(valid_from=None, source_timestamp=None):
+    return SimpleNamespace(
+        valid_from=valid_from, source_timestamp=source_timestamp, created_at="2026-11-01T00:00:00Z"
+    )
+
+
+def test_signal_event_time_is_when_it_became_true_not_when_it_was_written():
+    meta = {"content_type": "signal"}
+    backfilled = _signal(valid_from="2026-03-01T00:00:00Z")
+    assert _published_at(backfilled, meta)[0].startswith("2026-03-01")
+    cutoff = datetime(2026, 10, 1, tzinfo=UTC)
+    assert not _published_since(backfilled, meta, "record", cutoff)
+
+
+def test_library_signal_with_a_known_date_passes_the_cutoff():
+    signal = _signal(source_timestamp="2026-10-20T00:00:00Z")
+    cutoff = datetime(2026, 10, 1, tzinfo=UTC)
+    assert _published_since(signal, {"content_type": "signal"}, "library", cutoff)
+
+
+def test_signal_without_an_event_time_falls_back_to_creation():
+    assert _published_at(_signal(), {"content_type": "signal"}) == (
+        "2026-11-01T00:00:00Z", "fallback_now",
+    )
+
+
+def test_length_cap_leaves_signals_whole_but_include_content_false_does_not():
+    shape = {"record_kind": "signal", "content": "s" * 500}
+    assert _fit_content(shape, RecallRequest(query="q", max_content_chars=100)) == shape
+    hidden = _fit_content(shape, RecallRequest(query="q", include_content=False))
+    assert hidden["content"] is None and hidden["content_chars"] == 500
+
+
+@pytest.mark.asyncio
+async def test_date_cutoff_widens_past_a_pool_of_old_near_matches(store, maker):
+    now = datetime.now(UTC)
+    old = [
+        _cap(f"Old issue {i}.", lane="library").model_copy(
+            update={"source_date": (now - timedelta(days=200)).isoformat(), "time_source": "explicit"}
+        )
+        for i in range(60)
+    ]
+    new = _cap("A new issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=1)).isoformat(), "time_source": "explicit"}
+    )
+    records = [*old, new]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    calls = []
+    real_search = store.search_vectors
+
+    def search(embedding, k, filter=None):
+        calls.append(k)
+        hits = real_search(embedding, k=len(records), filter=filter)
+        return sorted(hits, key=lambda h: h["metadata"]["id"] == new.id)[:k]  # new ranks last
+
+    store.search_vectors = search
+    result = await _recall(
+        store, records, maker, lanes=["library"], limit=1,
+        published_after=(now - timedelta(days=7)).isoformat(),
+    )
+
+    assert [m["record_id"] for m in result["background"]] == [new.id]
+    assert calls[0] == 20 and calls[-1] > calls[0]

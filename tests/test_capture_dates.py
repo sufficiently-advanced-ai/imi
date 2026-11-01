@@ -3,7 +3,7 @@ head, fallback — and the time_source each records."""
 
 from datetime import UTC, datetime
 
-from app.services.capture_dates import published_date
+from app.services.capture_dates import html_published_date, published_date
 
 NOW = datetime(2026, 10, 29, tzinfo=UTC)
 
@@ -56,6 +56,24 @@ def test_url_month_plus_slug_is_not_a_day():
 
 def test_no_date_falls_back_and_says_so():
     assert published_date("Just text", "web", "https://x.com/a", now=NOW) == (None, "fallback_now")
+
+
+def test_html_date_from_meta_either_attribute_order():
+    for html in (
+        '<meta property="article:published_time" content="2026-04-02T09:00:00Z">',
+        '<meta content="2026-04-02T09:00:00Z" property="article:published_time"/>',
+    ):
+        assert html_published_date(html).isoformat() == "2026-04-02T09:00:00+00:00"
+
+
+def test_html_date_from_jsonld_and_time_tag():
+    assert html_published_date('{"datePublished": "2026-04-02"}').date().isoformat() == "2026-04-02"
+    assert html_published_date('<time datetime="2026-04-02">x</time>').date().isoformat() == "2026-04-02"
+
+
+def test_html_without_a_date_gives_none():
+    assert html_published_date('<meta property="og:title" content="2026-04-02">') is None
+    assert html_published_date("") is None
 
 
 def test_future_and_impossible_dates_are_ignored():
