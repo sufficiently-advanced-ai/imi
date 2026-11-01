@@ -1263,6 +1263,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                     "type": "integer",
                     "description": "Hard cap on tool-call iterations (default 8).",
                     "default": 8,
+                    "minimum": 1,
                 },
             },
             "required": ["intent"],
