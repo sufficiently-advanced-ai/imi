@@ -47,6 +47,15 @@ _LINE_DATE = re.compile(
     r"|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4}))",
     re.I,
 )
+_META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
+_META_DATE_NAME = re.compile(
+    r"""(?:property|name|itemprop)\s*=\s*["'](?:article:published_time|datePublished"""
+    r"""|og:article:published_time|parsely-pub-date|date|dc\.date(?:\.issued)?)["']""",
+    re.I,
+)
+_META_CONTENT = re.compile(r"""content\s*=\s*["']([^"']+)["']""", re.I)
+_JSONLD_DATE = re.compile(r""""datePublished"\s*:\s*"([^"]+)\"""")
+_TIME_TAG = re.compile(r"""<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["']""", re.I)
 
 
 def _date(year: int, month: int, day: int) -> datetime | None:
@@ -80,6 +89,20 @@ def _head_date(content: str) -> datetime | None:
             return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         month = _MONTHS.index(m.group(4)[:3].lower()) + 1
         return _date(int(m.group(6)), month, int(m.group(5)))
+    return None
+
+
+def html_published_date(html: str) -> datetime | None:
+    """The publisher's date in a page's markup: Open Graph or similar meta tags,
+    JSON-LD ``datePublished``, then a ``<time datetime>``. Scraped text usually
+    loses these, so only a caller holding the raw HTML can use this."""
+    for tag in _META_TAG.findall(html or ""):
+        if _META_DATE_NAME.search(tag) and (m := _META_CONTENT.search(tag)):
+            if (found := to_utc(m.group(1))) is not None:
+                return found
+    for pattern in (_JSONLD_DATE, _TIME_TAG):
+        if (m := pattern.search(html or "")) and (found := to_utc(m.group(1))) is not None:
+            return found
     return None
 
 

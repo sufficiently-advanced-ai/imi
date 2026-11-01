@@ -36,7 +36,7 @@ from app.services.signal_retrieval import (
 from app.services.signal_retrieval import (
     recency_weight as _recency_weight_fn,
 )
-from app.utils.event_time import TIME_SOURCE_FALLBACK, TIME_SOURCE_UNRECORDED
+from app.utils.event_time import TIME_SOURCE_FALLBACK, TIME_SOURCE_UNRECORDED, to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,12 @@ class RecallRequest(BaseModel):
     limit: int = Field(10, ge=1, le=100)
     recency_weight: float = Field(0.0, ge=0.0, le=1.0)
     half_life_days: float = 90
+    # Bound the response, not the ranking: recall triages on summary and date.
+    include_content: bool = True
+    max_content_chars: int | None = Field(None, ge=1)
+    # Event time, ADR-004. A library record with no known publish date cannot
+    # be shown to be recent, so it is excluded rather than dated by ingest.
+    published_after: datetime | None = None
     include_rejected: bool = False
     task_id: str | None = None
     flow_id: str | None = None
@@ -91,6 +97,16 @@ class RecallRequest(BaseModel):
         if not value or not value.strip():
             raise ValueError("query must be non-empty")
         return value
+
+    @field_validator("published_after", mode="before")
+    @classmethod
+    def _utc_cutoff(cls, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        parsed = to_utc(value)
+        if parsed is None:
+            raise ValueError(f"published_after is not a date: {value!r}")
+        return parsed
 
     @field_validator("lanes")
     @classmethod
@@ -224,7 +240,8 @@ def _candidate_k(request: RecallRequest) -> int:
     already fetched; on a broad query hundreds of records are about equally
     similar, so a 3x pool would hold none of last week's. With recency on,
     fetch a wider pool for it to choose from."""
-    factor = RECENCY_CANDIDATE_FACTOR if request.recency_weight > 0 else CANDIDATE_FACTOR
+    wide = request.recency_weight > 0 or request.published_after is not None
+    factor = RECENCY_CANDIDATE_FACTOR if wide else CANDIDATE_FACTOR
     return request.limit * factor
 
 
@@ -237,6 +254,31 @@ def _published_at(record: Any, meta: dict) -> tuple[str | None, str]:
     if source_date:
         return source_date, getattr(record, "time_source", None) or TIME_SOURCE_UNRECORDED
     return getattr(record, "created_at", None) or meta.get("created_at"), TIME_SOURCE_FALLBACK
+
+
+def _published_since(record: Any, meta: dict, lane: str, cutoff: datetime) -> bool:
+    """Event time on or after ``cutoff``. Record-lane items without a source
+    date keep their creation time, which is when they happened to us; a
+    library item without one has an unknown publish date."""
+    published_at, time_source = _published_at(record, meta)
+    if lane == "library" and time_source == TIME_SOURCE_FALLBACK:
+        return False
+    published = to_utc(published_at)
+    return published is not None and published >= cutoff
+
+
+def _fit_content(shape: dict, request: RecallRequest) -> dict:
+    """Apply the response's content budget. A cut says so, with the full
+    length, so a caller knows to fetch the record with ``inspect_memory``."""
+    content = shape.get("content")
+    if not content:
+        return shape
+    if request.include_content and (
+        request.max_content_chars is None or len(content) <= request.max_content_chars
+    ):
+        return shape
+    kept = content[: request.max_content_chars] if request.include_content else None
+    return {**shape, "content": kept, "content_truncated": True, "content_chars": len(content)}
 
 
 def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> dict:
@@ -371,6 +413,11 @@ async def recall(
             ):
                 continue
 
+            if request.published_after is not None and not _published_since(
+                record, meta, lane, request.published_after
+            ):
+                continue
+
             score = similarity
             if request.recency_weight > 0:
                 recency = _recency_weight_fn(
@@ -392,7 +439,7 @@ async def recall(
 
     top = search_lane("record") if "record" in request.lanes else []
     background = search_lane("library") if "library" in request.lanes else []
-    memories = [s["shape"] for s in top]
+    memories = [_fit_content(s["shape"], request) for s in top]
 
     request_id = str(uuid.uuid4())
     if session_factory is None:
@@ -447,6 +494,6 @@ async def recall(
         "request_id": request_id,
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "memories": memories,
-        "background": [s["shape"] for s in background],
+        "background": [_fit_content(s["shape"], request) for s in background],
         "warnings": warnings,
     }

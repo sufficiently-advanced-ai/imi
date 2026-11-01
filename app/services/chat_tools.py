@@ -520,6 +520,11 @@ def _memory_ops_session_factory():
     return create_database_session(get_database_config())
 
 
+# An agent's tool result: library items are whole articles, and a limit applies
+# per lane, so uncapped content overruns tool-output limits.
+RECALL_MAX_CONTENT_CHARS = 2000
+
+
 async def memory_recall(
     query: str,
     authority: str = "evidence",
@@ -529,6 +534,10 @@ async def memory_recall(
     task_id: str | None = None,
     runtime_name: str | None = None,
     lanes: list[str] | None = None,
+    include_content: bool = True,
+    max_content_chars: int = RECALL_MAX_CONTENT_CHARS,
+    half_life_days: float = 90,
+    published_after: str | None = None,
 ) -> dict[str, Any]:
     """Unified governed recall (Phase 3 wiring). Delegates to memory_recall.recall."""
     from app.services import memory_recall as recall_service
@@ -543,6 +552,10 @@ async def memory_recall(
             task_id=task_id,
             runtime_name=runtime_name,
             surface="mcp",
+            include_content=include_content,
+            max_content_chars=max_content_chars,
+            half_life_days=half_life_days,
+            published_after=published_after,
             **({"lanes": lanes} if lanes else {}),
         )
     except Exception as e:

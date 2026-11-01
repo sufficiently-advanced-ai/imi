@@ -664,7 +664,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             return _text(result)
 
         elif name == "memory_recall":
-            from app.services.chat_tools import memory_recall
+            from app.services.chat_tools import RECALL_MAX_CONTENT_CHARS, memory_recall
 
             query = args.get("query")
             if not isinstance(query, str) or not query.strip():
@@ -678,6 +678,10 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 task_id=args.get("task_id"),
                 runtime_name=args.get("runtime_name"),
                 lanes=args.get("lanes"),
+                include_content=args.get("include_content", True),
+                max_content_chars=args.get("max_content_chars", RECALL_MAX_CONTENT_CHARS),
+                half_life_days=args.get("half_life_days", 90),
+                published_after=args.get("published_after"),
             )
             return _text(result)
 

@@ -228,3 +228,67 @@ async def test_recency_widens_the_candidate_pool(store, maker):
     )
 
     assert result["background"][0]["record_id"] == new.id
+
+
+@pytest.mark.asyncio
+async def test_content_budget_cuts_both_lanes_and_says_so(store, maker):
+    long_record = _cap("r" * 500)
+    long_library = _cap("l" * 500, lane="library")
+    short = _cap("short")
+    records = [long_record, long_library, short]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["record", "library"], max_content_chars=100
+    )
+
+    rows = {m["record_id"]: m for m in result["memories"] + result["background"]}
+    for cut in (long_record, long_library):
+        assert rows[cut.id]["content"] == cut.content[:100]
+        assert rows[cut.id]["content_truncated"] is True
+        assert rows[cut.id]["content_chars"] == 500
+    assert rows[short.id]["content"] == "short"
+    assert "content_truncated" not in rows[short.id]
+
+
+@pytest.mark.asyncio
+async def test_include_content_false_keeps_the_triage_fields(store, maker):
+    record = _cap("some content")
+    index_capture(store, _Embedder(), record)
+
+    result = await _recall(store, [record], maker, include_content=False)
+
+    row = result["memories"][0]
+    assert row["content"] is None
+    assert row["content_chars"] == len(record.content)
+    assert row["freshness"]["published_at"] == record.created_at
+
+
+@pytest.mark.asyncio
+async def test_published_after_is_event_time_and_excludes_undated_library(store, maker):
+    now = datetime.now(UTC)
+    old = _cap("An old issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=70)).isoformat(), "time_source": "explicit"}
+    )
+    new = _cap("A new issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=2)).isoformat(), "time_source": "explicit"}
+    )
+    undated = _cap("An undated page.", lane="library")
+    note = _cap("An undated note of ours.")
+    records = [old, new, undated, note]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["record", "library"],
+        published_after=(now - timedelta(days=7)).isoformat(),
+    )
+
+    assert [m["record_id"] for m in result["background"]] == [new.id]
+    assert [m["record_id"] for m in result["memories"]] == [note.id]
+
+
+def test_published_after_must_be_a_date():
+    with pytest.raises(ValidationError):
+        RecallRequest(query="q", published_after="last week")

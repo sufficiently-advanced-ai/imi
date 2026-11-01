@@ -116,5 +116,7 @@ curl -X POST localhost:8080/api/admin/backfill-memory-index
 | Switch backends | Set `VECTOR_BACKEND`, restart, run the backfill endpoint |
 | Add a vector backend | Implement `store_vectors` / `search_vectors` / `delete` (contract: `SqliteVectorStore`), add a branch in `resolve_vector_store` (`signal_indexing.py:76`) |
 | Add a governed record kind | Model with the shared invariant, `index_*_one` + `backfill_*` in `signal_indexing.py`, resolver in `memory_recall.default_resolvers` (`:110`), store with `iter_all`/`get`. Audit generalizes via duck typing |
-| Tune recall ranking | recency/authority weighting in `memory_recall.py`; callers can pass `recency_weight` per request |
+| Tune recall ranking | recency/authority weighting in `memory_recall.py`; callers can pass `recency_weight` and `half_life_days` per request |
+| Bound recall output | MCP recall caps each record at `max_content_chars` (default 2000, `RECALL_MAX_CONTENT_CHARS` in `chat_tools.py`); `include_content: false` returns summaries and dates only. REST recall is uncapped unless asked. A cut record carries `content_truncated` and `content_chars` |
+| Restrict recall by date | `published_after` filters on event time; library records on `fallback_now` are excluded because their publish date is unknown |
 | Search library by default, or stop library decay | `recall.default_lanes` and `library.decay` in `config/lanes.yaml` (ADR-006; see `config/lanes.yaml.example`) |
