@@ -54,6 +54,16 @@ no request body can set) into the admission decision. REST intake is unchanged. 
 needs a decision model (`lane_admission` routed in `config/inference.yaml`); **without
 one, per-item still falls back to `record`**, so MCP intake behaves exactly as before.
 
+## Library captures in the graph (ADR-011)
+
+Library captures reach the graph through the **LINK phase** (`POST /api/captures/link`, mode
+`library.linking.mode` in `config/lanes.yaml`): each becomes a `Document {kind: capture}`
+linked to its source, seeded topics / storylines / essays, and the entities it discusses.
+Links live in `memory/capture_links/<id>.json` (the graph is a projection), and every run is
+audited and revertible. An **owner** link (`capture_thought(about=…)`,
+`graph_add_capture_link`) to or from a library capture adds to its `pinned_by`, and recall
+keeps a pinned capture past `stale_after`. See [Capture Linking](capture-linking.md).
+
 ## Recall
 
 `recall(RecallRequest)` (`app/services/memory_recall.py`) is the single unified recall

@@ -5,6 +5,8 @@ Externally visible paths (all under /api/captures):
     GET  /api/captures                — list captures (review_status/source filters)
     GET  /api/captures/{capture_id}   — single capture record
     POST /api/captures/{capture_id}/review — audited governance transition
+    POST /api/captures/link           — one LINK run over unlinked library captures (ADR-011)
+    POST /api/captures/link/revert    — undo one LINK run
 
 Prefix convention: routers self-prefix with /api (mirrors decisions.py);
 main.py calls include_router with NO extra prefix. Governance fields are
@@ -17,6 +19,7 @@ captures deliberately live at /api/captures.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 
@@ -109,6 +112,45 @@ async def create_capture(body: CaptureRequest):
             status_code=500, detail=result.get("error", "capture failed")
         )
     return result
+
+
+class LinkRunRequest(BaseModel):
+    max_results: int = Field(
+        50, ge=1, le=500, description="Most unlinked library captures to process in this run"
+    )
+
+
+class LinkRevertRequest(BaseModel):
+    run_id: str = Field(..., min_length=1, description="The run to undo (from its changelog)")
+
+
+@router.post("/link")
+async def link_captures(body: LinkRunRequest | None = None):
+    """One LINK run (ADR-011 §2). Mode comes from lanes.yaml library.linking.
+
+    The run is shielded: a client that times out does not stop it, and its
+    changelog is in the link audit log. A second concurrent run gets 409."""
+    from app.services import capture_linker
+
+    body = body or LinkRunRequest()
+    try:
+        return await asyncio.shield(
+            asyncio.ensure_future(capture_linker.run_link(max_results=body.max_results))
+        )
+    except capture_linker.LinkRunBusy as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/link/revert")
+async def revert_link_run(body: LinkRevertRequest):
+    """Undo one LINK run: its links, and the entities it created that nothing
+    else references. Owner links and captures are never removed."""
+    from app.services import capture_linker
+
+    try:
+        return await capture_linker.revert_run(body.run_id)
+    except capture_linker.LinkRunBusy as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.get("", response_model=CaptureListResponse)

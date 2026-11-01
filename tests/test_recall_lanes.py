@@ -123,6 +123,24 @@ async def test_stale_library_is_excluded_but_record_stale_after_is_not(store, ma
 
 
 @pytest.mark.asyncio
+async def test_pinned_stale_library_stays_in_recall(store, maker):
+    """ADR-011 §5: an owner link pins a library capture; its horizon is kept,
+    so unpinning restores decay."""
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    pinned = _cap("Pinned newsletter.", lane="library", stale_after=past).model_copy(
+        update={"pinned_by": ["note-1:ABOUT:capture-x"]}
+    )
+    unpinned = _cap("Unpinned newsletter.", lane="library", stale_after=past)
+    for r in (pinned, unpinned):
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(store, [pinned, unpinned], maker, lanes=["record", "library"])
+
+    assert [m["record_id"] for m in result["background"]] == [pinned.id]
+    assert pinned.stale_after == past
+
+
+@pytest.mark.asyncio
 async def test_record_lane_wins_over_stale_vector_metadata(store, maker):
     """Indexed as record, later re-laned to library: recall must follow the
     authoritative record, not the vector."""
@@ -157,3 +175,56 @@ def test_lanes_are_validated():
     with pytest.raises(ValidationError):
         RecallRequest(query="q", lanes=[])
     assert RecallRequest(query="q").lanes == ["record"]
+
+
+@pytest.mark.asyncio
+async def test_library_recency_is_publish_time_not_ingest_time(store, maker):
+    # Both ingested today; the backfilled August issue must not rank as new.
+    now = datetime.now(UTC)
+    old = _cap("Risky Bulletin: August issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=70)).isoformat(), "time_source": "explicit"}
+    )
+    new = _cap("Risky Bulletin: this week's issue.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=2)).isoformat(), "time_source": "inferred"}
+    )
+    undated = _cap("An undated page.", lane="library")
+    for r in (old, new, undated):
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, [old, new, undated], maker, lanes=["library"], recency_weight=1.0,
+        half_life_days=14,
+    )
+
+    ranked = [m["record_id"] for m in result["background"]]
+    assert ranked.index(new.id) < ranked.index(old.id)
+    fresh = {m["record_id"]: m["freshness"] for m in result["background"]}
+    assert fresh[old.id]["published_at"] == old.source_date
+    assert fresh[new.id]["time_source"] == "inferred"
+    assert fresh[undated.id]["time_source"] == "fallback_now"
+    assert fresh[undated.id]["published_at"] == undated.created_at
+
+
+@pytest.mark.asyncio
+async def test_recency_widens_the_candidate_pool(store, maker):
+    # Forty old records are all similar; one recent one must still be a
+    # candidate for recency to lift it.
+    now = datetime.now(UTC)
+    old = [
+        _cap(f"Old roundup {i}.", lane="library").model_copy(
+            update={"source_date": (now - timedelta(days=200)).isoformat()}
+        )
+        for i in range(40)
+    ]
+    new = _cap("This week's roundup.", lane="library").model_copy(
+        update={"source_date": (now - timedelta(days=1)).isoformat()}
+    )
+    records = [*old, new]
+    for r in records:
+        index_capture(store, _Embedder(), r)
+
+    result = await _recall(
+        store, records, maker, lanes=["library"], limit=3, recency_weight=0.5
+    )
+
+    assert result["background"][0]["record_id"] == new.id

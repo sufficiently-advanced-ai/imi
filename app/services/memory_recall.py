@@ -36,6 +36,7 @@ from app.services.signal_retrieval import (
 from app.services.signal_retrieval import (
     recency_weight as _recency_weight_fn,
 )
+from app.utils.event_time import TIME_SOURCE_FALLBACK, TIME_SOURCE_UNRECORDED
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ SCHEMA_VERSION = "imi.memory.recall.v1"
 RESPONSE_SCHEMA_VERSION = "imi.memory.recall_response.v1"
 
 RECORD_KINDS = ("signal", "capture", "agent_memory")
+CANDIDATE_FACTOR = 3  # vector candidates per requested result
+RECENCY_CANDIDATE_FACTOR = 20  # with recency blended in (see _candidate_k)
 
 # Governance fields re-hydrated from the authoritative record before filtering.
 _GOVERNANCE_FIELDS = (
@@ -56,6 +59,7 @@ _GOVERNANCE_FIELDS = (
     # stale vector must not move a record between lanes.
     "lane",
     "stale_after",
+    "pinned_by",  # ADR-011 §5: an owner link keeps a library capture in recall
 )
 
 
@@ -215,8 +219,29 @@ def _is_stale(stale_after: str | None) -> bool:
         return False  # unparseable horizon never hides a record
 
 
+def _candidate_k(request: RecallRequest) -> int:
+    """Vector candidates per lane. Recency reorders only what similarity
+    already fetched; on a broad query hundreds of records are about equally
+    similar, so a 3x pool would hold none of last week's. With recency on,
+    fetch a wider pool for it to choose from."""
+    factor = RECENCY_CANDIDATE_FACTOR if request.recency_weight > 0 else CANDIDATE_FACTOR
+    return request.limit * factor
+
+
+def _published_at(record: Any, meta: dict) -> tuple[str | None, str]:
+    """(event time, time_source) for recency (ADR-004). A capture's
+    ``source_date`` is when its content was published or sent; ingest time
+    (``created_at``) is only the fallback, flagged ``fallback_now`` — a
+    backfill must not rank old content as new."""
+    source_date = getattr(record, "source_date", None)
+    if source_date:
+        return source_date, getattr(record, "time_source", None) or TIME_SOURCE_UNRECORDED
+    return getattr(record, "created_at", None) or meta.get("created_at"), TIME_SOURCE_FALLBACK
+
+
 def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> dict:
     """OB1 recall-response memory shape from re-hydrated data."""
+    published_at, time_source = _published_at(record, meta)
     return {
         "record_id": meta["id"],
         "record_kind": meta["content_type"],
@@ -236,6 +261,8 @@ def _memory_shape(meta: dict, record: Any, similarity: float, score: float) -> d
             "requires_confirmation": record.review_status == "pending",
         },
         "freshness": {
+            "published_at": published_at,
+            "time_source": time_source,
             "created_at": getattr(record, "created_at", None),
             "stale_after": getattr(record, "stale_after", None),
             "valid_to": getattr(record, "valid_to", None),
@@ -293,7 +320,7 @@ async def recall(
         """Rank one lane. Each lane gets its own store-side filtered top-k so
         a large library can never crowd record results out (or vice versa)."""
         results = vector_store.search_vectors(
-            embedding, k=request.limit * 3, filter=_metadata_filter(kinds, lane)
+            embedding, k=_candidate_k(request), filter=_metadata_filter(kinds, lane)
         )
 
         # Dedup by record id keeping the best-scoring vector (FAISS append caveat).
@@ -332,8 +359,13 @@ async def recall(
             hydrated["confidence"] = getattr(record, "confidence", None)
             if hydrated["lane"] != lane:
                 continue  # vector metadata is stale; the record is authoritative
-            if lane == "library" and decay and _is_stale(hydrated.get("stale_after")):
-                continue  # ADR-003 §5: decayed library is out of recall, not deleted
+            if (
+                lane == "library"
+                and decay
+                and not hydrated.get("pinned_by")
+                and _is_stale(hydrated.get("stale_after"))
+            ):
+                continue  # ADR-003 §5: decayed library is out of recall unless pinned
             if not _passes_governance(
                 hydrated, request.authority, request.include_rejected
             ):
@@ -342,7 +374,7 @@ async def recall(
             score = similarity
             if request.recency_weight > 0:
                 recency = _recency_weight_fn(
-                    _age_seconds(meta.get("created_at")), request.half_life_days
+                    _age_seconds(_published_at(record, meta)[0]), request.half_life_days
                 )
                 score = blend_score(similarity, recency, request.recency_weight)
             score += authority_bonus(hydrated)

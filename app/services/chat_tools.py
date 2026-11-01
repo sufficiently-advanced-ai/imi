@@ -395,6 +395,7 @@ async def capture_thought(
     source_date: str | None = None,
     *,
     channel: str,
+    about: list[str] | None = None,
 ) -> dict[str, Any]:
     """Capture a thought into the general memory layer (G4 wiring).
 
@@ -411,7 +412,7 @@ async def capture_thought(
     from app.services.lane_admission import UNKNOWN_SOURCE
 
     source = (source or "").strip().lower() or UNKNOWN_SOURCE
-    return await capture_service.capture_and_persist(
+    result = await capture_service.capture_and_persist(
         content,
         source=source,
         source_id=source_id,
@@ -420,6 +421,57 @@ async def capture_thought(
         actor="mcp",
         channel=channel,
     )
+    # ADR-011 §5: owner links from the note to what it is about. Best-effort:
+    # the capture is already persisted, whatever happens here.
+    targets = [a for a in (about or []) if isinstance(a, str) and a.strip()]
+    if targets and result.get("success") and result.get("id"):
+        try:
+            from app.services.capture_linker import attach_about
+
+            result["about"] = await attach_about(result["id"], targets, actor="mcp")
+        except Exception as e:
+            logger.warning("[CAPTURE] about links failed (non-fatal): %s", e)
+            result["about"] = {"linked": [], "unresolved": targets, "errors": [str(e)]}
+    return result
+
+
+async def graph_add_capture_link(
+    capture_id: str,
+    target: str,
+    edge: str = "about",
+    stance: str | None = None,
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """An owner link from a capture to an entity or capture (ADR-011 §5)."""
+    from app.services.capture_linker import AttachError, attach
+
+    try:
+        return await attach(capture_id, target, edge or "about", stance, actor=actor)
+    except AttachError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error("Error in graph_add_capture_link: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+async def graph_delete_capture_link(
+    capture_id: str,
+    target: str,
+    edge: str = "about",
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Remove an owner link made by graph_add_capture_link (ADR-011 §5)."""
+    from app.services.capture_linker import AttachError, detach
+
+    try:
+        return await detach(capture_id, target, edge or "about", actor=actor)
+    except AttachError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error("Error in graph_delete_capture_link: %s", e, exc_info=True)
+        return {"error": str(e)}
 
 
 async def memory_writeback(

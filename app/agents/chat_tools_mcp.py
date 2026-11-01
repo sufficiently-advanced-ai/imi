@@ -607,6 +607,7 @@ async def capture_thought_tool(args: dict[str, Any]) -> dict[str, Any]:
             tags=args.get("tags"),
             source_date=args.get("source_date"),
             channel=MCP_CHANNEL,
+            about=args.get("about"),
         )
         duration = time.time() - start
         if result.get("success"):
@@ -1401,6 +1402,43 @@ async def graph_delete_edge_tool(args: dict[str, Any]) -> dict[str, Any]:
     return await _execute_graph_tool("graph_delete_edge", "graph_delete_edge", args)
 
 
+async def _capture_link_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """ADR-011 §5: owner capture links, shared with the MCP server."""
+    start = time.time()
+    await _emit_tool_start(tool_name, args)
+    try:
+        from app.services import chat_tools
+
+        if tool_name == "graph_add_capture_link":
+            result = await chat_tools.graph_add_capture_link(
+                args["capture_id"], args["target"], args.get("edge") or "about",
+                args.get("stance"), actor="chat",
+            )
+        else:
+            result = await chat_tools.graph_delete_capture_link(
+                args["capture_id"], args["target"], args.get("edge") or "about", actor="chat",
+            )
+        duration = time.time() - start
+        if result.get("error"):
+            await _emit_tool_error(tool_name, duration, result["error"])
+            return _err(result["error"])
+        await _emit_tool_complete(tool_name, duration, json.dumps(result, default=str)[:200])
+        return _ok(json.dumps(result, default=str))
+    except Exception as e:
+        await _emit_tool_error(tool_name, time.time() - start, str(e))
+        return _err(str(e))
+
+
+@tool(*chat_tool_args("graph_add_capture_link"))
+async def graph_add_capture_link_tool(args: dict[str, Any]) -> dict[str, Any]:
+    return await _capture_link_tool("graph_add_capture_link", args)
+
+
+@tool(*chat_tool_args("graph_delete_capture_link"))
+async def graph_delete_capture_link_tool(args: dict[str, Any]) -> dict[str, Any]:
+    return await _capture_link_tool("graph_delete_capture_link", args)
+
+
 # ============================================================================
 # SERVER FACTORY
 # ============================================================================
@@ -1432,6 +1470,8 @@ _GRAPH_TOOLS = [
     graph_add_edge_tool,
     graph_update_edge_tool,
     graph_delete_edge_tool,
+    graph_add_capture_link_tool,
+    graph_delete_capture_link_tool,
 ]
 
 
@@ -1589,6 +1629,8 @@ __all__ = [
     "graph_add_edge_tool",
     "graph_update_edge_tool",
     "graph_delete_edge_tool",
+    "graph_add_capture_link_tool",
+    "graph_delete_capture_link_tool",
     "list_decisions_tool",
     "get_decision_tool",
     "find_decision_precedents_tool",

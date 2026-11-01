@@ -101,7 +101,13 @@ def build_node_properties(
     # Preserve extra metadata that isn't in the domain schema
     # (e.g., title, company, department from person profiles)
     extra_keys = {"title", "role", "department", "company", "email", "contact",
-                  "status", "description", "type"}
+                  "status", "description", "type",
+                  # System-owned lifecycle fields (ADR-011): seeded / provisional /
+                  # retired state, public vs contact people, and the provenance a
+                  # link run stamps. Domains do not declare them, and a rebuild that
+                  # dropped them would re-offer retired seeds.
+                  "seed_status", "seed_file", "relationship", "source_key",
+                  "created_by", "run_id"}
     for key in extra_keys:
         if key not in properties and key in metadata:
             val = metadata[key]

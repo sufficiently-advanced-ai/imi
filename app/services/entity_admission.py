@@ -47,8 +47,15 @@ class AdmissionVerdict:
 KEEP = AdmissionVerdict(action="keep")
 
 
-def build_admission_questions(entity_types: dict[str, str], extracted_type: str):
-    """(questions, option_id -> type) for one mention."""
+MEETING_ORIGIN = "a meeting transcript"
+LIBRARY_ORIGIN = "several published articles, newsletters or videos"
+
+
+def build_admission_questions(
+    entity_types: dict[str, str], extracted_type: str, origin: str = MEETING_ORIGIN
+):
+    """(questions, option_id -> type) for one mention. ``origin`` names where
+    it was extracted from (library captures use ``LIBRARY_ORIGIN``, ADR-011)."""
     from app.services.inference.decisions import Choice, Noul
 
     options = {f"t{i}": t for i, t in enumerate(sorted(entity_types), start=1)}
@@ -60,7 +67,7 @@ def build_admission_questions(entity_types: dict[str, str], extracted_type: str)
     questions = {
         "named": Noul(
             instructions=(
-                f"The mention was extracted from a meeting transcript as a {extracted_type}. "
+                f"The mention was extracted from {origin} as a {extracted_type}. "
                 "Is it a specific, named real-world entity that belongs in a knowledge graph? "
                 "Answer no for a role or job title ('Recruiter', 'the facilitator'), a "
                 "placeholder for someone unnamed ('Unnamed facilitator', 'Speaker 2'), a "
@@ -142,6 +149,7 @@ async def judge_entities(
     entity_types: dict[str, str],
     meeting: dict | None = None,
     client: Any = None,
+    origin: str = MEETING_ORIGIN,
 ) -> dict[tuple[str, str], AdmissionVerdict]:
     """Verdicts keyed by (type, name) for mentions the model says to drop or
     retype. Empty in ``off``/``shadow`` mode (shadow logs what it would do),
@@ -158,7 +166,7 @@ async def judge_entities(
 
     async def one(mention: dict) -> tuple[tuple[str, str], AdmissionVerdict]:
         key = (mention["type"], mention["name"])
-        questions, options = build_admission_questions(entity_types, mention["type"])
+        questions, options = build_admission_questions(entity_types, mention["type"], origin)
         try:
             result = await client.decide(
                 build_admission_state(mention, meeting), questions, operation=ADMISSION_OPERATION

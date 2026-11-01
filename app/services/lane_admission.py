@@ -104,6 +104,16 @@ _AUTOMATED_SENDERS = re.compile(
     re.I,
 )
 
+# Platform notifications, matched on a mail's subject: an alert that something
+# happened elsewhere, not reading material. Mail only — an article titled
+# "X is live" is content.
+_NOTIFICATION_SUBJECTS = re.compile(
+    r"^live video with .+ now:|\bis going live\b|\bwent live\b|\bposted new notes\b"
+    r"|^thanks? (you )?for (attending|joining|registering)\b|\bnew comments? on\b"
+    r"|\bconfirm your (subscription|email)\b|\bverify your email\b|\bverification code\b",
+    re.I,
+)
+
 DEFAULT_OWNER = "the owner of this knowledge base"
 
 
@@ -275,18 +285,56 @@ def mail_sender(content: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def drop_rule(content: str, source: str | None, channel: str | None = None) -> str | None:
+def mail_subject(content: str) -> str:
+    """The subject the forwarder writes as the first ``# `` heading, else a
+    ``Subject:`` header."""
+    for line in (content or "").splitlines()[:5]:
+        if line.startswith("# "):
+            return line[2:].strip()
+    m = re.search(r"^Subject: (.+)$", content or "", re.M)
+    return m.group(1).strip() if m else ""
+
+
+def kept_by(content: str, source_id: str | None) -> str | None:
+    """The ``keep_sources`` entry this item matches, or None. A kept source is
+    never dropped — not by a rule, not by the model. Substring match on the
+    From: line or the URL (lowercased)."""
+    keep = [str(k).lower() for k in lanes_config().get("keep_sources") or [] if k]
+    haystack = f"{mail_sender(content)}\n{source_id or ''}".lower()
+    return next((k for k in keep if k in haystack), None)
+
+
+def _subject_patterns() -> list[re.Pattern]:
+    patterns = [_NOTIFICATION_SUBJECTS]
+    for raw in lanes_config().get("drop_subjects") or []:
+        try:
+            patterns.append(re.compile(str(raw), re.I))
+        except re.error as e:
+            _warn("drop_subjects: bad pattern %r: %s", raw, e)
+    return patterns
+
+
+def drop_rule(
+    content: str, source: str | None, channel: str | None = None, source_id: str | None = None
+) -> str | None:
     """Reason to drop outright, or None. Never fires for record-default sources
-    (as admitted on ``channel`` — see ``effective_default``)."""
+    (as admitted on ``channel`` — see ``effective_default``) or for a
+    ``keep_sources`` match."""
     if effective_default(source, channel) == "record":
         return None
+    if kept_by(content, source_id):
+        return None
     sender = mail_sender(content)
-    extra = lanes_config().get("drop_senders") or []
-    if sender and (
-        _AUTOMATED_SENDERS.search(sender)
-        or any(str(s).lower() in sender.lower() for s in extra)
-    ):
+    if not sender:
+        return None
+    if _AUTOMATED_SENDERS.search(sender):
         return f"automated mail ({sender[:80]})"
+    extra = lanes_config().get("drop_senders") or []
+    if any(str(s).lower() in sender.lower() for s in extra):
+        return f"listed sender ({sender[:80]})"
+    subject = mail_subject(content)
+    if subject and any(p.search(subject) for p in _subject_patterns()):
+        return f"notification ({subject[:80]})"
     return None
 
 
@@ -623,7 +671,7 @@ async def _admit(
 ) -> LaneDecision:
     default = effective_default(source, channel)
     try:
-        rule = drop_rule(content, source, channel)
+        rule = drop_rule(content, source, channel, source_id)
         if rule:
             return LaneDecision(lane="library", drop=True, reason=f"rule: {rule}", source_default=default)
 
@@ -650,6 +698,8 @@ async def _admit(
 
         p_mem, p_lib, p_junk = (float(probs.get(k, 0.0)) for k in ("memory", "library", "junk"))
         lane, drop, reason = apply_lane(default, p_mem, p_lib, p_junk)
+        if drop and (keep := kept_by(content, source_id)):
+            drop, reason = False, f"kept ({keep}); {reason}"
         logger.info(
             "[LANES] %s %s/%s: memory=%.2f library=%.2f junk=%.2f durable=%.2f -> %s%s",
             mode, source, (source_id or "")[:60], p_mem, p_lib, p_junk, durable,

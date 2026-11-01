@@ -259,3 +259,52 @@ class TestReviewCapture:
             json={"action": "supersede", "superseded_by": "cap-10"},
         )
         assert resp.status_code == 400
+
+
+class TestLinkEndpoints:
+    """ADR-011: POST /api/captures/link and /link/revert are thin delegates."""
+
+    def test_link_passes_max_results_and_returns_changelog(self, client, monkeypatch):
+        from app.services import capture_linker
+
+        c, _, _ = client
+        seen = {}
+
+        async def fake_run_link(max_results=50, ctx=None):
+            seen["max_results"] = max_results
+            return {"run_id": "link-1", "processed": 2}
+
+        monkeypatch.setattr(capture_linker, "run_link", fake_run_link)
+        resp = c.post("/api/captures/link", json={"max_results": 7})
+        assert resp.status_code == 200
+        assert resp.json() == {"run_id": "link-1", "processed": 2}
+        assert seen["max_results"] == 7
+        assert c.post("/api/captures/link").status_code == 200
+        assert seen["max_results"] == 50
+        assert c.post("/api/captures/link", json={"max_results": 0}).status_code == 422
+
+    def test_busy_run_is_409(self, client, monkeypatch):
+        from app.services import capture_linker
+
+        c, _, _ = client
+
+        async def busy(*a, **kw):
+            raise capture_linker.LinkRunBusy("a link run is already in progress")
+
+        monkeypatch.setattr(capture_linker, "run_link", busy)
+        monkeypatch.setattr(capture_linker, "revert_run", busy)
+        assert c.post("/api/captures/link").status_code == 409
+        assert c.post("/api/captures/link/revert", json={"run_id": "x"}).status_code == 409
+
+    def test_revert_delegates(self, client, monkeypatch):
+        from app.services import capture_linker
+
+        c, _, _ = client
+
+        async def fake_revert(run_id, ctx=None):
+            return {"run_id": run_id, "links_removed": 3}
+
+        monkeypatch.setattr(capture_linker, "revert_run", fake_revert)
+        resp = c.post("/api/captures/link/revert", json={"run_id": "link-1"})
+        assert resp.json() == {"run_id": "link-1", "links_removed": 3}
+        assert c.post("/api/captures/link/revert", json={}).status_code == 422

@@ -28,6 +28,7 @@ from typing import Any
 from app.git_ops import git_ops
 from app.models.signal import SignalAuditRecord
 from app.services import signal_indexing
+from app.services.capture_dates import published_date
 from app.services.capture_enrichment import enrich_capture
 from app.services.content_cleaner import clean_content
 from app.services.lane_admission import AdmissionLog, admit
@@ -118,6 +119,9 @@ async def capture_and_persist(
         else:
             decision = None
             lane, stale_after = existing.lane, existing.stale_after
+        # Event time (ADR-004): the publisher's date where the content or URL
+        # carries one, the intake's date otherwise; never ingest time.
+        source_date, time_source = published_date(content, source, source_id, source_date)
         result = store.capture(
             content,
             source,
@@ -125,6 +129,7 @@ async def capture_and_persist(
             tenant_id=tenant_id,
             tags=tags,
             source_date=source_date,
+            time_source=time_source,
             lane=lane,
             stale_after=stale_after,
             channel=channel,

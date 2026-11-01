@@ -131,3 +131,64 @@ async def test_mcp_dispatcher_routes_capture_thought():
     mock_fn.assert_awaited_once()
     data = json.loads(response[0].text)
     assert data["id"] == "cap-1"
+
+
+# ---------------------------------------------------------------------------
+# ADR-011: about + owner capture links
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_thought_about_attaches_after_persisting():
+    async def fake_capture_and_persist(content, **kw):
+        return {"success": True, "id": "cap-9", "deduped": False}
+
+    attach = AsyncMock(return_value={"linked": [{"target_id": "person-ada"}], "unresolved": ["Bob"]})
+    with patch("app.services.capture_service.capture_and_persist",
+               side_effect=fake_capture_and_persist), \
+            patch("app.services.capture_linker.attach_about", attach):
+        from app.services.chat_tools import capture_thought
+
+        result = await capture_thought("Note on Ada.", channel="mcp", about=["Ada", "Bob", " "])
+
+    attach.assert_awaited_once_with("cap-9", ["Ada", "Bob"], actor="mcp")
+    assert result["about"]["unresolved"] == ["Bob"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_rejects_non_list_about():
+    response = await _mcp_mod().handle_call_tool(
+        "capture_thought", {"content": "x", "about": "Ada"}
+    )
+    assert "about" in response[0].text
+
+
+def test_capture_link_tools_registered():
+    from app.services.mcp_tool_definitions import TOOL_DEFS
+
+    names = [t.name for t in _mcp_mod().TOOLS]
+    for name in ("graph_add_capture_link", "graph_delete_capture_link"):
+        assert name in names
+        assert TOOL_DEFS[name]["inputSchema"]["required"] == ["capture_id", "target"]
+    assert "about" in TOOL_DEFS["capture_thought"]["inputSchema"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_capture_link_dispatch_stamps_actor_and_maps_errors():
+    with patch("app.services.chat_tools.graph_add_capture_link", new_callable=AsyncMock,
+               return_value={"linked": True, "target_id": "person-ada"}) as add:
+        response = await _mcp_mod().handle_call_tool(
+            "graph_add_capture_link", {"capture_id": "cap-1", "target": "Ada", "edge": "about"}
+        )
+    assert json.loads(response[0].text)["linked"] is True
+    args, kwargs = add.call_args
+    assert args[:3] == ("cap-1", "Ada", "about") and kwargs["actor"].startswith("mcp")
+
+    with patch("app.services.chat_tools.graph_delete_capture_link", new_callable=AsyncMock,
+               return_value={"error": "edge must be one of ..."}):
+        response = await _mcp_mod().handle_call_tool(
+            "graph_delete_capture_link", {"capture_id": "cap-1", "target": "Ada"}
+        )
+    assert "edge must be one of" in response[0].text
+    missing = await _mcp_mod().handle_call_tool("graph_add_capture_link", {"target": "Ada"})
+    assert "capture_id is required" in missing[0].text
