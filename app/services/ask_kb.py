@@ -184,11 +184,38 @@ def _summarize_result(tool_name: str, result: Any) -> str:
     return str(type(result).__name__)
 
 
+# Tool result text the sub-agent sees: per call, and across one run. Each step
+# resends earlier results, so the run total is what bounds context and cost.
+_MAX_TOOL_RESULT_CHARS = 40_000
+_MAX_RUN_RESULT_CHARS = 150_000
+
+
+class _ResultBudget:
+    """Trims tool results to the per-call and per-run caps, and says so."""
+
+    def __init__(self) -> None:
+        self.remaining = _MAX_RUN_RESULT_CHARS
+
+    def fit(self, text: str) -> str:
+        limit = min(_MAX_TOOL_RESULT_CHARS, self.remaining)
+        kept = text[:limit]
+        self.remaining -= len(kept)
+        if len(kept) == len(text):
+            return text
+        advice = (
+            "narrow the query for the rest"
+            if self.remaining
+            else "the result budget for this run is used up, so answer from what you have"
+        )
+        return f"{kept}\n[truncated: showing {len(kept):,} of {len(text):,} chars; {advice}]"
+
+
 async def _execute_tool(
     tool_name: str,
     tool_args: dict[str, Any],
     dispatcher: dict[str, Any],
     trace: list[dict[str, Any]],
+    budget: _ResultBudget,
 ) -> str:
     """Run one sub-agent tool call, record it in the trace, return the result text."""
     handler = dispatcher.get(tool_name)
@@ -206,7 +233,7 @@ async def _execute_tool(
         "args_summary": ", ".join(f"{k}={str(v)[:40]}" for k, v in tool_args.items()),
         "result_summary": _summarize_result(tool_name, result),
     })
-    return json.dumps(result, default=str)[:8000]
+    return budget.fit(json.dumps(result, default=str))
 
 
 _SYSTEM_PROMPT = """You are a knowledge-base sub-agent invoked via the ask_kb tool.
@@ -222,6 +249,8 @@ Rules:
 - Stop calling tools as soon as you have enough to answer.
 - Once you have the answer, respond with prose — no more tool calls.
 - Cite specific entities and documents you used.
+- A tool result ending in "[truncated: ...]" is incomplete: never count or
+  conclude from it as if it were whole. Narrow the query, or say what is missing.
 """
 
 
@@ -322,6 +351,7 @@ async def _run_message_loop(
     """
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
     trace: list[dict[str, Any]] = []
+    budget = _ResultBudget()
     answer = ""
     steps_used = 0
 
@@ -370,7 +400,7 @@ async def _run_message_loop(
         tool_results = []
         for tc in tool_calls:
             content = await _execute_tool(
-                getattr(tc, "name", ""), getattr(tc, "input", {}) or {}, dispatcher, trace
+                getattr(tc, "name", ""), getattr(tc, "input", {}) or {}, dispatcher, trace, budget
             )
             tool_results.append({
                 "type": "tool_result",
@@ -414,13 +444,14 @@ async def _run_agent_sdk_loop(
     from app.services.claude_client import ClaudeClient
 
     trace: list[dict[str, Any]] = []
+    budget = _ResultBudget()
 
     def _sdk_tool(spec: dict[str, Any]):
         tool_name = spec["name"]
 
         @tool(tool_name, spec["description"], spec["input_schema"])
         async def _handler(args: dict[str, Any]) -> dict[str, Any]:
-            text = await _execute_tool(tool_name, args, dispatcher, trace)
+            text = await _execute_tool(tool_name, args, dispatcher, trace, budget)
             return {"content": [{"type": "text", "text": text}]}
 
         return _handler
