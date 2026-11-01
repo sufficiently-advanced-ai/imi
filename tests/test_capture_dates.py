@@ -66,9 +66,12 @@ def test_html_date_from_meta_either_attribute_order():
         assert html_published_date(html).isoformat() == "2026-04-02T09:00:00+00:00"
 
 
-def test_html_date_from_jsonld_and_time_tag():
+def test_html_date_from_jsonld():
     assert html_published_date('{"datePublished": "2026-04-02"}').date().isoformat() == "2026-04-02"
-    assert html_published_date('<time datetime="2026-04-02">x</time>').date().isoformat() == "2026-04-02"
+
+
+def test_html_time_tags_are_not_the_article_date():
+    assert html_published_date('<time datetime="2026-10-01">Related card</time>') is None
 
 
 def test_html_without_a_date_gives_none():
