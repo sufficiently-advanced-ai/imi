@@ -238,3 +238,45 @@ async def test_agent_sdk_loop_reports_an_error_result(monkeypatch):
 
     assert result["stopped_reason"] == "error"
     assert "Invalid API key" in result["error"]
+
+
+def test_short_result_passes_through_unmarked():
+    budget = ask_kb_module._ResultBudget()
+
+    assert budget.fit("short") == "short"
+    assert budget.remaining == ask_kb_module._MAX_RUN_RESULT_CHARS - 5
+
+
+def test_long_result_is_cut_with_a_marker():
+    budget = ask_kb_module._ResultBudget()
+
+    text = budget.fit("x" * 50_000)
+
+    assert text.startswith("x" * ask_kb_module._MAX_TOOL_RESULT_CHARS + "\n[truncated: ")
+    assert "showing 40,000 of 50,000 chars; narrow the query" in text
+
+
+@pytest.mark.asyncio
+async def test_run_budget_caps_total_results(use_client, monkeypatch):
+    async def _big(args):
+        return "x" * 45_000
+
+    monkeypatch.setattr(
+        ask_kb_module, "_make_tool_dispatcher", lambda actor=None: {"list_meetings": _big}
+    )
+    client = use_client(_client(responses=[
+        SimpleNamespace(content=[_tool_use("list_meetings", {})]) for _ in range(5)
+    ] + [SimpleNamespace(content=[_text("Done.")])]))
+
+    result = await ask_kb("everything", max_steps=6)
+
+    sent = [
+        message["content"][0]["content"]
+        for message in client.generate_message.await_args.kwargs["messages"]
+        if message["role"] == "user" and isinstance(message["content"], list)
+    ]
+    assert result["stopped_reason"] == "answered"
+    shown = [text.split("showing ")[1].split(" of ")[0] for text in sent]
+    assert shown == ["40,000", "40,000", "40,000", "30,000", "0"]
+    assert "narrow the query" in sent[0]
+    assert "budget for this run is used up" in sent[3]
