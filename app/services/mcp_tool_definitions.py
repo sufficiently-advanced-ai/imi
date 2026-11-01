@@ -585,8 +585,9 @@ TOOL_DEFS: dict[str, ToolDef] = {
                     "type": "integer",
                     "default": 2000,
                     "description": (
-                        "Cut each record's content to this length. A cut record has "
-                        "content_truncated and content_chars; inspect_memory returns it whole."
+                        "Cut each capture or agent memory's content to this length. A cut "
+                        "record has content_truncated and content_chars; inspect_memory "
+                        "returns it whole. Signals are not cut."
                     ),
                 },
                 "task_id": {

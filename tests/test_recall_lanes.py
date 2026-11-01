@@ -6,6 +6,7 @@ decayed library records drop out; the record's lane (not the vector's) wins.
 """
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,7 +19,13 @@ from app.core.tenancy.backends.sqlite_vector_store import SqliteVectorStore
 from app.database import Base
 from app.models.captured_memory import CapturedMemory
 from app.services.memory_capture import capture_memory
-from app.services.memory_recall import RecallRequest, recall
+from app.services.memory_recall import (
+    RecallRequest,
+    _fit_content,
+    _published_at,
+    _published_since,
+    recall,
+)
 from app.services.signal_retrieval import index_capture
 
 
@@ -292,3 +299,36 @@ async def test_published_after_is_event_time_and_excludes_undated_library(store,
 def test_published_after_must_be_a_date():
     with pytest.raises(ValidationError):
         RecallRequest(query="q", published_after="last week")
+
+
+def _signal(valid_from=None, source_timestamp=None):
+    return SimpleNamespace(
+        valid_from=valid_from, source_timestamp=source_timestamp, created_at="2026-11-01T00:00:00Z"
+    )
+
+
+def test_signal_event_time_is_when_it_became_true_not_when_it_was_written():
+    meta = {"content_type": "signal"}
+    backfilled = _signal(valid_from="2026-03-01T00:00:00Z")
+    assert _published_at(backfilled, meta)[0].startswith("2026-03-01")
+    cutoff = datetime(2026, 10, 1, tzinfo=UTC)
+    assert not _published_since(backfilled, meta, "record", cutoff)
+
+
+def test_library_signal_with_a_known_date_passes_the_cutoff():
+    signal = _signal(source_timestamp="2026-10-20T00:00:00Z")
+    cutoff = datetime(2026, 10, 1, tzinfo=UTC)
+    assert _published_since(signal, {"content_type": "signal"}, "library", cutoff)
+
+
+def test_signal_without_an_event_time_falls_back_to_creation():
+    assert _published_at(_signal(), {"content_type": "signal"}) == (
+        "2026-11-01T00:00:00Z", "fallback_now",
+    )
+
+
+def test_length_cap_leaves_signals_whole_but_include_content_false_does_not():
+    shape = {"record_kind": "signal", "content": "s" * 500}
+    assert _fit_content(shape, RecallRequest(query="q", max_content_chars=100)) == shape
+    hidden = _fit_content(shape, RecallRequest(query="q", include_content=False))
+    assert hidden["content"] is None and hidden["content_chars"] == 500

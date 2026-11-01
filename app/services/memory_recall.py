@@ -36,7 +36,12 @@ from app.services.signal_retrieval import (
 from app.services.signal_retrieval import (
     recency_weight as _recency_weight_fn,
 )
-from app.utils.event_time import TIME_SOURCE_FALLBACK, TIME_SOURCE_UNRECORDED, to_utc
+from app.utils.event_time import (
+    TIME_SOURCE_FALLBACK,
+    TIME_SOURCE_UNRECORDED,
+    signal_event_time,
+    to_utc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +258,10 @@ def _published_at(record: Any, meta: dict) -> tuple[str | None, str]:
     source_date = getattr(record, "source_date", None)
     if source_date:
         return source_date, getattr(record, "time_source", None) or TIME_SOURCE_UNRECORDED
+    if meta.get("content_type") == "signal":
+        occurred = signal_event_time(record)
+        if occurred is not None:
+            return occurred.isoformat(), TIME_SOURCE_UNRECORDED
     return getattr(record, "created_at", None) or meta.get("created_at"), TIME_SOURCE_FALLBACK
 
 
@@ -269,9 +278,13 @@ def _published_since(record: Any, meta: dict, lane: str, cutoff: datetime) -> bo
 
 def _fit_content(shape: dict, request: RecallRequest) -> dict:
     """Apply the response's content budget. A cut says so, with the full
-    length, so a caller knows to fetch the record with ``inspect_memory``."""
+    length, so a caller knows to fetch the record with ``inspect_memory``.
+    Signals are short and ``inspect_memory`` cannot return them, so the length
+    cap leaves them whole; ``include_content=False`` is the caller's explicit ask."""
     content = shape.get("content")
     if not content:
+        return shape
+    if request.include_content and shape.get("record_kind") == "signal":
         return shape
     if request.include_content and (
         request.max_content_chars is None or len(content) <= request.max_content_chars
