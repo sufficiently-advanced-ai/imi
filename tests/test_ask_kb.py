@@ -155,3 +155,86 @@ async def test_agent_sdk_loop_is_locked_to_the_given_tools(monkeypatch):
     # No ResultMessage arrived, so this is not an answer.
     assert result["stopped_reason"] == "error"
     assert result["answer"] == "Done."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_steps", [0, -1])
+@pytest.mark.parametrize("is_agent_sdk", [True, False])
+async def test_nonpositive_budget_runs_nothing(use_client, monkeypatch, max_steps, is_agent_sdk):
+    client = use_client(_client(is_agent_sdk=is_agent_sdk))
+    sdk_loop = AsyncMock()
+    monkeypatch.setattr(ask_kb_module, "_run_agent_sdk_loop", sdk_loop)
+
+    result = await ask_kb("anything", max_steps=max_steps)
+
+    assert result["stopped_reason"] == "error"
+    assert result["steps_used"] == 0
+    assert "max_steps" in result["error"]
+    assert sdk_loop.await_count == 0
+    assert client.generate_message.await_count == 0
+
+
+async def _run_sdk_loop_with_result(monkeypatch, **result_fields):
+    """Run the SDK loop against a fake client ending in a real ResultMessage."""
+    claude_agent_sdk = pytest.importorskip("claude_agent_sdk")
+    final = claude_agent_sdk.ResultMessage(
+        duration_ms=1, duration_api_ms=1, session_id="s", **result_fields
+    )
+
+    class FakeSDKClient:
+        def __init__(self, options):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def query(self, prompt):
+            pass
+
+        async def receive_response(self):
+            yield claude_agent_sdk.AssistantMessage(
+                content=[claude_agent_sdk.TextBlock(text="Narration.")], model="m"
+            )
+            yield final
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeSDKClient)
+    return await ask_kb_module._run_agent_sdk_loop("q", [], {}, "m", 3)
+
+
+@pytest.mark.asyncio
+async def test_agent_sdk_loop_reports_the_final_result(monkeypatch):
+    result = await _run_sdk_loop_with_result(
+        monkeypatch, subtype="success", is_error=False, num_turns=2, result="Final answer."
+    )
+
+    assert result == {
+        "answer": "Final answer.",
+        "trace": [],
+        "steps_used": 2,
+        "stopped_reason": "answered",
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_sdk_loop_reports_max_turns_as_max_steps(monkeypatch):
+    # The CLI can count past the cap, and flags this result as an error.
+    result = await _run_sdk_loop_with_result(
+        monkeypatch, subtype="error_max_turns", is_error=True, num_turns=4
+    )
+
+    assert result["stopped_reason"] == "max_steps"
+    assert result["steps_used"] == 3
+    assert result["answer"] == "Narration."
+
+
+@pytest.mark.asyncio
+async def test_agent_sdk_loop_reports_an_error_result(monkeypatch):
+    result = await _run_sdk_loop_with_result(
+        monkeypatch, subtype="success", is_error=True, num_turns=1, result="Invalid API key"
+    )
+
+    assert result["stopped_reason"] == "error"
+    assert "Invalid API key" in result["error"]

@@ -280,6 +280,10 @@ async def ask_kb(
 
     if not intent or not intent.strip():
         return _error_result("intent must be a non-empty string")
+    # Checked before routing: the Agent SDK drops a falsy max_turns, so 0 would
+    # run with no turn limit at all.
+    if max_steps < 1:
+        return _error_result(f"max_steps must be at least 1, got {max_steps}")
 
     tools = _build_anthropic_tools(read_only=not allow_mutations)
     dispatcher = _make_tool_dispatcher(actor)
