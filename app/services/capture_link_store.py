@@ -96,6 +96,11 @@ class CaptureLinkFile(BaseModel):
     # A storyline-only backfill offers each capture only the storylines it has
     # not been judged against; a revert drops the run's entries.
     storylines_checked: dict[str, str] = Field(default_factory=dict)
+    # A record claim a later capture supersedes (ADR-012): superseding capture
+    # id -> the run that saw it. The linker's links stay in the file but are
+    # not projected, so stale state does not stand as evidence; a revert drops
+    # the run's entries.
+    superseded_by: dict[str, str] = Field(default_factory=dict)
 
     def owner_links(self) -> list[CaptureLink]:
         return [link for link in self.links if link.created_by == OWNER]
@@ -117,7 +122,7 @@ class CaptureLinkFile(BaseModel):
         return self.mode != "shadow" or bool(self.owner_links())
 
     def graph_links(self) -> list[CaptureLink]:
-        if self.mode == "shadow":
+        if self.mode == "shadow" or self.superseded_by:
             return self.owner_links()
         return list(self.links)
 

@@ -20,6 +20,10 @@ default; a config typo never breaks intake or a link run.
           min_captures: 3
           min_sources: 2
           window_days: 30
+        record_sources: []     # record-lane capture sources linked to seeded
+                               # items only (ADR-012), e.g. [changes]
+        record_storyline_min_confidence:   # storyline bar for those items
+                                           # (default: storyline_min_confidence)
 """
 
 from __future__ import annotations
@@ -61,6 +65,14 @@ class LinkingPolicy:
     # Storylines take a higher bar than topics (a link is evidence for a thesis).
     storyline_min_confidence: float = 0.75
     max_advances: int = 2  # storylines per capture
+    # Record-lane capture sources the LINK phase also links, to seeded items
+    # only: no mentions, no entity creation, no corroboration (ADR-012).
+    record_sources: tuple[str, ...] = ()
+    # Storyline bar for those record items. The owner's own work log is
+    # first-hand, so the model's confidence there is relevance only, and a
+    # single work item rarely bears on a thesis as strongly as a news report.
+    # Defaults to storyline_min_confidence.
+    record_storyline_min_confidence: float | None = None
 
     def role_type(self, role: str, domain_types: set[str] | None) -> str | None:
         """The active domain's type for ``role`` (case-insensitive), or None
@@ -154,6 +166,28 @@ def parse_linking_policy(config: dict[str, Any]) -> LinkingPolicy:
         window_days=_positive_int(raw_corr, "window_days", Corroboration.window_days, corr_where),
     )
 
+    record_floor = linking.get("record_storyline_min_confidence")
+    if record_floor is not None and not (
+        isinstance(record_floor, int | float)
+        and not isinstance(record_floor, bool)
+        and 0.0 <= record_floor <= 1.0
+    ):
+        _warn("%s.record_storyline_min_confidence must be a number from 0 to 1 (got %r)", where, record_floor)
+        record_floor = None
+
+    raw_record = linking.get("record_sources") or []
+    if isinstance(raw_record, str):
+        raw_record = [raw_record]
+    record_sources: list[str] = []
+    if isinstance(raw_record, list):
+        for value in raw_record:
+            if isinstance(value, str) and value.strip():
+                record_sources.append(value.strip())
+            else:
+                _warn("%s.record_sources entries must be source names (got %r)", where, value)
+    else:
+        _warn("%s.record_sources must be a list of source names (got %r)", where, raw_record)
+
     return LinkingPolicy(
         mode=mode,
         batch_size=_positive_int(linking, "batch_size", default.batch_size, where),
@@ -163,6 +197,8 @@ def parse_linking_policy(config: dict[str, Any]) -> LinkingPolicy:
         corroboration=corroboration,
         storyline_min_confidence=float(storyline_floor),
         max_advances=_positive_int(linking, "max_advances", default.max_advances, where),
+        record_sources=tuple(dict.fromkeys(record_sources)),
+        record_storyline_min_confidence=None if record_floor is None else float(record_floor),
     )
 
 

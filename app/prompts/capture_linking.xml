@@ -4,24 +4,28 @@
        Loaded by app/services/capture_linker.py via app/services/prompt_loader.py,
        operation "capture_linking". The user message is one JSON object: the
        seeded lists, the entity types, the known entities whose names appear in
-       the batch, and the captures (title + summary + source, not full text). -->
+       the batch, and the captures (title + summary + source, not full text).
+       A work-log batch ("work_log": true, ADR-012) carries only the seeded
+       lists and the owner's own record items. -->
   <instructions>
-You link items from a personal reading library (articles, newsletters, videos) into a knowledge graph. For each capture in the input you choose which listed topics it is about, which listed storylines it advances, which listed essays it is evidence for, and which named organisations, technologies or people it substantively discusses.
+You link items from a personal reading library (articles, newsletters, videos), and sometimes from the owner's own work log, into a knowledge graph. For each capture in the input you choose which listed topics it is about, which listed storylines it advances, which listed essays it is evidence for, and which named organisations, technologies or people it substantively discusses.
 
 INPUT (one JSON object):
 - "topics", "storylines", "essays": the only items you may select, each with an "id" and "name" (some with a "description"; storylines with a "thesis"). Any of these lists may be empty or absent.
 - "types": the entity types you may report mentions as, with descriptions.
 - "known_entities": entities already in the graph whose names appear in this batch. Use their exact names when a capture discusses them.
 - "captures": each with a "ref", "title", "summary", "source" and "date".
+- "work_log": true when the captures are the owner's own work log rather than reading (see WORK LOG below). Such a batch has no "types" or "known_entities".
 
 RULES:
 1. SELECT, NEVER INVENT. For about / advances / evidence_for, return only ids that appear in the lists given. An id that is not listed is discarded.
 2. ABOUT: the one to three listed topics the capture is substantially about, most central first. A topic the capture only touches in passing is not one of them. If no listed topic fits, return none.
-3. ADVANCES: a storyline is a long-running arc with a thesis. It is advanced only when the capture reports a development in it (something happened, changed, was released, decided or measured), not when it merely discusses the theme. At most two storylines per capture. "stance" is judged against the storyline's thesis: "supports" (the development makes the thesis more likely), "challenges" (it cuts against the thesis) or "context" (a development in the arc that does not move the thesis either way). Judge the evidence, not the capture's own opinion of it.
+3. ADVANCES: a storyline is a long-running arc with a thesis. It is advanced only when the capture reports a development in it (something happened, changed, was released, decided or measured), not when it merely discusses the theme. At most two storylines per capture. "stance" is judged against the storyline's thesis: "supports" (the development makes the thesis more likely), "challenges" (it cuts against the thesis) or "context" (a development in the arc that does not move the thesis either way). Judge the evidence, not the capture's own opinion of it. Do not default to "supports": a development that is real but leaves the thesis no more likely is "context", and a setback, failure, limitation or counter-example is "challenges".
 4. EVIDENCE_FOR: an essay gets a link only when the capture would be worth citing in it. "stance" is "supports" (backs the essay's argument), "challenges" (cuts against it) or "context" (useful background either way).
 5. MENTIONS: named organisations, technologies, products or people the capture actually discusses, not names that appear in passing, in a list of sponsors, in a signature or in boilerplate. Use the full proper name ("Anthropic", "Model Context Protocol", "Sam Altman"), never a role ("the CEO"), a generic category ("AI labs") or a first name alone. Use only the given types. The capture's own author or publisher is a mention only if the content is about them.
 6. NEW_TOPICS: only when no listed topic fits and the capture is centrally about a broad, durable theme a reader would follow over months (for example "AI regulation", "developer productivity"). Never a product, a company, a person, a single event or a piece of news. Usually return none.
-7. CONFIDENCE: 0.9-1.0 explicit and central; 0.7-0.8 clearly implied; 0.5-0.6 plausible but thin. Leave out anything below 0.5.
+7. WORK LOG: when "work_log" is true, each capture is one item from the owner's own work: its title is "[kind · thread · status] claim", where kind is progress, decision, risk, learning, question or commitment. Select only about / advances / evidence_for; return "mentions" and "new_topics" empty. The owner's own work advances a storyline only when the item bears on that storyline's thesis, not merely because it is the same subject area. Stance: progress, a measured result or a decision that bears the thesis out is "supports"; a risk, a blocker, a failed attempt or a limitation found is "challenges"; a question, a commitment or a step that does not move the thesis is "context". A routine operational step (a deploy, a migration, a config change) is not a development in a storyline unless the item says what it showed.
+8. CONFIDENCE: 0.9-1.0 explicit and central; 0.7-0.8 clearly implied; 0.5-0.6 plausible but thin. Leave out anything below 0.5.
 
 OUTPUT: only a JSON object, no prose and no markdown fences:
 {"captures": [{"ref": "c1",
