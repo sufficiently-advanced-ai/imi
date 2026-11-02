@@ -14,6 +14,14 @@ A seed file is a YAML list (or a mapping holding one list), one item per seed:
       aliases: [agentic AI, ai-agents]
       description: Autonomous systems that plan and act with tools.
 
+Some roles carry more fields (``ROLE_FIELDS``). A storyline seed may set
+``thesis`` and ``stakes`` (the file owns them: synced every run),
+``would_change`` and ``open_question`` (seeded only while the node's field is
+empty; the storyline reviewer owns them after that) and ``status: closed``
+(the owner's close; removing it reopens). A seeded storyline starts
+``active``; an agent-proposed one (``status: proposed``) listed in the file is
+adopted: canonical and active. See ``app/services/storylines.py``.
+
 Sync is idempotent and runs at the start of every link run. A seed that
 disappears from its file is marked ``seed_status: retired``: no longer offered
 to the model, its links kept. A missing file changes nothing.
@@ -40,12 +48,21 @@ RETIRED = "retired"
 _DESCRIPTION_CHARS = 300
 
 
+# Role-specific seed fields. owned: synced from the file every run.
+# if_absent: written on create, or while the node's field is empty.
+ROLE_FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
+    "storyline": {"owned": ("thesis", "stakes"), "if_absent": ("would_change", "open_question")},
+}
+
+
 @dataclass
 class Seed:
     name: str
     entity_id: str
     aliases: list[str] = field(default_factory=list)
     description: str | None = None
+    fields: dict[str, Any] = field(default_factory=dict)
+    status: str | None = None
 
 
 @dataclass
@@ -54,16 +71,46 @@ class SeedSyncResult:
     updated: list[str] = field(default_factory=list)
     retired: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Repo-relative files the sync wrote outside the graph mutation layer
+    # (storyline history); the caller commits them. Not part of as_dict.
+    paths: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, list[str]]:
-        return {k: v for k, v in self.__dict__.items() if v}
+        return {k: v for k, v in self.__dict__.items() if v and k != "paths"}
 
 
 def seed_path(repo_root: Path, role: str) -> Path:
     return Path(repo_root) / SEEDS_DIR / f"{role}.yaml"
 
 
-def parse_seed_file(text: str, entity_type: str) -> list[Seed]:
+def _role_fields(role: str | None, entity_type: str, item: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """(role-specific fields, status) of one seed item; bad values are skipped
+    with a warning so one typo never drops the seed."""
+    spec = ROLE_FIELDS.get(role or "")
+    if not spec:
+        return {}, None
+    from app.services import storylines
+
+    out: dict[str, Any] = {}
+    for name in (*spec["owned"], *spec["if_absent"]):
+        if item.get(name) is None:
+            continue
+        try:
+            value = (storylines.clean_stakes(item[name]) if name == "stakes"
+                     else storylines.clean_text(name, item[name]))
+        except storylines.StorylineError as e:
+            logger.warning("[SEEDS] %s seed %r: %s", entity_type, item.get("name"), e)
+            continue
+        if value:
+            out[name] = value
+    status = item.get("status")
+    if status is not None and status != "closed":
+        logger.warning("[SEEDS] %s seed %r: only `status: closed` is read from a seed file",
+                       entity_type, item.get("name"))
+    return out, "closed" if status == "closed" else None
+
+
+def parse_seed_file(text: str, entity_type: str, role: str | None = None) -> list[Seed]:
     """Seeds from one file's YAML text. Malformed items are skipped with a
     warning; a file that is not a list (or a mapping holding one) yields none."""
     data = yaml.safe_load(text) or []
@@ -96,6 +143,7 @@ def parse_seed_file(text: str, entity_type: str) -> list[Seed]:
         if isinstance(aliases, str):
             aliases = [aliases]
         description = item.get("description")
+        fields, status = _role_fields(role, entity_type, item)
         seeds[entity_id] = Seed(
             name=name,
             entity_id=entity_id,
@@ -103,6 +151,8 @@ def parse_seed_file(text: str, entity_type: str) -> list[Seed]:
             description=description.strip()[:_DESCRIPTION_CHARS]
             if isinstance(description, str) and description.strip()
             else None,
+            fields=fields,
+            status=status,
         )
     return list(seeds.values())
 
@@ -113,7 +163,7 @@ def load_seeds(repo_root: Path, role: str, entity_type: str) -> list[Seed] | Non
     if not path.is_file():
         return None
     try:
-        return parse_seed_file(path.read_text(encoding="utf-8"), entity_type)
+        return parse_seed_file(path.read_text(encoding="utf-8"), entity_type, role)
     except (OSError, yaml.YAMLError) as e:
         logger.warning("[SEEDS] Could not read %s: %s", path, e)
         return None
@@ -132,6 +182,8 @@ def offered(kg: Any, entity_type: str) -> list[dict[str, Any]]:
         metadata = getattr(node, "metadata", None) or {}
         if metadata.get("seed_status") == RETIRED or metadata.get("stub"):
             continue
+        if metadata.get("status") == "closed":
+            continue  # a closed storyline takes no new evidence
         entry = {"id": node.id, "name": node.name}
         description = metadata.get("description")
         if isinstance(description, str) and description.strip():
@@ -148,6 +200,61 @@ def _candidate(node: Any) -> dict[str, Any]:
     if isinstance(aliases, str):
         aliases = [aliases]
     return {"id": node.id, "name": node.name, "aliases": aliases}
+
+
+def _field_changes(role: str, metadata: dict[str, Any], seed: Seed) -> dict[str, Any]:
+    """Role fields the sync writes onto an existing node: owned fields when
+    they differ, if-absent fields only while the node's value is empty."""
+    spec = ROLE_FIELDS.get(role)
+    if not spec:
+        return {}
+    changes: dict[str, Any] = {}
+    for name, value in seed.fields.items():
+        current = metadata.get(name)
+        if name in spec["owned"] and value != current:
+            changes[name] = value
+        elif name in spec["if_absent"] and current in (None, "", []):
+            changes[name] = value
+    return changes
+
+
+def _seed_status(role: str, metadata: dict[str, Any], seed: Seed) -> tuple[dict[str, Any], str] | None:
+    """(status changes, reason) the seed file implies for a storyline, or None.
+
+    New seed: active (closed if the file says so). Listed agent proposal:
+    adopted, active. ``status: closed`` closes; removing it reopens a storyline
+    the file closed. Other statuses (dormant, the lifecycle's) are left alone."""
+    if role != "storyline":
+        return None
+    from datetime import UTC, datetime
+
+    current = metadata.get("status")
+    now = datetime.now(UTC).isoformat()
+    stamp = {"status_changed_at": now, "status_changed_by": "seed_sync"}
+    if seed.status == "closed":
+        if current == "closed":
+            return None
+        return {"status": "closed", "closed_by": "seed", **stamp}, "closed in the seed file"
+    if current is None and not metadata:
+        return {"status": "active", **stamp}, "seeded"
+    if current in (None, "", "proposed"):
+        return {"status": "active", **stamp}, "listed in the seed file"
+    if current == "closed" and metadata.get("closed_by") == "seed":
+        return {"status": "active", "closed_by": None, **stamp}, "reopened in the seed file"
+    return None
+
+
+def _log_status(repo_root: Path, result: SeedSyncResult, entity_id: str, status_from: str | None,
+                status_to: str, reason: str) -> None:
+    from app.services.storylines import append_history
+
+    try:
+        result.paths.append(append_history(repo_root, entity_id, {
+            "event": "status", "actor": "seed_sync", "status_from": status_from,
+            "status_to": status_to, "reason": reason,
+        }))
+    except OSError as e:
+        logger.warning("[SEEDS] storyline history for %s not written: %s", entity_id, e)
 
 
 async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_type: str) -> SeedSyncResult:
@@ -173,6 +280,7 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
                 node = existing.get(hit.id)
         try:
             if node is None:
+                status = _seed_status(role, {}, seed)
                 await writer.create(
                     entity_type,
                     seed.name,
@@ -182,14 +290,21 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
                         "seed_file": seed_file,
                         "created_by": "seed_sync",
                         **({"description": seed.description} if seed.description else {}),
+                        **seed.fields,
+                        **(status[0] if status else {}),
                     },
                     aliases=seed.aliases,
                 )
                 result.created.append(seed.entity_id)
+                if status:
+                    _log_status(repo_root, result, seed.entity_id, None, status[0]["status"], status[1])
                 continue
             matched.add(node.id)
             metadata = getattr(node, "metadata", None) or {}
-            changes: dict[str, Any] = {}
+            changes: dict[str, Any] = _field_changes(role, metadata, seed)
+            status = _seed_status(role, metadata, seed)
+            if status:
+                changes.update(status[0])
             if metadata.get("seed_status") != CANONICAL:
                 changes["seed_status"] = CANONICAL
                 changes["seed_file"] = seed_file
@@ -203,6 +318,9 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
             if changes:
                 await writer.update(node.id, changes)
                 result.updated.append(node.id)
+                if status:
+                    _log_status(repo_root, result, node.id, metadata.get("status"),
+                                status[0]["status"], status[1])
         except Exception as e:  # one bad seed never stops the sync
             logger.warning("[SEEDS] %s seed %r failed: %s", role, seed.name, e)
             result.errors.append(f"{seed.entity_id}: {e}")

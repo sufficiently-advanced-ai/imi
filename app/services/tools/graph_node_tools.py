@@ -288,6 +288,26 @@ async def _update_source_file(
         return {"file_updated": False, "reason": f"error: {e}"}
 
 
+def _storyline_add_properties(entity_type: str, properties: dict) -> dict:
+    """A storyline added through the generic tool: server-owned fields are
+    refused, and it starts ``proposed`` like an agent proposal."""
+    from app.services import storylines
+
+    graph = _get_graph_service()
+    storylines.guard_client_properties(graph, entity_type, properties)
+    if entity_type == storylines.storyline_type(graph):
+        return {**properties, "status": "proposed"}
+    return properties
+
+
+def _guard_storyline_update(graph, entity_id: str, properties: dict) -> None:
+    from app.services import storylines
+
+    node = (getattr(graph, "nodes", None) or {}).get(entity_id)
+    if node is not None:
+        storylines.guard_client_properties(graph, getattr(node, "type", None), properties)
+
+
 class AddNodeTool(AgentTool):
     """Add a new entity node to the knowledge graph."""
 
@@ -349,6 +369,7 @@ class AddNodeTool(AgentTool):
             entity_type = inputs["entity_type"]
             name = inputs["name"]
             properties = inputs.get("properties") or {}
+            properties = _storyline_add_properties(entity_type, properties)
 
             # Phase E2: create the markdown source file FIRST (so the entity
             # has a discoverable file path), then create the Neo4j node.
@@ -464,6 +485,7 @@ class UpdateNodeTool(AgentTool):
             properties = inputs["properties"]
 
             graph = _get_graph_service()
+            _guard_storyline_update(graph, entity_id, properties)
 
             # Phase E2: update the markdown source file's frontmatter
             # BEFORE the Neo4j update so the file mutation gets the

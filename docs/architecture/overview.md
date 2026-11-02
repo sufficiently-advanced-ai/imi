@@ -38,7 +38,7 @@ UI) and agents (MCP) in real time.
      (SQLite vectors by default).
    Library captures join the graph in batches through the LINK phase.
    → [Entities & Graph](entities-and-graph.md) · [Memory & Vectors](memory.md) ·
-   [Capture Linking](capture-linking.md)
+   [Capture Linking](capture-linking.md) · [Storylines](storylines.md)
 
 5. **Everything is queryable** over MCP (~30 tools: search, traversal, Cypher, signals,
    memory recall/writeback, graph mutations) and REST. Governance is enforced at this

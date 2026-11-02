@@ -1295,6 +1295,119 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "required": ["intent"],
         },
     },
+    # --- Storylines (seeded storyline role; app/services/storylines.py) ---
+    "list_storylines": {
+        "name": "list_storylines",
+        "description": (
+            "List the storylines being tracked: long-running arcs with a thesis, a current state, "
+            "a direction and a confidence, each with evidence counts for the last `window_days` "
+            "and the window before (by evidence occurred_at). Ordered by recent evidence. "
+            "Use get_storyline for one storyline's evidence and past state; "
+            "list_entity_activity for the same counts over topics or technologies."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["proposed", "active", "dormant", "closed"],
+                    "description": "Only storylines in this status (default: all but retired)",
+                },
+                "window_days": {
+                    "type": "integer", "default": 14, "minimum": 1, "maximum": 365,
+                    "description": "Days per evidence-count window",
+                },
+            },
+        },
+    },
+    "get_storyline": {
+        "name": "get_storyline",
+        "description": (
+            "One storyline: thesis, state, direction, confidence, would_change, open_question, "
+            "status, evidence counts, and its evidence (capture documents that advance it, with "
+            "stance supports / challenges / context), newest first by occurred_at. Filter evidence "
+            "with date_from / date_to / stance. Pass `timestamp` to also get the review fields as "
+            "they stood at that time (from the storyline's version history)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "Storyline id, e.g. storyline-local-open-models"},
+                "date_from": {"type": "string", "description": "ISO-8601; evidence on or after (occurred_at)"},
+                "date_to": {"type": "string", "description": "ISO-8601; evidence before (occurred_at)"},
+                "stance": {"type": "string", "enum": ["supports", "challenges", "context"]},
+                "timestamp": {"type": "string", "description": "ISO-8601; include the state as of then"},
+                "max_results": {
+                    "type": "integer", "default": 20, "minimum": 0, "maximum": 200,
+                    "description": "Evidence items to return (0 for none)",
+                },
+            },
+            "required": ["entity_id"],
+        },
+    },
+    "update_storyline": {
+        "name": "update_storyline",
+        "description": (
+            "Write a storyline review: any of state (the current-state paragraph), direction "
+            "(strengthening / steady / fading / resolved), confidence (low / med / high), "
+            "would_change, open_question. Each write is kept as a dated version (see get_storyline "
+            "with timestamp). Status is not writable: the server sets it from evidence and the "
+            "seed file. A closed storyline refuses updates."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "Storyline id"},
+                "state": {"type": "string", "description": "Current state, one paragraph"},
+                "direction": {"type": "string", "enum": ["strengthening", "steady", "fading", "resolved"]},
+                "confidence": {"type": "string", "enum": ["low", "med", "high"]},
+                "would_change": {"type": "string", "description": "Evidence that would flip the thesis"},
+                "open_question": {"type": "string"},
+            },
+            "required": ["entity_id"],
+        },
+    },
+    "propose_storyline": {
+        "name": "propose_storyline",
+        "description": (
+            "Propose a new storyline to track. It is created provisional, in status `proposed`; "
+            "the server makes it active once evidence accrues, or the owner adopts it by adding it "
+            "to seeds/storyline.yaml. Idempotent on the name: proposing an existing storyline "
+            "returns it unchanged with created=false."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short name of the arc"},
+                "thesis": {"type": "string", "description": "One-line falsifiable claim"},
+                "description": {"type": "string", "description": "What counts as evidence (shown to the linker, 300 chars)"},
+                "open_question": {"type": "string"},
+                "would_change": {"type": "string"},
+                "stakes": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["practice", "build", "writing", "learning"]},
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    "list_entity_activity": {
+        "name": "list_entity_activity",
+        "description": (
+            "Evidence counts per entity of one type: documents in the last `window_days` vs the "
+            "window before, by occurred_at. Topics count ABOUT links, storylines ADVANCES links, "
+            "every other type MENTIONED_IN. Use it to spot rising or fading themes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "description": "e.g. topic, technology, organization, storyline"},
+                "window_days": {"type": "integer", "default": 14, "minimum": 1, "maximum": 365},
+                "max_results": {"type": "integer", "default": 50, "minimum": 1, "maximum": 1000},
+            },
+            "required": ["entity_type"],
+        },
+    },
 }
 
 

@@ -25,7 +25,8 @@ Tool names should follow this verb pattern. Pick the verb that matches what the 
 | `extract_*` | AI-driven extraction from raw text | `extract_entities`, `extract_decisions`, `extract_patterns`, `extract_risks` |
 | `query_*` | Arbitrary expression languages (Cypher) | `query_graph_cypher` |
 | `graph_add_*` / `graph_update_*` / `graph_delete_*` / `graph_merge_*` | Graph node/edge mutations | `graph_add_node`, `graph_delete_edge`, etc. |
-| `update_*` / `delete_*` | Domain-object mutations (signals) | `update_signal`, `delete_signal` |
+| `update_*` / `delete_*` | Domain-object mutations (signals, storylines) | `update_signal`, `delete_signal`, `update_storyline` |
+| `propose_*` | Create a provisional domain object whose status the server governs | `propose_storyline` |
 
 **Avoid**: noun-prefixed names (`decision_influence`, `decision_stats`) and one-off verbs (`trace_*`, `decision_*`). `temporal_blast_radius` is retained as an approved exception — the metaphor is load-bearing for callers (it describes a specific impact-propagation analysis rather than a graph traversal), so renaming it would lose meaning.
 

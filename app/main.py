@@ -161,6 +161,11 @@ def _configure(app: "FastAPI") -> None:
 
     app.include_router(captures_router, tags=["captures"])
 
+    # Storylines and per-entity activity (seeded storyline role, ADR-011)
+    from .routes.storylines import router as storylines_router
+
+    app.include_router(storylines_router, tags=["storylines"])
+
     # Register agent-memory + unified review queue routes (OB1 absorption Phase 2)
     from .routes.agent_memory import router as agent_memory_router
     from .routes.memories_review import router as memories_review_router
