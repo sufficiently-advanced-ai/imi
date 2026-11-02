@@ -58,6 +58,9 @@ class LinkingPolicy:
     min_confidence: float = 0.6
     roles: dict[str, str | None] = field(default_factory=lambda: dict(DEFAULT_ROLES))
     corroboration: Corroboration = Corroboration()
+    # Storylines take a higher bar than topics (a link is evidence for a thesis).
+    storyline_min_confidence: float = 0.75
+    max_advances: int = 2  # storylines per capture
 
     def role_type(self, role: str, domain_types: set[str] | None) -> str | None:
         """The active domain's type for ``role`` (case-insensitive), or None
@@ -131,6 +134,15 @@ def parse_linking_policy(config: dict[str, Any]) -> LinkingPolicy:
         else:
             _warn("%s.roles must be a mapping (got %r)", where, raw_roles)
 
+    storyline_floor = linking.get("storyline_min_confidence", default.storyline_min_confidence)
+    if not (
+        isinstance(storyline_floor, int | float)
+        and not isinstance(storyline_floor, bool)
+        and 0.0 <= storyline_floor <= 1.0
+    ):
+        _warn("%s.storyline_min_confidence must be a number from 0 to 1 (got %r)", where, storyline_floor)
+        storyline_floor = default.storyline_min_confidence
+
     raw_corr = linking.get("corroboration") or {}
     if not isinstance(raw_corr, dict):
         _warn("%s.corroboration must be a mapping (got %r)", where, raw_corr)
@@ -149,6 +161,8 @@ def parse_linking_policy(config: dict[str, Any]) -> LinkingPolicy:
         min_confidence=float(confidence),
         roles=roles,
         corroboration=corroboration,
+        storyline_min_confidence=float(storyline_floor),
+        max_advances=_positive_int(linking, "max_advances", default.max_advances, where),
     )
 
 

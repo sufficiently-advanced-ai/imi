@@ -85,6 +85,8 @@ library:
     batch_size: 10                # captures per capture_linking call
     concurrency: 2                # calls in flight per run
     min_confidence: 0.6           # model confidence needed to keep a link
+    storyline_min_confidence: 0.75  # higher bar for ADVANCES (evidence for a thesis)
+    max_advances: 2               # storylines per capture
     roles:                        # domain type per role; null disables the role
       source: source
       topic: topic

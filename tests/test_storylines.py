@@ -258,3 +258,55 @@ async def test_mcp_update_refuses_status(monkeypatch, kg):
     out = await mcp_server._storyline_tool(
         "update_storyline", {"entity_id": "storyline-arc", "status": "active"}, "mcp:x")
     assert "set by the server only" in out[0].text
+
+
+# --- lifecycle --------------------------------------------------------------------
+
+
+def test_lifecycle_rules():
+    now = datetime(2026, 11, 2, tzinfo=UTC)
+    old = (now - timedelta(days=40)).isoformat()
+    new = (now - timedelta(days=3)).isoformat()
+    rule = storylines.lifecycle_transition
+    assert rule("proposed", 5, 5, old, now)[0] == "active"
+    assert rule("proposed", 4, 9, old, now) is None
+    assert rule(None, 5, 5, old, now)[0] == "active"          # no status counts as proposed
+    assert rule("active", 0, 0, old, now)[0] == "dormant"
+    assert rule("active", 0, 0, new, now) is None             # grace period after a change
+    assert rule("active", 0, 1, old, now) is None
+    assert rule("dormant", 0, 1, old, now)[0] == "active"
+    assert rule("closed", 9, 9, old, now) is None
+
+
+class _LifecycleNeo4j:
+    def __init__(self, rows):
+        self.rows, self.params = rows, None
+
+    async def execute_read(self, query, params):
+        self.params = params
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_apply_and_revert_lifecycle(tmp_path, kg):
+    old = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    kg.nodes["storyline-a"] = _Node(id="storyline-a", name="A", type="storyline",
+                                    metadata={"status": "proposed"})
+    kg.nodes["storyline-b"] = _Node(id="storyline-b", name="B", type="storyline",
+                                    metadata={"status": "active", "status_changed_at": old})
+    kg.neo4j = _LifecycleNeo4j([
+        {"id": "storyline-a", "status": "proposed", "changed_at": old, "promote": 6, "dormant": 6},
+        {"id": "storyline-b", "status": "active", "changed_at": old, "promote": 0, "dormant": 0},
+    ])
+    rows, paths = await storylines.apply_lifecycle(kg, kg.writer, tmp_path, "link-1")
+    assert [(r["entity_id"], r["status_from"], r["status_to"]) for r in rows] == [
+        ("storyline-a", "proposed", "active"), ("storyline-b", "active", "dormant")]
+    assert kg.nodes["storyline-a"].metadata["status"] == "active"
+    assert isinstance(kg.neo4j.params["now"], datetime)  # typed parameters (ADR-004)
+    assert len(paths) == 2 and kg.git_ops.commits == []  # the run commits them
+
+    await storylines.revert_lifecycle(kg, kg.writer, tmp_path, "link-1", rows)
+    assert kg.nodes["storyline-a"].metadata["status"] == "proposed"
+    assert kg.nodes["storyline-b"].metadata["status"] == "active"
+    last = storylines.read_history(tmp_path, "storyline-a")[-1]
+    assert last["actor"] == "revert" and last["status_to"] == "proposed"

@@ -92,6 +92,10 @@ class CaptureLinkFile(BaseModel):
     links: list[CaptureLink] = Field(default_factory=list)
     unresolved: list[UnresolvedName] = Field(default_factory=list)
     reverted_runs: list[str] = Field(default_factory=list)
+    # Storylines this capture has been judged against: storyline id -> run id.
+    # A storyline-only backfill offers each capture only the storylines it has
+    # not been judged against; a revert drops the run's entries.
+    storylines_checked: dict[str, str] = Field(default_factory=dict)
 
     def owner_links(self) -> list[CaptureLink]:
         return [link for link in self.links if link.created_by == OWNER]

@@ -45,7 +45,7 @@ REVIEW_FIELDS = ("state", "direction", "confidence", "would_change", "open_quest
 # Set by the server only; rejected from every client write.
 SERVER_FIELDS = frozenset({
     "status", "seed_status", "seed_file", "status_changed_at", "status_changed_by",
-    "closed_by", "last_reviewed", "proposed_by",
+    "closed_by", "last_reviewed", "proposed_by", "lifecycle_run_id",
 })
 
 _TEXT_LIMITS = {"thesis": 500, "state": 4000, "would_change": 1000, "open_question": 500,
@@ -538,3 +538,86 @@ async def activity(entity_type: str, window_days: int = 14, *, max_results: int 
             "as_of": windows["end"].isoformat(),
             "items": [{"id": r["id"], "name": r["name"], "recent": r["recent"], "prior": r["prior"]}
                       for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle (server side; runs at the end of every LINK run and backfill)
+# ---------------------------------------------------------------------------
+
+PROMOTE_MIN_EVIDENCE = 5   # proposed -> active: this many ADVANCES ...
+PROMOTE_WINDOW_DAYS = 14   # ... with occurred_at in this window
+DORMANT_AFTER_DAYS = 30    # active -> dormant: no evidence in this window (and
+                           # no status change in it: a new storyline gets a grace period)
+
+
+def lifecycle_transition(status: str | None, recent_promote: int, recent_dormant: int,
+                         status_changed_at: Any, now: datetime) -> tuple[str, str] | None:
+    """(new status, reason) for one storyline, or None. Pure: the rules live here."""
+    current = status or "proposed"  # a storyline made outside the tools has no status
+    if current == "proposed" and recent_promote >= PROMOTE_MIN_EVIDENCE:
+        return "active", f"{recent_promote} evidence links in {PROMOTE_WINDOW_DAYS} days"
+    if current == "active" and recent_dormant == 0:
+        changed = to_utc(status_changed_at)
+        if changed is None or now - changed >= timedelta(days=DORMANT_AFTER_DAYS):
+            return "dormant", f"no evidence in {DORMANT_AFTER_DAYS} days"
+    if current == "dormant" and recent_dormant > 0:
+        return "active", f"new evidence within {DORMANT_AFTER_DAYS} days"
+    return None
+
+
+async def apply_lifecycle(kg: Any, writer: Any, repo_root: Path, run_id: str,
+                          now: datetime | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+    """Apply status transitions to every open storyline.
+
+    Returns (audit rows, history paths to commit). Each row carries
+    ``status_from`` so a revert of the run restores it."""
+    t = storyline_type(kg)
+    neo4j = getattr(kg, "neo4j", None)
+    if not t or neo4j is None:
+        return [], []
+    now = now or datetime.now(UTC)
+    rows = await neo4j.execute_read(
+        f"MATCH (s:{_label(t)}) "
+        "WHERE coalesce(s.status, 'proposed') IN ['proposed', 'active', 'dormant'] "
+        "AND coalesce(s.seed_status, '') <> 'retired' "
+        "OPTIONAL MATCH (d:Document)-[:ADVANCES]->(s) "
+        "WITH s, count(DISTINCT CASE WHEN d.occurred_at >= $promote_start AND d.occurred_at <= $now THEN d END) AS promote, "
+        "count(DISTINCT CASE WHEN d.occurred_at >= $dormant_start AND d.occurred_at <= $now THEN d END) AS dormant "
+        "RETURN s.id AS id, s.status AS status, s.status_changed_at AS changed_at, promote, dormant",
+        {"now": now, "promote_start": now - timedelta(days=PROMOTE_WINDOW_DAYS),
+         "dormant_start": now - timedelta(days=DORMANT_AFTER_DAYS)},
+    )
+    audit, paths = [], []
+    for row in rows:
+        change = lifecycle_transition(row.get("status"), row.get("promote", 0), row.get("dormant", 0),
+                                      row.get("changed_at"), now)
+        if change is None:
+            continue
+        status_to, reason = change
+        try:
+            paths.append(await record_status(kg, writer, repo_root, row["id"], row.get("status"),
+                                             status_to, "lifecycle", reason,
+                                             extra={"lifecycle_run_id": run_id}, commit=False))
+        except Exception as e:  # one storyline never stops the run
+            logger.warning("[STORYLINE] lifecycle %s -> %s failed: %s", row["id"], status_to, e)
+            continue
+        audit.append({"run_id": run_id, "mode": "on", "action": "storyline_status",
+                      "entity_id": row["id"], "status_from": row.get("status"),
+                      "status_to": status_to, "reason": reason})
+    return audit, paths
+
+
+async def revert_lifecycle(kg: Any, writer: Any, repo_root: Path, run_id: str,
+                           rows: list[dict[str, Any]]) -> list[str]:
+    """Undo a run's status transitions (newest first), where the storyline is
+    still in the status the run set. Returns history paths to commit."""
+    nodes = getattr(kg, "nodes", None) or {}
+    paths = []
+    for row in reversed(rows):
+        node = nodes.get(row.get("entity_id"))
+        if node is None or (getattr(node, "metadata", None) or {}).get("status") != row.get("status_to"):
+            continue
+        restore = row.get("status_from") or "proposed"
+        paths.append(await record_status(kg, writer, repo_root, node.id, row.get("status_to"), restore,
+                                         "revert", f"revert {run_id}", commit=False))
+    return paths
