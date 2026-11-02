@@ -253,7 +253,10 @@ async def _update_source_file(
             body = content[end_idx + 5:]
             fm = yaml.safe_load(yaml_block) or {}
             for k, v in props.items():
-                fm[k] = v
+                if v is None:
+                    fm.pop(k, None)  # None clears, as in the graph (update_node)
+                else:
+                    fm[k] = v
             fm["updated_at"] = datetime.now(UTC).isoformat()
             new_yaml = yaml.dump(fm, default_flow_style=False, allow_unicode=True, sort_keys=False)
             return f"---\n{new_yaml}---\n{body}"

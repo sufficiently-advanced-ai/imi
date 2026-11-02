@@ -23,10 +23,11 @@ logger = logging.getLogger(__name__)
 
 def _storyline_server_fields(entity_type: str, new: dict[str, Any], old: dict[str, Any]) -> str | None:
     """Error text when a client edit would change a server-owned storyline
-    field (status, seed status, lifecycle stamps), else None."""
+    field (status, seed status, lifecycle stamps) or a reviewer field (which
+    goes through update_storyline), else None."""
     try:
         from .graph.factory import get_knowledge_graph
-        from .storylines import server_field_changes
+        from .storylines import guarded_field_error, server_field_changes
 
         changed = server_field_changes(get_knowledge_graph(), entity_type, new, old)
     except Exception as e:  # never block an edit on the guard's own failure
@@ -34,8 +35,7 @@ def _storyline_server_fields(entity_type: str, new: dict[str, Any], old: dict[st
         return None
     if not changed:
         return None
-    return (f"{', '.join(changed)} on a storyline is set by the server only "
-            "(lifecycle, seed file); use update_storyline for review fields")
+    return guarded_field_error(changed)
 
 class EntityCrudService:
     """Service for domain-aware entity CRUD operations."""

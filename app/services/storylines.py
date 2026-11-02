@@ -11,7 +11,8 @@ Field ownership — each field has exactly one writer:
   description, thesis, stakes, and ``status: closed``. ``would_change`` and
   ``open_question`` are seeded only while the node's field is empty.
 - reviewer (``update_storyline``): ``REVIEW_FIELDS``. Every write appends a
-  version to ``memory/storyline_history/<id>.jsonl``.
+  version to ``memory/storyline_history/<id>.jsonl``. The generic graph and
+  entity write paths refuse these (``GUARDED_FIELDS``).
 - server only: ``SERVER_FIELDS`` (status and seed status, lifecycle stamps).
   No client surface may set them; ``guard_client_properties`` enforces that for
   the generic graph mutation tools.
@@ -47,6 +48,9 @@ SERVER_FIELDS = frozenset({
     "status", "seed_status", "seed_file", "status_changed_at", "status_changed_by",
     "closed_by", "last_reviewed", "proposed_by", "lifecycle_run_id",
 })
+# Refused from the generic graph/entity write paths (graph_add_node,
+# graph_update_node, the REST entity editor).
+GUARDED_FIELDS = SERVER_FIELDS | frozenset(REVIEW_FIELDS)
 
 _TEXT_LIMITS = {"thesis": 500, "state": 4000, "would_change": 1000, "open_question": 500,
                 "description": 300}
@@ -140,29 +144,42 @@ def is_storyline_node(kg: Any, entity_id: str) -> bool:
     return bool(t and node is not None and getattr(node, "type", None) == t)
 
 
+def guarded_field_error(fields: list[str]) -> str:
+    """Error text for a generic client write that touches guarded storyline fields."""
+    server = [f for f in fields if f in SERVER_FIELDS]
+    review = [f for f in fields if f in REVIEW_FIELDS]
+    parts = []
+    if server:
+        parts.append(f"{', '.join(server)} on a storyline is set by the server only (lifecycle, seed file)")
+    if review:
+        parts.append(f"{', '.join(review)} on a storyline is changed through update_storyline only "
+                     "(validated and versioned)")
+    return "; ".join(parts)
+
+
 def guard_client_properties(kg: Any, entity_type: str | None, properties: dict[str, Any]) -> None:
-    """Refuse server-owned storyline fields from a generic client write
-    (graph_add_node / graph_update_node). Raises StorylineError."""
+    """Refuse server-owned and reviewer-owned storyline fields from a generic
+    client write (graph_add_node / graph_update_node). Reviewer fields go
+    through update_storyline, which validates them, refuses closed storylines
+    and appends history. Raises StorylineError."""
     t = storyline_type(kg)
     if not t or entity_type != t:
         return
-    refused = sorted(SERVER_FIELDS.intersection(properties or {}))
+    refused = sorted(GUARDED_FIELDS.intersection(properties or {}))
     if refused:
-        raise StorylineError(
-            f"{', '.join(refused)} on a storyline is set by the server only "
-            "(lifecycle, seed file); use update_storyline for review fields"
-        )
+        raise StorylineError(guarded_field_error(refused))
 
 
 def server_field_changes(kg: Any, entity_type: str | None, new: dict[str, Any],
                          old: dict[str, Any] | None = None) -> list[str]:
-    """Server-owned storyline fields a client write would change (a field sent
-    back unchanged, as an edit form does, is not a change)."""
+    """Server- and reviewer-owned storyline fields a generic client write
+    would change (a field sent back unchanged, as an edit form does, is not a
+    change)."""
     t = storyline_type(kg)
     if not t or entity_type != t:
         return []
     old = old or {}
-    return sorted(f for f in SERVER_FIELDS.intersection(new or {}) if new[f] != old.get(f))
+    return sorted(f for f in GUARDED_FIELDS.intersection(new or {}) if new[f] != old.get(f))
 
 
 # ---------------------------------------------------------------------------
@@ -230,10 +247,15 @@ async def _commit(git: Any, paths: list[str], message: str) -> bool:
 async def record_status(kg: Any, writer: Any, repo_root: Path, entity_id: str, status_from: str | None,
                         status_to: str, actor: str, reason: str, extra: dict[str, Any] | None = None,
                         commit: bool = True) -> str:
-    """Set a storyline's status (server side) and log it. Returns the history path."""
+    """Set a storyline's status (server side) and log it. Returns the history path.
+
+    ``lifecycle_run_id`` names the run that owns the current status; any
+    transition that does not set it (a revert) clears it, so an older run can
+    never revert a status it no longer owns."""
     now = datetime.now(UTC).isoformat()
     await writer.update(entity_id, {"status": status_to, "status_changed_at": now,
-                                    "status_changed_by": actor, **(extra or {})})
+                                    "status_changed_by": actor, "lifecycle_run_id": None,
+                                    **(extra or {})})
     rel = append_history(repo_root, entity_id, {
         "event": "status", "actor": actor, "status_from": status_from, "status_to": status_to,
         "reason": reason,
@@ -480,7 +502,8 @@ async def get_storyline(entity_id: str, *, as_of: Any = None, evidence: int = 10
                               "prior": row.get("prior", 0), "window_days": window_days,
                               "last_at": to_iso(row.get("last_evidence_at"))}
     history = read_history(_repo_root(kg), node.id)
-    out["versions"] = len([h for h in history if h.get("event") in ("review", "proposed")])
+    out["versions"] = len([h for h in history
+                           if h.get("event") in ("review", "proposed") or h.get("fields")])
     if as_of is not None:
         as_of_dt = to_utc(as_of)
         if as_of_dt is None:
@@ -609,13 +632,18 @@ async def apply_lifecycle(kg: Any, writer: Any, repo_root: Path, run_id: str,
 
 async def revert_lifecycle(kg: Any, writer: Any, repo_root: Path, run_id: str,
                            rows: list[dict[str, Any]]) -> list[str]:
-    """Undo a run's status transitions (newest first), where the storyline is
-    still in the status the run set. Returns history paths to commit."""
+    """Undo a run's status transitions (newest first), where the run's
+    transition is still the current one: the storyline is in the status the run
+    set and ``lifecycle_run_id`` still names the run (every later transition —
+    another run, a seed close/reopen, a revert — replaces or clears it).
+    Returns history paths to commit."""
     nodes = getattr(kg, "nodes", None) or {}
     paths = []
     for row in reversed(rows):
         node = nodes.get(row.get("entity_id"))
-        if node is None or (getattr(node, "metadata", None) or {}).get("status") != row.get("status_to"):
+        metadata = (getattr(node, "metadata", None) or {}) if node is not None else {}
+        if (node is None or metadata.get("status") != row.get("status_to")
+                or metadata.get("lifecycle_run_id") != run_id):
             continue
         restore = row.get("status_from") or "proposed"
         paths.append(await record_status(kg, writer, repo_root, node.id, row.get("status_to"), restore,
