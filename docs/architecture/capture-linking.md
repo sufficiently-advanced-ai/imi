@@ -109,6 +109,9 @@ removed from its file becomes `seed_status: retired` (no longer offered; its lin
 a provisional topic listed in the file becomes canonical. A role with no seed file is left
 alone. Nodes of a seeded type that the owner created by hand are offered too.
 
+Storyline seeds carry more fields (thesis, stakes, status) and have their own read/write
+surface: see [Storylines](storylines.md).
+
 ## Storage: link files are the source of truth
 
 `memory/capture_links/<capture_id>.json`, one per linked capture, beside the governed capture

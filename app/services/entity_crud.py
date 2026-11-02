@@ -20,6 +20,23 @@ from .graph import clear_knowledge_graph_cache
 logger = logging.getLogger(__name__)
 
 
+
+def _storyline_server_fields(entity_type: str, new: dict[str, Any], old: dict[str, Any]) -> str | None:
+    """Error text when a client edit would change a server-owned storyline
+    field (status, seed status, lifecycle stamps), else None."""
+    try:
+        from .graph.factory import get_knowledge_graph
+        from .storylines import server_field_changes
+
+        changed = server_field_changes(get_knowledge_graph(), entity_type, new, old)
+    except Exception as e:  # never block an edit on the guard's own failure
+        logger.warning("storyline field guard skipped: %s", e)
+        return None
+    if not changed:
+        return None
+    return (f"{', '.join(changed)} on a storyline is set by the server only "
+            "(lifecycle, seed file); use update_storyline for review fields")
+
 class EntityCrudService:
     """Service for domain-aware entity CRUD operations."""
 
@@ -128,6 +145,9 @@ class EntityCrudService:
 
             if not entity_type:
                 return {"success": False, "error": "entity_type is required"}
+            refused = _storyline_server_fields(entity_type, attributes or {}, {})
+            if refused:
+                return {"success": False, "error": refused}
 
             # Validate entity data
             is_valid, errors = self.entity_registry.validate_entity(
@@ -201,6 +221,13 @@ class EntityCrudService:
                 return {"success": False, "error": "Entity not found"}
 
             entity_type = existing_entity["entity_type"]
+
+            refused = _storyline_server_fields(
+                entity_type, (update_data or {}).get("attributes") or {},
+                existing_entity.get("attributes") or {},
+            )
+            if refused:
+                return {"success": False, "error": refused}
 
             # Update attributes if provided
             if "attributes" in update_data:

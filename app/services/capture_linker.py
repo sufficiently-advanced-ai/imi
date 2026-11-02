@@ -416,10 +416,12 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     await _ensure_graph(ctx)
 
     # 1. seeds (owner content: synced in shadow too)
+    seed_paths: list[str] = []
     for role in SEEDED_ROLES:
         entity_type = ctx.role_type(role)
         if entity_type:
             result = await sync_role(ctx.kg, ctx.entities, ctx.repo_root, role, entity_type)
+            seed_paths.extend(result.paths)
             if result.as_dict():
                 log.seeds[role] = result.as_dict()
 
@@ -427,6 +429,8 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     batch = pending[:max_results]
     log.remaining = len(pending) - len(batch)
     if not batch:
+        if seed_paths:
+            await _commit(ctx, sorted(set(seed_paths)), f"link: {log.run_id} seed sync")
         return log.as_dict()
 
     audit_rows: list[dict[str, Any]] = []
@@ -626,7 +630,8 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
                        **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
     ctx.audit.append_many(audit_rows)
     log.committed = await _commit(
-        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + [ctx.audit.relative_path()],
+        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + [ctx.audit.relative_path()]
+        + sorted(set(seed_paths)),
         f"link: {log.run_id} ({mode}, {log.processed} captures)",
     )
     logger.info("[LINK] %s %s: %d processed, links %s, created %d, %d remaining",

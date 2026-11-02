@@ -472,12 +472,56 @@ TOOLS = [
     # --- Owner capture links (ADR-011) ---
     build_mcp_tool("graph_add_capture_link"),
     build_mcp_tool("graph_delete_capture_link"),
+    # --- Storylines ---
+    build_mcp_tool("list_storylines"),
+    build_mcp_tool("get_storyline"),
+    build_mcp_tool("update_storyline"),
+    build_mcp_tool("propose_storyline"),
+    build_mcp_tool("list_entity_activity"),
 ]
 
 
 # ---------------------------------------------------------------------------
 # MCP Handlers
 # ---------------------------------------------------------------------------
+
+
+_STORYLINE_TOOLS = ("list_storylines", "get_storyline", "update_storyline", "propose_storyline",
+                    "list_entity_activity")
+
+
+async def _storyline_tool(name: str, args: dict, actor: str):
+    from app.services import storylines
+
+    try:
+        if name == "list_storylines":
+            result = await storylines.list_storylines(args.get("status"), int(args.get("window_days") or 14))
+        elif name == "get_storyline":
+            entity_id = args.get("entity_id") or ""
+            max_results = int(args.get("max_results", 20))
+            result = await storylines.get_storyline(entity_id, as_of=args.get("timestamp"), evidence=0)
+            if max_results:
+                result["evidence"] = (await storylines.storyline_evidence(
+                    entity_id, since=args.get("date_from"), until=args.get("date_to"),
+                    stance=args.get("stance"), max_results=max_results,
+                ))["evidence"]
+        elif name == "update_storyline":
+            fields = {k: v for k, v in args.items() if k != "entity_id"}
+            result = await storylines.update_storyline(args.get("entity_id") or "", fields, actor=actor)
+        elif name == "propose_storyline":
+            result = await storylines.propose_storyline(
+                args.get("name") or "", thesis=args.get("thesis"), description=args.get("description"),
+                open_question=args.get("open_question"), would_change=args.get("would_change"),
+                stakes=args.get("stakes"), actor=actor,
+            )
+        else:  # list_entity_activity
+            result = await storylines.activity(
+                args.get("entity_type") or "", int(args.get("window_days") or 14),
+                max_results=int(args.get("max_results") or 50),
+            )
+    except storylines.StorylineError as e:
+        return _error(str(e))
+    return _text(result)
 
 
 @server.list_tools()
@@ -1070,6 +1114,11 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             if result.get("error"):
                 return _error(str(result["error"]))
             return _text(result)
+
+        elif name in _STORYLINE_TOOLS:
+            from app.services.review_authority import mcp_actor
+
+            return await _storyline_tool(name, args, mcp_actor(_mcp_client_name()))
 
         elif name == "ask_kb":
             from app.services.ask_kb import ask_kb
