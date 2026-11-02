@@ -168,7 +168,8 @@ async def list_captures(
 ):
     """List captures, newest first. ``total`` is the full match count."""
     store = CaptureStore()
-    try:
+
+    def _read():
         records = store.list(
             review_status=review_status,
             source=source,
@@ -180,6 +181,12 @@ async def list_captures(
             source=source,
             created_after=created_after,
         )
+        return records, total
+
+    try:
+        # File scan off the event loop: other requests (and a running LINK
+        # phase) keep being served while it reads.
+        records, total = await asyncio.to_thread(_read)
     except ValueError as e:
         # Unparseable created_after -- a client error, not a server fault.
         raise HTTPException(status_code=422, detail=f"invalid created_after: {e}") from e
