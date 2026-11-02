@@ -723,31 +723,63 @@ def passes_bar(members: list[tuple[datetime, str]], min_captures: int, min_sourc
 
 
 def build_ledger(records: list[CaptureLinkFile], create_types: frozenset[str],
-                 topic_type: str | None) -> list[_Cluster]:
+                 topic_type: str | None, seeds: set[str] | None = None) -> list[_Cluster]:
     """Cluster unresolved names across link files (same type, same entity by
-    the resolver's heuristic tiers)."""
+    the resolver's heuristic tiers).
+
+    With ``seeds`` (the capture ids of this run), clusters are started only by
+    the seed captures' names; every other file's names join a seeded cluster
+    or are skipped. Corroboration only acts on clusters with a member from the
+    run, so the result is the same, but the cost is (all names x this run's
+    clusters) rather than (all names x all clusters): the unseeded ledger
+    fuzzy-matched every historical name against every other cluster on every
+    run (~330 s at 8k link files, whatever the run's size)."""
     clusters: dict[str, list[_Cluster]] = defaultdict(list)
-    for record in records:
+    # Candidate list per bucket, kept in step with the clusters' names
+    # (_Cluster.name is a max over its forms: computing it per comparison was
+    # part of the cost).
+    candidates: dict[str, list[dict[str, str]]] = defaultdict(list)
+
+    def add(record: CaptureLinkFile, may_start: bool) -> None:
         for name in record.unresolved:
             if name.kind == "topic":
                 if name.entity_type != topic_type:
                     continue
             elif name.entity_type not in create_types:
                 continue
-            bucket = clusters[f"{name.kind}:{name.entity_type}"]
-            candidates = [{"id": str(i), "name": c.name} for i, c in enumerate(bucket)]
-            hit = resolve_against(name.entity_type, name.name, candidates)
+            key = f"{name.kind}:{name.entity_type}"
+            bucket = clusters[key]
+            if not bucket and not may_start:
+                continue
+            hit = resolve_against(name.entity_type, name.name, candidates[key])
             strict = _is_person_type(name.entity_type) and hit.matched_via == "fuzzy"
             if hit.matched_via == "new" or strict:
+                if not may_start:
+                    continue
                 cluster = _Cluster(entity_type=name.entity_type, kind=name.kind)
                 bucket.append(cluster)
+                candidates[key].append({"id": str(len(bucket) - 1), "name": name.name})
+                index = len(bucket) - 1
             else:
-                cluster = bucket[int(hit.id)]
+                index = int(hit.id)
+                cluster = bucket[index]
             cluster.forms[name.name] += 1
+            candidates[key][index]["name"] = cluster.name
             cluster.members.setdefault(
                 record.capture_id, (record.occurred_at, record.source_key or record.capture_id,
                                     name.confidence)
             )
+
+    if seeds is None:
+        for record in records:
+            add(record, may_start=True)
+    else:
+        for record in records:
+            if record.capture_id in seeds:
+                add(record, may_start=True)
+        for record in records:
+            if record.capture_id not in seeds:
+                add(record, may_start=False)
     return [c for bucket in clusters.values() for c in bucket]
 
 
@@ -762,7 +794,7 @@ async def _corroborate(ctx: LinkContext, log: Changelog, records: dict[str, Capt
         return set()
     all_records = {r.capture_id: r for r in ctx.links.iter_all()}
     all_records.update(records)
-    clusters = build_ledger(list(all_records.values()), create_types, topic_type)
+    clusters = build_ledger(list(all_records.values()), create_types, topic_type, seeds=set(records))
     bar = ctx.policy.corroboration
     resolver = _resolver(ctx.kg)
     passing: list[_Cluster] = []

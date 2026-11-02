@@ -237,3 +237,49 @@ def test_malformed_created_after_raises(tmp_path):
             store.count(created_after=bad)
         with pytest.raises(ValueError):
             store.list(created_after=bad)
+
+
+# --- parsed-record cache (list / count / dedup) -----------------------------------
+
+
+def test_listing_reuses_parsed_records_and_sees_changes(tmp_path, monkeypatch):
+    import os
+
+    from app.services import memory_capture
+
+    store = CaptureStore(capture_dir=tmp_path / "captures", repo_root=tmp_path)
+    first = store.capture("first note", source="mcp").memory
+    store.capture("second note", source="web")
+
+    parses = []
+    real = CapturedMemory.model_validate_json
+    monkeypatch.setattr(memory_capture.CapturedMemory, "model_validate_json",
+                        staticmethod(lambda raw: parses.append(1) or real(raw)))
+    memory_capture._parsed.clear()
+
+    assert store.count() == 2
+    assert len(parses) == 2
+    assert [m.source for m in store.list(source="web")] == ["web"]
+    assert len(parses) == 2  # unchanged files are not re-parsed
+
+    # a governance write is seen on the next read
+    updated = store.get(first.id)
+    updated.review_status = "rejected"
+    store.update(updated)
+    path = store._file_path(first.id)
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    assert store.count(review_status="rejected") == 1
+    assert len(parses) == 4  # only the changed file was re-read (get + rescan)
+
+
+def test_listed_records_are_copies(tmp_path):
+    store = CaptureStore(capture_dir=tmp_path / "captures", repo_root=tmp_path)
+    store.capture("a note", source="mcp", tags=["x"])
+    listed = store.list()[0]
+    listed.tags.append("mutated")
+    listed.review_status = "rejected"
+    again = store.list()[0]
+    assert again.tags == ["x"] and again.review_status != "rejected"
+    dup = store.capture("a note", source="mcp")
+    assert dup.deduped and dup.memory.tags == ["x"]

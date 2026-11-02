@@ -514,3 +514,27 @@ async def test_backfill_needs_mode_on_and_open_storylines(world):
     assert off["errors"] and off["processed"] == 0
     unknown = await capture_linker.run_backfill(storyline_ids=["storyline-nope"], ctx=world.ctx())
     assert "not open storylines" in unknown["errors"][0] and unknown["processed"] == 0
+
+
+def test_seeded_ledger_matches_the_full_ledger_on_the_runs_clusters():
+    from app.services.capture_link_store import CaptureLinkFile, UnresolvedName
+
+    def rec(cid, *names, day=1):
+        return CaptureLinkFile(capture_id=cid, occurred_at=f"2026-10-{day:02d}T00:00:00Z",
+                               source_key=f"src-{cid}",
+                               unresolved=[UnresolvedName(name=n, entity_type="organization") for n in names])
+
+    records = [
+        rec("h1", "Acme Robotics", "Globex"), rec("h2", "Acme Robotics Inc", day=3),
+        rec("h3", "Initech", "Globex Corp", day=5), rec("h4", "Umbrella", day=7),
+        rec("run1", "Acme Robotics", day=9), rec("run2", "Globex", "Hooli", day=10),
+    ]
+    seeds = {"run1", "run2"}
+    create = frozenset({"organization"})
+    key = lambda c: (c.name, frozenset(c.members))  # noqa: E731
+    full = {key(c) for c in capture_linker.build_ledger(records, create, None)
+            if set(c.members) & seeds}
+    seeded = capture_linker.build_ledger(records, create, None, seeds=seeds)
+    assert {key(c) for c in seeded} == full
+    assert all(set(c.members) & seeds for c in seeded)  # no cluster without a run member
+    assert len(seeded) == 3  # Acme, Globex, Hooli
