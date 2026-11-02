@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -146,6 +147,71 @@ def capture_memory(
     )
 
 
+class _ParsedCaptures:
+    """Parsed capture records per directory, reused while a file's
+    (mtime_ns, size) is unchanged.
+
+    Routes build a CaptureStore per request, so the cache is module-level.
+    Listing 7.7k captures re-parsed every file twice per call (list + count,
+    about 2 s on the Pi, blocking the event loop); with the cache a call stats
+    the files and parses only new or changed ones. Writes go through
+    ``atomic_write_text`` (a new file, so a new mtime), and a file edited by
+    hand is re-read the same way. Cached objects never leave the store
+    uncopied: read paths return deep copies.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._dirs: dict[str, dict[str, tuple[tuple[int, int], CapturedMemory | None]]] = {}
+
+    def records(self, directory: Path) -> list[CapturedMemory]:
+        """Every readable record in ``directory``, in file-name order."""
+        if not directory.is_dir():
+            return []
+        key = str(directory)
+        with self._lock:
+            known = self._dirs.get(key, {})
+        fresh: dict[str, tuple[tuple[int, int], CapturedMemory | None]] = {}
+        try:
+            entries = sorted(
+                (e for e in os.scandir(directory) if e.name.endswith(".json")),
+                key=lambda e: e.name,
+            )
+        except OSError as e:
+            logger.warning("[CAPTURE] Cannot scan %s: %s", directory, e)
+            return []
+        for entry in entries:
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue  # removed mid-scan
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            hit = known.get(entry.name)
+            if hit is not None and hit[0] == stamp:
+                fresh[entry.name] = hit
+                continue
+            try:
+                memory: CapturedMemory | None = CapturedMemory.model_validate_json(
+                    Path(entry.path).read_text(encoding="utf-8")
+                )
+            except (ValidationError, OSError) as e:
+                # Cached as unreadable for this (mtime, size): warned once,
+                # re-read when the file changes.
+                logger.warning("[CAPTURE] Skipping unreadable capture %s: %s", entry.name, e)
+                memory = None
+            fresh[entry.name] = (stamp, memory)
+        with self._lock:
+            self._dirs[key] = fresh
+        return [m for _, m in fresh.values() if m is not None]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._dirs.clear()
+
+
+_parsed = _ParsedCaptures()
+
+
 class CaptureResult(BaseModel):
     """Outcome of a capture attempt."""
 
@@ -197,14 +263,19 @@ class CaptureStore:
         """The record ``capture()`` would dedup this content against, if any."""
         return self._find_existing(source, source_id, content_fingerprint(content))
 
+    def _cached(self) -> list[CapturedMemory]:
+        """Parsed records via the shared cache. Read-only: never hand one out
+        without ``model_copy(deep=True)``."""
+        return _parsed.records(self.capture_dir)
+
     def _find_existing(
         self, source: str, source_id: str | None, fingerprint: str
     ) -> CapturedMemory | None:
-        for mem in self._iter_memories():
+        for mem in self._cached():
             if source_id and mem.source == source and mem.source_id == source_id:
-                return mem
+                return mem.model_copy(deep=True)
             if mem.content_fingerprint == fingerprint:
-                return mem
+                return mem.model_copy(deep=True)
         return None
 
     def _save(self, memory: CapturedMemory) -> Path:
@@ -246,13 +317,13 @@ class CaptureStore:
         after = parse_instant(created_after) if created_after is not None else None
         records = [
             mem
-            for mem in self._iter_memories()
+            for mem in self._cached()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
             and _created_at_or_after(mem, after)
         ]
         records.sort(key=_sort_key, reverse=True)
-        return records[:limit]
+        return [mem.model_copy(deep=True) for mem in records[:limit]]
 
     def count(
         self,
@@ -268,7 +339,7 @@ class CaptureStore:
         after = parse_instant(created_after) if created_after is not None else None
         return sum(
             1
-            for mem in self._iter_memories()
+            for mem in self._cached()
             if (review_status is None or mem.review_status == review_status)
             and (source is None or mem.source == source)
             and _created_at_or_after(mem, after)
