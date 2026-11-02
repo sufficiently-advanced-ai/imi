@@ -2592,7 +2592,11 @@ class Neo4jKnowledgeGraph:
         # Separate name from metadata updates
         metadata_updates = {k: v for k, v in properties.items() if k != "name"}
 
+        # An explicit None clears the property: the serializer drops None
+        # values, so put them back — SET n += {k: null} removes k.
+        cleared = sorted(k for k, v in properties.items() if v is None and k != "name")
         safe_props = serialize_metadata_for_neo4j(properties)
+        safe_props.update(dict.fromkeys(cleared))
         safe_props["updated_at"] = datetime.utcnow().isoformat()
         # Keep canonical_name in sync when name changes
         if "name" in properties:
@@ -2610,6 +2614,8 @@ class Neo4jKnowledgeGraph:
         # Update in-memory cache
         if entity_id in self.nodes:
             self.nodes[entity_id].metadata.update(metadata_updates)
+            for key in cleared:
+                self.nodes[entity_id].metadata.pop(key, None)
             if "name" in properties:
                 self.nodes[entity_id].name = properties["name"]
             self.nodes[entity_id].last_updated = datetime.utcnow()

@@ -233,7 +233,9 @@ def _seed_status(role: str, metadata: dict[str, Any], seed: Seed) -> tuple[dict[
 
     current = metadata.get("status")
     now = datetime.now(UTC).isoformat()
-    stamp = {"status_changed_at": now, "status_changed_by": "seed_sync"}
+    # A seed transition owns the status now: clear the lifecycle run stamp so an
+    # older LINK run's revert cannot undo it (storylines.revert_lifecycle).
+    stamp = {"status_changed_at": now, "status_changed_by": "seed_sync", "lifecycle_run_id": None}
     if seed.status == "closed":
         if current == "closed":
             return None
@@ -247,15 +249,31 @@ def _seed_status(role: str, metadata: dict[str, Any], seed: Seed) -> tuple[dict[
     return None
 
 
-def _log_status(repo_root: Path, result: SeedSyncResult, entity_id: str, status_from: str | None,
-                status_to: str, reason: str) -> None:
+def _history_fields(role: str, changes: dict[str, Any]) -> dict[str, Any]:
+    """The role fields (thesis, stakes, would_change, open_question) a sync
+    write sets, for the storyline history: state_as_of folds only history rows."""
+    spec = ROLE_FIELDS.get(role) or {}
+    names = (*spec.get("owned", ()), *spec.get("if_absent", ()))
+    return {k: changes[k] for k in names if k in changes}
+
+
+def _log_history(repo_root: Path, result: SeedSyncResult, entity_id: str, status_from: str | None,
+                 status: tuple[dict[str, Any], str] | None, fields: dict[str, Any]) -> None:
+    """One history row for a seed write: the status transition, the role
+    fields written, or both. Nothing to log, no row."""
     from app.services.storylines import append_history
 
+    if not status and not fields:
+        return
+    entry: dict[str, Any] = {"event": "status" if status else "seed", "actor": "seed_sync"}
+    if status:
+        entry.update(status_from=status_from, status_to=status[0]["status"], reason=status[1])
+    else:
+        entry["reason"] = "seed file fields"
+    if fields:
+        entry["fields"] = fields
     try:
-        result.paths.append(append_history(repo_root, entity_id, {
-            "event": "status", "actor": "seed_sync", "status_from": status_from,
-            "status_to": status_to, "reason": reason,
-        }))
+        result.paths.append(append_history(repo_root, entity_id, entry))
     except OSError as e:
         logger.warning("[SEEDS] storyline history for %s not written: %s", entity_id, e)
 
@@ -299,8 +317,9 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
                     aliases=seed.aliases,
                 )
                 result.created.append(seed.entity_id)
-                if status:
-                    _log_status(repo_root, result, seed.entity_id, None, status[0]["status"], status[1])
+                if role == "storyline":
+                    _log_history(repo_root, result, seed.entity_id, None, status,
+                                 _history_fields(role, seed.fields))
                 continue
             matched.add(node.id)
             metadata = getattr(node, "metadata", None) or {}
@@ -321,9 +340,9 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
             if changes:
                 await writer.update(node.id, changes)
                 result.updated.append(node.id)
-                if status:
-                    _log_status(repo_root, result, node.id, metadata.get("status"),
-                                status[0]["status"], status[1])
+                if role == "storyline":
+                    _log_history(repo_root, result, node.id, metadata.get("status"), status,
+                                 _history_fields(role, changes))
         except Exception as e:  # one bad seed never stops the sync
             logger.warning("[SEEDS] %s seed %r failed: %s", role, seed.name, e)
             result.errors.append(f"{seed.entity_id}: {e}")

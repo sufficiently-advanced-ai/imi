@@ -224,6 +224,27 @@ async def test_update_node_exists(graph, mock_neo4j):
 
 
 @pytest.mark.asyncio
+async def test_update_node_none_removes_the_property(graph, mock_neo4j):
+    """An explicit None clears the property in Neo4j (SET n += {k: null}) and the cache."""
+    mock_neo4j.execute_read = AsyncMock(return_value=[{
+        "n": {"id": "storyline-arc", "name": "Arc", "entity_type": "storyline",
+              "state": "Old", "updated_at": "2026-01-01T00:00:00"}
+    }])
+    mock_neo4j.execute_write = AsyncMock(return_value=[])
+    graph.nodes["storyline-arc"] = GraphNode(
+        id="storyline-arc", name="Arc", type="storyline", metadata={"state": "Old", "thesis": "T"}
+    )
+
+    await graph.update_node(entity_id="storyline-arc", properties={"state": None, "direction": "steady"})
+
+    props = mock_neo4j.execute_write.call_args.args[1]["props"]
+    assert "state" in props and props["state"] is None
+    assert props["direction"] == "steady"
+    assert "state" not in graph.nodes["storyline-arc"].metadata
+    assert graph.nodes["storyline-arc"].metadata["thesis"] == "T"
+
+
+@pytest.mark.asyncio
 async def test_update_node_not_found(graph, mock_neo4j):
     """Raises error when node doesn't exist."""
     mock_neo4j.execute_read = AsyncMock(return_value=[])

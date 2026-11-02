@@ -54,7 +54,13 @@ class _Writer:
         node = self.kg.nodes[entity_id]
         if "name" in changes:
             node.name = changes["name"]
-        node.metadata.update({k: v for k, v in changes.items() if k != "name"})
+        for k, v in changes.items():
+            if k == "name":
+                continue
+            if v is None:  # None clears, as kg.update_node does
+                node.metadata.pop(k, None)
+            else:
+                node.metadata[k] = v
         self.updates.append((entity_id, changes))
 
 
@@ -219,14 +225,65 @@ async def test_propose_is_provisional_and_idempotent(tmp_path, kg):
 # --- server-owned field guard -----------------------------------------------------
 
 
-def test_guard_refuses_server_fields_on_storylines_only(kg):
+def test_guard_refuses_server_and_review_fields_on_storylines_only(kg):
     with pytest.raises(StorylineError, match="status"):
         storylines.guard_client_properties(kg, "storyline", {"status": "active"})
-    storylines.guard_client_properties(kg, "storyline", {"state": "fine"})
-    storylines.guard_client_properties(kg, "project", {"status": "active"})  # other types untouched
+    # reviewer fields go through update_storyline (validation, closed check, history)
+    with pytest.raises(StorylineError, match="update_storyline"):
+        storylines.guard_client_properties(kg, "storyline", {"state": "changed while closed",
+                                                             "direction": "invalid"})
+    storylines.guard_client_properties(kg, "storyline", {"description": "fine"})
+    storylines.guard_client_properties(kg, "project", {"status": "active", "state": "x"})  # other types untouched
     # an edit form echoing an unchanged value is not a change
     assert storylines.server_field_changes(kg, "storyline", {"status": "active"}, {"status": "active"}) == []
     assert storylines.server_field_changes(kg, "storyline", {"status": "closed"}, {"status": "active"}) == ["status"]
+    assert storylines.server_field_changes(kg, "storyline", {"state": "same"}, {"state": "same"}) == []
+    assert storylines.server_field_changes(kg, "storyline", {"state": "new", "thesis": "t"},
+                                           {"state": "old"}) == ["state"]
+
+
+@pytest.mark.asyncio
+async def test_generic_update_node_tool_refuses_review_fields(kg, monkeypatch):
+    from app.services.tools import graph_node_tools
+
+    kg.nodes["storyline-arc"] = _Node(id="storyline-arc", name="Arc", type="storyline",
+                                      metadata={"status": "closed"})
+    monkeypatch.setattr(graph_node_tools, "_get_graph_service", lambda: kg)
+    tool = graph_node_tools.UpdateNodeTool(None, kg.git_ops, None)
+    result = await tool.execute({"entity_id": "storyline-arc",
+                                 "properties": {"state": "changed while closed"}})
+    assert result.success is False and "update_storyline" in result.error
+    assert "state" not in kg.nodes["storyline-arc"].metadata
+
+
+def test_rest_entity_editor_refuses_changed_review_fields(kg, monkeypatch):
+    from app.services import entity_crud
+    from app.services.graph import factory
+
+    monkeypatch.setattr(factory, "get_knowledge_graph", lambda: kg)
+    assert "update_storyline" in entity_crud._storyline_server_fields(
+        "storyline", {"open_question": "new?"}, {"open_question": "old?"})
+    assert entity_crud._storyline_server_fields(
+        "storyline", {"open_question": "old?", "description": "d"}, {"open_question": "old?"}) is None
+
+
+# --- reviewer write path ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_storyline_clears_a_field_and_history_records_it(tmp_path, kg):
+    kg.nodes["storyline-arc"] = _Node(id="storyline-arc", name="Arc", type="storyline",
+                                      metadata={"status": "active"})
+    await storylines.update_storyline("storyline-arc", {"state": "Set", "open_question": "Q?"}, actor="me")
+    assert kg.nodes["storyline-arc"].metadata["state"] == "Set"
+    await storylines.update_storyline("storyline-arc", {"state": "", "open_question": None}, actor="me")
+    meta = kg.nodes["storyline-arc"].metadata
+    assert "state" not in meta and "open_question" not in meta
+    # the writer was asked to clear (None), not to skip the fields
+    assert kg.writer.updates[-1][1]["state"] is None and kg.writer.updates[-1][1]["open_question"] is None
+    folded = storylines.state_as_of(storylines.read_history(tmp_path, "storyline-arc"),
+                                    datetime.now(UTC) + timedelta(seconds=1))
+    assert folded["state"] is None and folded["open_question"] is None
 
 
 # --- reads ------------------------------------------------------------------------
@@ -310,3 +367,78 @@ async def test_apply_and_revert_lifecycle(tmp_path, kg):
     assert kg.nodes["storyline-b"].metadata["status"] == "active"
     last = storylines.read_history(tmp_path, "storyline-a")[-1]
     assert last["actor"] == "revert" and last["status_to"] == "proposed"
+
+
+@pytest.mark.asyncio
+async def test_revert_does_not_undo_a_later_runs_transition(tmp_path, kg):
+    old = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    kg.nodes["storyline-a"] = _Node(id="storyline-a", name="A", type="storyline",
+                                    metadata={"status": "proposed"})
+    kg.neo4j = _LifecycleNeo4j([
+        {"id": "storyline-a", "status": "proposed", "changed_at": old, "promote": 6, "dormant": 6}])
+    rows_a, _ = await storylines.apply_lifecycle(kg, kg.writer, tmp_path, "run-a")   # proposed -> active
+    kg.neo4j = _LifecycleNeo4j([
+        {"id": "storyline-a", "status": "active", "changed_at": old, "promote": 0, "dormant": 0}])
+    await storylines.apply_lifecycle(kg, kg.writer, tmp_path, "run-b")              # active -> dormant
+    kg.neo4j = _LifecycleNeo4j([
+        {"id": "storyline-a", "status": "dormant", "changed_at": old, "promote": 1, "dormant": 1}])
+    await storylines.apply_lifecycle(kg, kg.writer, tmp_path, "run-c")              # dormant -> active
+    meta = kg.nodes["storyline-a"].metadata
+    assert meta["status"] == "active" and meta["lifecycle_run_id"] == "run-c"
+
+    assert await storylines.revert_lifecycle(kg, kg.writer, tmp_path, "run-a", rows_a) == []
+    assert kg.nodes["storyline-a"].metadata["status"] == "active"  # run C's decision stands
+
+
+@pytest.mark.asyncio
+async def test_seed_close_reopen_takes_ownership_from_the_run(tmp_path, kg):
+    old = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    sid = "storyline-arc"
+    _seed(tmp_path, "- name: Arc\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")      # seeded active
+    kg.nodes[sid].metadata["status"] = "proposed"
+    kg.neo4j = _LifecycleNeo4j([
+        {"id": sid, "status": "proposed", "changed_at": old, "promote": 6, "dormant": 6}])
+    rows, _ = await storylines.apply_lifecycle(kg, kg.writer, tmp_path, "run-a")
+    assert kg.nodes[sid].metadata["lifecycle_run_id"] == "run-a"
+
+    _seed(tmp_path, "- name: Arc\n  status: closed\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")      # closed by the seed
+    _seed(tmp_path, "- name: Arc\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")      # reopened: active again
+    meta = kg.nodes[sid].metadata
+    assert meta["status"] == "active" and "lifecycle_run_id" not in meta and "closed_by" not in meta
+
+    assert await storylines.revert_lifecycle(kg, kg.writer, tmp_path, "run-a", rows) == []
+    assert kg.nodes[sid].metadata["status"] == "active"
+
+
+# --- seed fields in history -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_seeded_reviewer_fields_are_in_history(tmp_path, kg):
+    sid = "storyline-arc"
+    _seed(tmp_path, "- name: Arc\n  open_question: Original question\n"
+                    "  would_change: Original condition\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    later = datetime.now(UTC) + timedelta(seconds=1)
+    folded = storylines.state_as_of(storylines.read_history(tmp_path, sid), later)
+    assert folded["status"] == "active"
+    assert folded["open_question"] == "Original question"
+    assert folded["would_change"] == "Original condition"
+
+    # the reviewer clears a field, the seed sync refills it: history follows both
+    await storylines.update_storyline(sid, {"open_question": None}, actor="me")
+    result = await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    assert result.updated == [sid] and result.paths == [storylines.history_relpath(sid)]
+    assert kg.nodes[sid].metadata["open_question"] == "Original question"
+    last = storylines.read_history(tmp_path, sid)[-1]
+    assert last["event"] == "seed" and last["fields"] == {"open_question": "Original question"}
+    folded = storylines.state_as_of(storylines.read_history(tmp_path, sid),
+                                    datetime.now(UTC) + timedelta(seconds=1))
+    assert folded["open_question"] == "Original question" and folded["status"] == "active"
+
+    # nothing changed, nothing logged
+    again = await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    assert again.paths == []
