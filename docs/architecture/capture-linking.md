@@ -17,7 +17,10 @@ that created them.
 # one run: up to max_results unlinked library captures (default 50, max 500)
 curl -X POST localhost:8000/api/captures/link -H 'content-type: application/json' \
      -d '{"max_results": 50}'
-# undo one run
+# storyline-only pass over already-linked captures (docs/architecture/storylines.md)
+curl -X POST localhost:8000/api/captures/link/backfill -H 'content-type: application/json' \
+     -d '{"since": "2026-08-01", "max_results": 100}'
+# undo one run (or backfill)
 curl -X POST localhost:8000/api/captures/link/revert -H 'content-type: application/json' \
      -d '{"run_id": "link-20261029T..."}'
 ```
@@ -150,7 +153,7 @@ its edges, each marked `capture_link: true` with `lane`, `created_by`, `confiden
 | `MENTIONED_IN` | entity → Document (the existing mention edge: `get_entity_at_time`, `find_changes` and co-mention reads see library mentions) |
 | `FROM_SOURCE` | Document → source |
 | `ABOUT` | Document → topic, or (owner) any entity or capture Document |
-| `ADVANCES` | Document → storyline |
+| `ADVANCES` | Document → storyline, with `stance` |
 | `EVIDENCE_FOR` | Document → essay, with `stance` |
 
 Each write replaces the edges the document owns, so the graph always matches the file. A

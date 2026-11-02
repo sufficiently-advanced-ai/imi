@@ -430,3 +430,87 @@ async def test_reverted_unresolved_names_never_corroborate(world):
 
     third = await capture_linker.run_link(10, ctx=world.ctx(corroboration=bar))
     assert third["processed"] == 1 and third["entities_created"] == []
+
+
+# --- storylines (stance, bar, checked, backfill) -----------------------------------
+
+
+def _with_storylines(world, tmp_path_factory=None):
+    world.kg.domain.entities["storyline"] = SimpleNamespace(description="An arc")
+    for sid, name in (("storyline-arc", "Arc"), ("storyline-other", "Other")):
+        world.kg.nodes[sid] = _Node(id=sid, name=name, type="storyline",
+                                    metadata={"status": "active", "thesis": f"{name} is real."})
+
+
+STORY_ANSWER = {
+    "advances": [
+        {"id": "storyline-arc", "stance": "challenges", "confidence": 0.9},
+        {"id": "storyline-other", "confidence": 0.8},          # no stance -> context
+        {"id": "storyline-invented", "stance": "supports", "confidence": 0.95},  # not offered
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_storyline_links_carry_stance_and_the_higher_bar(world):
+    _with_storylines(world)
+    world.claude.script = {m.content.splitlines()[0][2:]: STORY_ANSWER for m in world.made}
+    result = await capture_linker.run_link(10, ctx=world.ctx())
+
+    record = world.links.get(world.made[0].id)
+    advances = {(link.target_id, link.stance) for link in record.links if link.edge == "ADVANCES"}
+    assert advances == {("storyline-arc", "challenges"), ("storyline-other", "context")}
+    assert record.storylines_checked == {"storyline-arc": result["run_id"],
+                                         "storyline-other": result["run_id"]}
+    assert {s["id"]: s.get("thesis") for s in world.claude.payloads[0]["storylines"]} == {
+        "storyline-arc": "Arc is real.", "storyline-other": "Other is real."}
+
+    # storyline floor 0.85 drops the 0.8 link; max_advances 1 keeps the best only
+    world2_links = capture_linker._role_selections(
+        world.ctx(storyline_min_confidence=0.85), "storyline", {"storyline-arc", "storyline-other"},
+        STORY_ANSWER, 0.6)
+    assert [t[0] for t in world2_links] == ["storyline-arc"]
+    capped = capture_linker._role_selections(
+        world.ctx(max_advances=1), "storyline", {"storyline-arc", "storyline-other"}, STORY_ANSWER, 0.6)
+    assert len(capped) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_judges_linked_captures_once_and_reverts(world):
+    first = await capture_linker.run_link(10, ctx=world.ctx())  # linked before storylines exist
+    _with_storylines(world)
+    world.claude.script = {m.content.splitlines()[0][2:]: STORY_ANSWER for m in world.made}
+    world.claude.payloads.clear()
+
+    result = await capture_linker.run_backfill(max_results=2, ctx=world.ctx())
+    assert result["processed"] == 2 and result["remaining"] == 1
+    assert result["links_by_type"] == {"ADVANCES": 4}
+    # newest first by occurred_at, and only storylines are offered
+    newest = world.made[2]
+    assert world.links.get(newest.id).storylines_checked["storyline-arc"] == result["run_id"]
+    payload = world.claude.payloads[0]
+    assert set(payload) == {"captures", "storylines"}
+    # the original run's links are untouched
+    assert ("ABOUT", "topic-ai-agents") in _edges(world, newest)
+
+    rest = await capture_linker.run_backfill(max_results=10, ctx=world.ctx())
+    assert rest["processed"] == 1 and rest["remaining"] == 0
+    again = await capture_linker.run_backfill(max_results=10, ctx=world.ctx())
+    assert again["processed"] == 0  # every capture judged against every storyline
+
+    reverted = await capture_linker.revert_run(result["run_id"], ctx=world.ctx())
+    assert reverted["links_removed"] == 4
+    record = world.links.get(newest.id)
+    assert not any(link.edge == "ADVANCES" for link in record.links)
+    assert "storyline-arc" not in record.storylines_checked  # judged again by the next backfill
+    assert ("ABOUT", "topic-ai-agents") in _edges(world, newest)
+    assert first["run_id"] not in record.reverted_runs
+
+
+@pytest.mark.asyncio
+async def test_backfill_needs_mode_on_and_open_storylines(world):
+    _with_storylines(world)
+    off = await capture_linker.run_backfill(ctx=world.ctx("shadow"))
+    assert off["errors"] and off["processed"] == 0
+    unknown = await capture_linker.run_backfill(storyline_ids=["storyline-nope"], ctx=world.ctx())
+    assert "not open storylines" in unknown["errors"][0] and unknown["processed"] == 0

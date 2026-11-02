@@ -212,6 +212,7 @@ class Changelog:
     below_bar: list[dict[str, Any]] = field(default_factory=list)
     sources_created: list[str] = field(default_factory=list)
     seeds: dict[str, Any] = field(default_factory=dict)
+    storyline_status: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     committed: bool = False
 
@@ -230,6 +231,7 @@ class Changelog:
             "below_bar": self.below_bar,
             "sources_created": self.sources_created,
             "seeds": self.seeds,
+            "storyline_status": self.storyline_status,
             "errors": self.errors,
             "committed": self.committed,
         }
@@ -394,6 +396,51 @@ def _source_key(memory: Any, source_ref: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _role_selections(ctx: LinkContext, role: str, ids: set[str], selection: dict[str, Any],
+                     floor: float) -> list[tuple[str, str, float, str | None]]:
+    """(target id, type, confidence, stance) the model chose for one seeded
+    role, filtered by the role's bar. Storylines take a higher floor, at most
+    ``max_advances`` per capture, and always a stance (evidence for a thesis);
+    essays always a stance; topics at most MAX_ABOUT."""
+    if role == "storyline":
+        floor = max(floor, ctx.policy.storyline_min_confidence)
+    chosen = sorted(
+        (i for i in _items(selection, _RESPONSE_KEYS[role])
+         if i.get("id") in ids and _confidence(i) >= floor),
+        key=_confidence, reverse=True,
+    )
+    if role == "topic":
+        chosen = chosen[:MAX_ABOUT]
+    elif role == "storyline":
+        chosen = chosen[: ctx.policy.max_advances]
+    out = []
+    for item in chosen:
+        stance = None
+        if role in ("essay", "storyline"):
+            stance = item.get("stance") if item.get("stance") in STANCES else "context"
+        out.append((item["id"], ctx.role_type(role) or role, _confidence(item), stance))
+    return out
+
+
+async def _lifecycle(ctx: LinkContext, log: Changelog, audit_rows: list[dict[str, Any]]) -> list[str]:
+    """Storyline status transitions after a run in mode on (server side).
+    Returns history paths to commit; the audit rows make them revertible."""
+    if ctx.policy.mode != "on" or ctx.graph is None or not ctx.role_type("storyline"):
+        return []
+    from app.services.storylines import apply_lifecycle
+
+    try:
+        rows, paths = await apply_lifecycle(ctx.kg, ctx.entities, ctx.repo_root, log.run_id)
+    except Exception as e:
+        logger.warning("[LINK] Storyline lifecycle failed (non-fatal): %s", e, exc_info=True)
+        log.errors.append(f"storyline lifecycle: {e}")
+        return []
+    for row in rows:
+        log.storyline_status.append({k: row[k] for k in ("entity_id", "status_from", "status_to")})
+    audit_rows.extend(rows)
+    return paths
+
+
 async def run_link(max_results: int = 50, ctx: LinkContext | None = None) -> dict[str, Any]:
     """One LINK run. Raises LinkRunBusy when another run holds the lock."""
     if _run_lock.locked():
@@ -429,6 +476,12 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     batch = pending[:max_results]
     log.remaining = len(pending) - len(batch)
     if not batch:
+        # Dormancy is time-driven: the lifecycle runs even when nothing is new.
+        quiet_rows: list[dict[str, Any]] = []
+        seed_paths.extend(await _lifecycle(ctx, log, quiet_rows))
+        if quiet_rows:
+            ctx.audit.append_many(quiet_rows)
+            seed_paths.append(ctx.audit.relative_path())
         if seed_paths:
             await _commit(ctx, sorted(set(seed_paths)), f"link: {log.run_id} seed sync")
         return log.as_dict()
@@ -542,18 +595,12 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
                                           linked_at=linked_at, stance=stance))
 
         for role, ids in seeded_ids.items():
-            chosen = sorted(
-                (i for i in _items(selection, _RESPONSE_KEYS[role])
-                 if i.get("id") in ids and _confidence(i) >= floor),
-                key=_confidence, reverse=True,
-            )
-            if role == "topic":
-                chosen = chosen[:MAX_ABOUT]
-            for item in chosen:
-                stance = None
-                if role == "essay":
-                    stance = item.get("stance") if item.get("stance") in STANCES else "context"
-                add(_ROLE_EDGES[role], item["id"], ctx.role_type(role) or role, _confidence(item), stance)
+            for target_id, target_type, confidence, stance in _role_selections(
+                ctx, role, ids, selection, floor
+            ):
+                add(_ROLE_EDGES[role], target_id, target_type, confidence, stance)
+        if seeded_ids.get("storyline"):
+            record.storylines_checked = {sid: log.run_id for sid in sorted(seeded_ids["storyline"])}
 
         for item in _items(selection, "mentions"):
             name = item.get("name")
@@ -625,6 +672,8 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
         except Exception as e:
             logger.warning("[LINK] Graph projection failed (files are written): %s", e, exc_info=True)
             log.errors.append(f"graph projection: {e}")
+
+    seed_paths.extend(await _lifecycle(ctx, log, audit_rows))
 
     audit_rows.append({"run_id": log.run_id, "mode": mode, "action": "run_summary",
                        **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
@@ -877,6 +926,155 @@ async def _commit(ctx: LinkContext, paths: list[str], message: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Storyline backfill
+# ---------------------------------------------------------------------------
+
+
+async def run_backfill(storyline_ids: list[str] | None = None, since: str | None = None,
+                       max_results: int = 50, ctx: LinkContext | None = None) -> dict[str, Any]:
+    """A storyline-only pass over captures that are already linked.
+
+    New and proposed storylines only see captures linked after they exist;
+    this offers each linked capture the storylines it has not been judged
+    against (``storylines_checked``), newest first by occurred_at. Same prompt
+    with only storylines listed; its links carry this run's id, so
+    ``revert_run`` undoes them. Raises LinkRunBusy while a run holds the lock."""
+    if _run_lock.locked():
+        raise LinkRunBusy("a link run is already in progress")
+    async with _run_lock:
+        ctx = ctx or default_context()
+        return await _backfill(ctx, storyline_ids, since, max(1, min(int(max_results), MAX_RESULTS_CAP)))
+
+
+async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: str | None,
+                    max_results: int) -> dict[str, Any]:
+    log = Changelog(run_id=f"backfill-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
+                    mode=ctx.policy.mode)
+    if ctx.policy.mode != "on":
+        log.errors.append("backfill needs library.linking.mode: on")
+        return log.as_dict()
+    storyline_type = ctx.role_type("storyline")
+    if not storyline_type:
+        log.errors.append("no storyline role in this domain")
+        return log.as_dict()
+    since_dt = to_utc(since) if since else None
+    if since and since_dt is None:
+        log.errors.append(f"since is not an ISO-8601 date: {since!r}")
+        return log.as_dict()
+
+    await _ensure_graph(ctx)
+    targets = {s["id"]: s for s in offered(ctx.kg, storyline_type)}
+    if storyline_ids:
+        unknown = sorted(set(storyline_ids) - set(targets))
+        if unknown:
+            log.errors.append(f"not open storylines: {', '.join(unknown)}")
+        targets = {k: v for k, v in targets.items() if k in set(storyline_ids)}
+    if not targets:
+        return log.as_dict()
+
+    candidates: list[tuple[datetime, CaptureLinkFile, set[str]]] = []
+    for record in ctx.links.iter_all():
+        if record.mode != "on" or record.linked_at is None:
+            continue
+        missing = set(targets) - set(record.storylines_checked)
+        if not missing:
+            continue
+        occurred = to_utc(record.occurred_at)
+        if since_dt is not None and (occurred is None or occurred < since_dt):
+            continue
+        candidates.append((occurred or datetime.min.replace(tzinfo=UTC), record, missing))
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    batch = []
+    for _, record, missing in candidates:
+        if len(batch) >= max_results:
+            break
+        memory = ctx.captures.get(record.capture_id)
+        if memory is not None and memory.review_status != "rejected" and not memory.superseded_by:
+            batch.append((memory, missing))
+    log.remaining = max(0, len(candidates) - len(batch))
+    if not batch:
+        return log.as_dict()
+
+    # Group captures by the storylines they still need, so each call offers
+    # exactly those (usually one group: every target).
+    groups: dict[frozenset[str], list[Any]] = defaultdict(list)
+    for memory, missing in batch:
+        groups[frozenset(missing)].append(memory)
+    semaphore = asyncio.Semaphore(ctx.policy.concurrency)
+
+    async def select(ids: frozenset[str], memories: list[Any]):
+        refs = {f"c{i + 1}": m for i, m in enumerate(memories)}
+        payload = {"captures": [capture_brief(m, ref) for ref, m in refs.items()],
+                   "storylines": [targets[i] for i in sorted(ids)]}
+        if ctx.claude_client is None:
+            return ids, refs, None
+        async with semaphore:
+            answers = await call_linker(ctx.claude_client, payload)
+        return ids, refs, answers
+
+    calls = []
+    for ids, memories in groups.items():
+        for i in range(0, len(memories), ctx.policy.batch_size):
+            calls.append(select(ids, memories[i : i + ctx.policy.batch_size]))
+
+    linked_at = now_iso()
+    audit_rows: list[dict[str, Any]] = []
+    touched: dict[str, Any] = {}
+    failed = 0
+    for ids, refs, answers in await asyncio.gather(*calls):
+        if not answers:
+            failed += len(refs)
+            continue
+        for ref, memory in refs.items():
+            if ref not in answers:
+                failed += 1
+                continue
+            chosen = _role_selections(ctx, "storyline", set(ids), answers[ref], ctx.policy.min_confidence)
+
+            def apply(record: CaptureLinkFile, chosen=chosen, ids=ids) -> CaptureLinkFile:
+                for target_id, target_type, confidence, stance in chosen:
+                    _add_link(record, CaptureLink(edge=ADVANCES, target_id=target_id,
+                                                  target_type=target_type, confidence=confidence,
+                                                  run_id=log.run_id, linked_at=linked_at, stance=stance))
+                for sid in ids:
+                    record.storylines_checked[sid] = log.run_id
+                return record
+
+            ctx.links.mutate(memory.id, apply)
+            touched[memory.id] = memory
+            for target_id, _, confidence, stance in chosen:
+                log.links_by_type[ADVANCES] += 1
+                audit_rows.append({"run_id": log.run_id, "mode": "on", "action": "link",
+                                   "capture_id": memory.id, "edge": ADVANCES, "target_id": target_id,
+                                   "confidence": confidence, "stance": stance})
+    if failed:
+        log.errors.append(f"{failed} capture(s) not judged (model call failed or left them out)")
+        log.remaining += failed
+    log.processed = len(touched)
+
+    if ctx.graph is not None and touched:
+        items = [(m, r) for cid, m in touched.items() if (r := ctx.links.get(cid)) is not None]
+        try:
+            await ctx.graph.write(items)
+        except Exception as e:
+            logger.warning("[LINK] Backfill projection failed (files are written): %s", e, exc_info=True)
+            log.errors.append(f"graph projection: {e}")
+
+    history = await _lifecycle(ctx, log, audit_rows)
+    audit_rows.append({"run_id": log.run_id, "mode": "on", "action": "run_summary", "kind": "backfill",
+                       **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
+    ctx.audit.append_many(audit_rows)
+    log.committed = await _commit(
+        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + [ctx.audit.relative_path()]
+        + sorted(set(history)),
+        f"link: {log.run_id} (storyline backfill, {log.processed} captures)",
+    )
+    logger.info("[LINK] backfill %s: %d judged, %d ADVANCES, %d remaining",
+                log.run_id, log.processed, log.links_by_type[ADVANCES], log.remaining)
+    return log.as_dict()
+
+
+# ---------------------------------------------------------------------------
 # Revert
 # ---------------------------------------------------------------------------
 
@@ -907,10 +1105,13 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
         # on to create entities (they stay in the audit log). A later run's
         # back-link into this file does not own them.
         extracted_here = record.run_id == run_id
-        if len(keep) == len(record.links) and not (extracted_here and record.unresolved):
+        checked = {k: v for k, v in record.storylines_checked.items() if v != run_id}
+        if (len(keep) == len(record.links) and not (extracted_here and record.unresolved)
+                and len(checked) == len(record.storylines_checked)):
             return None
         removed += len(record.links) - len(keep)
         record.links = keep
+        record.storylines_checked = checked
         if extracted_here:
             record.unresolved = []
         if run_id not in record.reverted_runs:
@@ -958,13 +1159,26 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
             logger.warning("[LINK] Archiving %s failed: %s", entity_id, e)
             kept.append(entity_id)
 
+    status_rows = [row for row in ctx.audit.iter_rows()
+                   if row.get("run_id") == run_id and row.get("action") == "storyline_status"]
+    history_paths: list[str] = []
+    if status_rows:
+        from app.services.storylines import revert_lifecycle
+
+        try:
+            history_paths = await revert_lifecycle(ctx.kg, ctx.entities, ctx.repo_root, run_id, status_rows)
+        except Exception as e:
+            logger.warning("[LINK] Reverting storyline status for %s failed: %s", run_id, e)
+
     summary = {"run_id": run_id, "captures_changed": len(changed), "links_removed": removed,
-               "entities_archived": archived, "entities_kept": kept}
+               "entities_archived": archived, "entities_kept": kept,
+               "storyline_status_reverted": len(history_paths)}
     if projection_error:
         summary["errors"] = [f"graph projection: {projection_error}"]
     ctx.audit.append_many([{"run_id": run_id, "action": "revert", **summary}])
     summary["committed"] = await _commit(
-        ctx, [ctx.links.relative_path(c) for c in changed] + [ctx.audit.relative_path()],
+        ctx, [ctx.links.relative_path(c) for c in changed] + [ctx.audit.relative_path()]
+        + sorted(set(history_paths)),
         f"link: revert {run_id} ({removed} links)",
     )
     logger.info("[LINK] Reverted %s: %d links, archived %s", run_id, removed, archived)

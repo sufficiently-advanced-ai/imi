@@ -35,7 +35,29 @@ an unchanged value is not refused).
 - **Proposed** (`propose_storyline`, `POST /api/storylines`, or `graph_add_node`): created
   `seed_status: provisional`, `status: proposed`, and offered to the linker so it can gather
   evidence. Listing it in the seed file adopts it: canonical and `active`.
+- **Lifecycle** (server side, at the end of every LINK run and backfill in mode `on`;
+  `app/services/storylines.py`):
+  - proposed → active at 5 or more `ADVANCES` with `occurred_at` in the last 14 days
+  - active → dormant with none in the last 30 days, and no status change in them (a new
+    storyline gets a grace period)
+  - dormant → active on any evidence in the last 30 days
+  - Each transition is a `storyline_status` audit row of the run, so `POST
+    /api/captures/link/revert` with the run id restores the previous status.
 - Every transition is appended to the storyline's history.
+
+## Evidence and stance
+
+The LINK phase offers every open storyline (with its thesis) to `capture_linking` and writes
+`ADVANCES` with a `stance` judged against the thesis: `supports`, `challenges` or `context`.
+Storylines take a higher bar than topics: `library.linking.storyline_min_confidence`
+(default 0.75) and at most `max_advances` (default 2) per capture.
+
+Each link file records the storylines its capture was judged against
+(`storylines_checked`, storyline id → run id). `POST /api/captures/link/backfill
+{storyline_ids?, since?, max_results}` offers already-linked captures only the storylines they
+have not been judged against, newest first by `occurred_at`: how a new or proposed storyline
+gets its history. It shares the LINK run lock (409 while one runs), and its run id reverts
+like a LINK run.
 
 ## History
 
@@ -77,7 +99,5 @@ typed datetime parameters.
 
 ## Not yet
 
-Planned next: a stance on `ADVANCES` links and a higher linker bar for storylines,
-server-side lifecycle (proposed → active on evidence, active → dormant after 30 quiet days),
-a storyline-only backfill pass, and linking record-lane `changes` captures (needs an ADR,
-since ADR-011 left record-lane linking to the owner).
+Linking record-lane `changes` captures (needs an ADR: ADR-011 left record-lane linking to the
+owner), a timeline view, and an `ask_kb` storyline hint.

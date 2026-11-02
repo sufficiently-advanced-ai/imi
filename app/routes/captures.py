@@ -6,7 +6,8 @@ Externally visible paths (all under /api/captures):
     GET  /api/captures/{capture_id}   — single capture record
     POST /api/captures/{capture_id}/review — audited governance transition
     POST /api/captures/link           — one LINK run over unlinked library captures (ADR-011)
-    POST /api/captures/link/revert    — undo one LINK run
+    POST /api/captures/link/backfill  — storyline-only pass over linked captures
+    POST /api/captures/link/revert    — undo one LINK run (or backfill)
 
 Prefix convention: routers self-prefix with /api (mirrors decisions.py);
 main.py calls include_router with NO extra prefix. Governance fields are
@@ -136,6 +137,32 @@ async def link_captures(body: LinkRunRequest | None = None):
     try:
         return await asyncio.shield(
             asyncio.ensure_future(capture_linker.run_link(max_results=body.max_results))
+        )
+    except capture_linker.LinkRunBusy as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+class LinkBackfillRequest(BaseModel):
+    storyline_ids: list[str] | None = Field(
+        None, description="Storylines to backfill (default: every open storyline)"
+    )
+    since: str | None = Field(None, description="ISO-8601: only captures that occurred on or after")
+    max_results: int = Field(50, ge=1, le=500, description="Most captures to judge in this run")
+
+
+@router.post("/link/backfill")
+async def backfill_storylines(body: LinkBackfillRequest | None = None):
+    """A storyline-only pass over already-linked captures: each is offered the
+    storylines it has not been judged against. Shielded like a LINK run, shares
+    its lock (409 while one runs), and is undone by /link/revert with its run_id."""
+    from app.services import capture_linker
+
+    body = body or LinkBackfillRequest()
+    try:
+        return await asyncio.shield(
+            asyncio.ensure_future(capture_linker.run_backfill(
+                storyline_ids=body.storyline_ids, since=body.since, max_results=body.max_results
+            ))
         )
     except capture_linker.LinkRunBusy as e:
         raise HTTPException(status_code=409, detail=str(e)) from e

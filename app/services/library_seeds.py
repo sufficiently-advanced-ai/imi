@@ -188,6 +188,9 @@ def offered(kg: Any, entity_type: str) -> list[dict[str, Any]]:
         description = metadata.get("description")
         if isinstance(description, str) and description.strip():
             entry["description"] = description.strip()[:_DESCRIPTION_CHARS]
+        thesis = metadata.get("thesis")
+        if isinstance(thesis, str) and thesis.strip():
+            entry["thesis"] = thesis.strip()[:_DESCRIPTION_CHARS]
         if metadata.get("seed_status") == PROVISIONAL:
             entry["provisional"] = True
         out.append(entry)
