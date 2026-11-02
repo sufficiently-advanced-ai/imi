@@ -51,6 +51,21 @@ SERVER_FIELDS = frozenset({
 # Refused from the generic graph/entity write paths (graph_add_node,
 # graph_update_node, the REST entity editor).
 GUARDED_FIELDS = SERVER_FIELDS | frozenset(REVIEW_FIELDS)
+# Every storyline-owned field a graph rebuild must carry from the file onto the
+# node, whether or not the domain declares it: the lifecycle reads
+# status_changed_at (grace period), the seed sync reads closed_by (reopen) and
+# stakes, and revert reads lifecycle_run_id.
+FILE_FIELDS = GUARDED_FIELDS | frozenset({"thesis", "stakes"})
+
+
+def is_storyline_entity_type(entity_type: str | None) -> bool:
+    """Whether ``entity_type`` is the configured storyline role type
+    (``library.linking.roles.storyline``), without needing a graph."""
+    if not entity_type:
+        return False
+    from app.services.capture_link_policy import linking_policy
+
+    return linking_policy().role_type(ROLE, {entity_type}) == entity_type
 
 _TEXT_LIMITS = {"thesis": 500, "state": 4000, "would_change": 1000, "open_question": 500,
                 "description": 300}

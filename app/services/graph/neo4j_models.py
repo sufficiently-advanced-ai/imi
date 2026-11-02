@@ -114,6 +114,12 @@ def build_node_properties(
             if isinstance(val, (str, int, float, bool)):
                 properties[key] = val
 
+    # Storyline-owned fields (server stamps, reviewer fields, thesis, stakes):
+    # carried through a rebuild even when the domain does not declare them, or
+    # a rebuilt graph loses the lifecycle's grace period and seed reopen state.
+    for key, val in _storyline_file_fields(entity_def, metadata).items():
+        properties.setdefault(key, val)
+
     # Aliases from frontmatter feed the EntityResolver's alias index so
     # known surface-form variants resolve to this node instead of minting
     # duplicates.
@@ -135,6 +141,31 @@ def build_node_properties(
             properties["merged_ids"] = cleaned_ids
 
     return properties
+
+
+def _storyline_file_fields(entity_def: DomainEntity, metadata: dict[str, Any]) -> dict[str, Any]:
+    """The storyline-owned frontmatter fields of a storyline-type entity
+    (primitives and string lists), else {}. Never raises: a rebuild must not
+    fail over the storyline role config."""
+    try:
+        from app.services import storylines
+
+        if not storylines.is_storyline_entity_type(getattr(entity_def, "name", None)):
+            return {}
+        fields = storylines.FILE_FIELDS
+    except Exception as e:
+        logger.warning("storyline field carry-over skipped: %s", e)
+        return {}
+    out: dict[str, Any] = {}
+    for key in fields:
+        val = metadata.get(key)
+        if isinstance(val, (str, int, float, bool)):
+            out[key] = val
+        elif isinstance(val, (date, datetime)):
+            out[key] = val.isoformat()
+        elif isinstance(val, list) and val and all(isinstance(v, str) for v in val):
+            out[key] = val
+    return out
 
 
 def extract_relationship_targets(

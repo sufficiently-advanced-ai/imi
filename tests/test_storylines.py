@@ -442,3 +442,49 @@ async def test_seeded_reviewer_fields_are_in_history(tmp_path, kg):
     # nothing changed, nothing logged
     again = await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
     assert again.paths == []
+
+
+# --- rebuild carries storyline fields; seed history status_from ---------------------
+
+
+def test_rebuild_keeps_storyline_fields_the_domain_does_not_declare(monkeypatch):
+    from app.model_schemas.domain_config import DomainAttribute, DomainEntity
+    from app.services import capture_link_policy
+    from app.services.graph.neo4j_models import build_node_properties
+
+    monkeypatch.setattr(capture_link_policy, "linking_policy", lambda: capture_link_policy.LinkingPolicy())
+    declared = [DomainAttribute(name="status", type="string", description="s"),
+                DomainAttribute(name="thesis", type="string", description="t")]
+    storyline = DomainEntity(name="storyline", description="d", plural="storylines", attributes=declared)
+    project = DomainEntity(name="project", description="d", plural="projects", attributes=declared)
+    metadata = {
+        "name": "Arc", "status": "closed", "thesis": "T", "stakes": ["build", "writing"],
+        "status_changed_at": "2026-11-02T18:01:26+00:00", "status_changed_by": "seed_sync",
+        "closed_by": "seed", "lifecycle_run_id": "link-1", "last_reviewed": "2026-11-02T19:00:00+00:00",
+        "proposed_by": "mcp:x", "state": "Now", "direction": "steady", "open_question": "Q?",
+        "would_change": None,
+    }
+    props = build_node_properties(metadata, storyline, "storyline-arc")
+    for key in ("status_changed_at", "status_changed_by", "closed_by", "lifecycle_run_id",
+                "last_reviewed", "proposed_by", "state", "direction", "open_question"):
+        assert props[key] == metadata[key], key
+    assert props["stakes"] == ["build", "writing"] and props["thesis"] == "T"
+    assert "would_change" not in props  # None is not carried
+    # other types are untouched: only the domain's attributes + the generic extras
+    other = build_node_properties(metadata, project, "project-arc")
+    assert not {"status_changed_at", "closed_by", "stakes", "state", "lifecycle_run_id"} & set(other)
+
+
+@pytest.mark.asyncio
+async def test_seed_status_history_records_the_status_it_started_from(tmp_path, kg):
+    sid = "storyline-arc"
+    _seed(tmp_path, "- name: Arc\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    kg.nodes[sid].metadata["status"] = "dormant"  # e.g. the lifecycle's
+    _seed(tmp_path, "- name: Arc\n  status: closed\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    _seed(tmp_path, "- name: Arc\n")
+    await sync_role(kg, kg.writer, tmp_path, "storyline", "storyline")
+    rows = [(r["status_from"], r["status_to"]) for r in storylines.read_history(tmp_path, sid)
+            if r.get("event") == "status"]
+    assert rows == [(None, "active"), ("dormant", "closed"), ("closed", "active")]

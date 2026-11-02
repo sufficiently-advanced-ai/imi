@@ -323,6 +323,9 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
                 continue
             matched.add(node.id)
             metadata = getattr(node, "metadata", None) or {}
+            # writer.update mutates the node's metadata in place: read the
+            # status the history row starts from before writing.
+            status_from = metadata.get("status")
             changes: dict[str, Any] = _field_changes(role, metadata, seed)
             status = _seed_status(role, metadata, seed)
             if status:
@@ -341,7 +344,7 @@ async def sync_role(kg: Any, writer: Any, repo_root: Path, role: str, entity_typ
                 await writer.update(node.id, changes)
                 result.updated.append(node.id)
                 if role == "storyline":
-                    _log_history(repo_root, result, node.id, metadata.get("status"), status,
+                    _log_history(repo_root, result, node.id, status_from, status,
                                  _history_fields(role, changes))
         except Exception as e:  # one bad seed never stops the sync
             logger.warning("[SEEDS] %s seed %r failed: %s", role, seed.name, e)
