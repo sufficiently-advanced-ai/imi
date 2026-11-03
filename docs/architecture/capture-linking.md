@@ -21,6 +21,9 @@ curl -X POST localhost:8000/api/captures/link -H 'content-type: application/json
 # storyline-only pass over already-linked captures (docs/architecture/storylines.md)
 curl -X POST localhost:8000/api/captures/link/backfill -H 'content-type: application/json' \
      -d '{"since": "2026-08-01", "max_results": 100}'
+# re-check: re-judge one storyline's captures after its thesis was reworded
+curl -X POST localhost:8000/api/captures/link/backfill -H 'content-type: application/json' \
+     -d '{"storyline_ids": ["storyline-x"], "recheck_before": "2026-11-03T20:00:00Z", "max_results": 100}'
 # undo one run (or backfill)
 curl -X POST localhost:8000/api/captures/link/revert -H 'content-type: application/json' \
      -d '{"run_id": "link-20261029T..."}'
@@ -47,6 +50,7 @@ The response is the run's changelog:
 | `seeds` | seed sync results per role |
 | `storyline_status` | storyline lifecycle transitions this run made |
 | `superseded` | record claims whose links stopped projecting, and the capture that superseded each |
+| `unlinked_by_type` | earlier linker links a re-check replaced (backfill with `recheck_before`) |
 
 ## Configuration (`config/lanes.yaml`)
 
@@ -220,3 +224,14 @@ file (and the graph), records the run in each file's `reverted_runs`, and archiv
 entities the run created when no link file references them and they have no other edge.
 Reverted captures keep their `linked_at`, so the next run does not redo them; bump
 `LINK_VERSION` after fixing whatever went wrong to re-link them.
+
+### Re-check
+
+A backfill judges each capture against each storyline once (`storylines_checked`). Rewording
+a storyline's thesis does not re-open those judgments by itself: call the backfill with
+`storyline_ids` and `recheck_before` (usually the time of the reword). Every capture checked
+against those storylines before that time is judged again, newest first; repeat the call
+with the same time until `remaining` is 0. The re-check replaces the linker's earlier
+`ADVANCES` links to those storylines (owner links stay) and keeps what it replaced in the
+link file's `recheck_undo`, with an `unlink` audit row each. Reverting the re-check run
+restores the earlier links and checks.

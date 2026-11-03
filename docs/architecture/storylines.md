@@ -82,6 +82,11 @@ write and status transition (`at`, `actor`, `event`, `fields`, `status_from`, `s
 
 Seeds sync at the start of every LINK run (`POST /api/captures/link`).
 
+Rewording a thesis changes what future captures are judged against, not what was already
+judged. To re-judge the existing captures against the new thesis, run a re-check
+([Capture Linking](capture-linking.md#re-check)): the storyline-only backfill with
+`storyline_ids` and `recheck_before`.
+
 ## Reads and writes
 
 | REST | MCP | |
