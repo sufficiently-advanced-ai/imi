@@ -80,6 +80,15 @@ class UnresolvedName(BaseModel):
     confidence: float = 1.0
 
 
+class RecheckUndo(BaseModel):
+    """What a storyline re-check replaced in one file, so its revert can put
+    it back: the linker's earlier ADVANCES links to the re-checked
+    storylines, and the runs that had checked them."""
+
+    links: list[CaptureLink] = Field(default_factory=list)
+    checked: dict[str, str] = Field(default_factory=dict)
+
+
 class CaptureLinkFile(BaseModel):
     capture_id: str
     link_version: int = LINK_VERSION
@@ -101,6 +110,9 @@ class CaptureLinkFile(BaseModel):
     # not projected, so stale state does not stand as evidence; a revert drops
     # the run's entries.
     superseded_by: dict[str, str] = Field(default_factory=dict)
+    # A storyline re-check (backfill with recheck_before) replaces earlier
+    # judgments: run id -> what it replaced, restored by revert_run.
+    recheck_undo: dict[str, RecheckUndo] = Field(default_factory=dict)
 
     def owner_links(self) -> list[CaptureLink]:
         return [link for link in self.links if link.created_by == OWNER]

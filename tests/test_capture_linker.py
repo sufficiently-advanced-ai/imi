@@ -508,6 +508,76 @@ async def test_backfill_judges_linked_captures_once_and_reverts(world):
 
 
 @pytest.mark.asyncio
+async def test_recheck_rejudges_one_storyline_replaces_links_and_reverts(world):
+    from app.services.capture_link_store import CaptureLink
+
+    _with_storylines(world)
+    world.claude.script = {m.content.splitlines()[0][2:]: STORY_ANSWER for m in world.made}
+    await capture_linker.run_link(10, ctx=world.ctx())
+    old_run = "link-20260101T000000Z-aaaaaa"  # judged long ago, under the old thesis
+
+    def age(record):
+        record.storylines_checked = {sid: old_run for sid in record.storylines_checked}
+        for link in record.links:
+            if link.edge == "ADVANCES":
+                link.run_id = old_run
+        if record.capture_id == world.made[0].id:  # the owner linked this one by hand
+            record.links = [link for link in record.links
+                            if (link.edge, link.target_id) != ("ADVANCES", "storyline-arc")]
+            record.links.append(CaptureLink(edge="ADVANCES", target_id="storyline-arc",
+                                            target_type="storyline", created_by="owner"))
+        return record
+
+    for m in world.made:
+        world.links.mutate(m.id, age)
+    newest = world.made[2]
+    owner_and_old = [(link.created_by, link.stance) for link in world.links.get(newest.id).links
+                     if link.edge == "ADVANCES" and link.target_id == "storyline-arc"]
+
+    # without a re-check nothing is offered again
+    assert (await capture_linker.run_backfill(ctx=world.ctx()))["processed"] == 0
+    assert "storyline_ids" in (await capture_linker.run_backfill(
+        recheck_before="2026-06-01", ctx=world.ctx()))["errors"][0]
+    assert "future" in (await capture_linker.run_backfill(
+        storyline_ids=["storyline-arc"], recheck_before="2999-01-01", ctx=world.ctx()))["errors"][0]
+
+    # the new thesis: the model now finds the item supports it, and nothing else
+    world.claude.script = {m.content.splitlines()[0][2:]: {"advances": [
+        {"id": "storyline-arc", "stance": "supports", "confidence": 0.9}]} for m in world.made}
+    world.claude.payloads.clear()
+    first = await capture_linker.run_backfill(storyline_ids=["storyline-arc"], recheck_before="2026-06-01",
+                                              max_results=2, ctx=world.ctx())
+    assert first["processed"] == 2 and first["remaining"] == 1
+    assert first["unlinked_by_type"] == {"ADVANCES": 2} and first["links_by_type"] == {"ADVANCES": 2}
+    assert [s["id"] for s in world.claude.payloads[0]["storylines"]] == ["storyline-arc"]
+    record = world.links.get(newest.id)
+    arc = [(link.created_by, link.stance) for link in record.links
+           if link.edge == "ADVANCES" and link.target_id == "storyline-arc"]
+    # the linker's judgment is replaced; the other storyline is untouched
+    assert arc == [("link_phase", "supports")]
+    assert record.storylines_checked == {"storyline-arc": first["run_id"], "storyline-other": old_run}
+    assert ("ADVANCES", "storyline-other") in _edges(world, newest)
+    rows = [r for r in world.ctx().audit.iter_rows() if r.get("action") == "unlink"]
+    assert {r["replaced_run_id"] for r in rows} == {old_run} and rows[0]["stance"] == "challenges"
+
+    rest = await capture_linker.run_backfill(storyline_ids=["storyline-arc"], recheck_before="2026-06-01",
+                                             max_results=10, ctx=world.ctx())
+    assert rest["processed"] == 1 and rest["remaining"] == 0
+    hand = world.links.get(world.made[0].id)  # the owner's link is never replaced
+    assert [(link.created_by, link.target_id) for link in hand.links if link.edge == "ADVANCES"
+            and link.target_id == "storyline-arc"] == [("owner", "storyline-arc")]
+
+    reverted = await capture_linker.revert_run(first["run_id"], ctx=world.ctx())
+    assert reverted["links_removed"] == 2
+    record = world.links.get(newest.id)
+    assert sorted([(link.created_by, link.stance) for link in record.links
+                   if link.edge == "ADVANCES" and link.target_id == "storyline-arc"],
+                  key=str) == sorted(owner_and_old, key=str)
+    assert record.storylines_checked["storyline-arc"] == old_run and not record.recheck_undo
+    assert ("ADVANCES", "storyline-arc") in _edges(world, newest)
+
+
+@pytest.mark.asyncio
 async def test_backfill_needs_mode_on_and_open_storylines(world):
     _with_storylines(world)
     off = await capture_linker.run_backfill(ctx=world.ctx("shadow"))

@@ -59,6 +59,7 @@ from app.services.capture_link_store import (
     CaptureLinkFile,
     CaptureLinkStore,
     LinkAuditLog,
+    RecheckUndo,
     UnresolvedName,
     now_iso,
 )
@@ -220,6 +221,7 @@ class Changelog:
     seeds: dict[str, Any] = field(default_factory=dict)
     storyline_status: list[dict[str, Any]] = field(default_factory=list)
     superseded: list[dict[str, str]] = field(default_factory=list)
+    unlinked_by_type: Counter = field(default_factory=Counter)  # earlier links a re-check replaced
     errors: list[str] = field(default_factory=list)
     committed: bool = False
 
@@ -240,6 +242,7 @@ class Changelog:
             "seeds": self.seeds,
             "storyline_status": self.storyline_status,
             "superseded": self.superseded,
+            "unlinked_by_type": dict(self.unlinked_by_type),
             "errors": self.errors,
             "committed": self.committed,
         }
@@ -1094,23 +1097,40 @@ async def _commit(ctx: LinkContext, paths: list[str], message: str) -> bool:
 
 
 async def run_backfill(storyline_ids: list[str] | None = None, since: str | None = None,
-                       max_results: int = 50, ctx: LinkContext | None = None) -> dict[str, Any]:
+                       max_results: int = 50, ctx: LinkContext | None = None,
+                       recheck_before: str | None = None) -> dict[str, Any]:
     """A storyline-only pass over captures that are already linked.
 
     New and proposed storylines only see captures linked after they exist;
     this offers each linked capture the storylines it has not been judged
     against (``storylines_checked``), newest first by occurred_at. Same prompt
     with only storylines listed; its links carry this run's id, so
-    ``revert_run`` undoes them. Raises LinkRunBusy while a run holds the lock."""
+    ``revert_run`` undoes them. Raises LinkRunBusy while a run holds the lock.
+
+    ``recheck_before`` (with ``storyline_ids``) also re-judges captures whose
+    check against those storylines ran before that time, e.g. after the
+    thesis was reworded: their earlier linker links to those storylines are
+    replaced, and kept in the file so a revert restores them. Repeat calls
+    with the same time work through the rest, newest first."""
     if _run_lock.locked():
         raise LinkRunBusy("a link run is already in progress")
     async with _run_lock:
         ctx = ctx or default_context()
-        return await _backfill(ctx, storyline_ids, since, max(1, min(int(max_results), MAX_RESULTS_CAP)))
+        return await _backfill(ctx, storyline_ids, since, max(1, min(int(max_results), MAX_RESULTS_CAP)),
+                               recheck_before=recheck_before)
+
+
+_RUN_TIME = re.compile(r"(\d{8}T\d{6}Z)")
+
+
+def _run_time(run_id: str | None) -> datetime | None:
+    """When a link run or backfill ran, from its id (``link-20261103T190812Z-…``)."""
+    m = _RUN_TIME.search(run_id or "")
+    return datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC) if m else None
 
 
 async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: str | None,
-                    max_results: int) -> dict[str, Any]:
+                    max_results: int, recheck_before: str | None = None) -> dict[str, Any]:
     log = Changelog(run_id=f"backfill-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
                     mode=ctx.policy.mode)
     if ctx.policy.mode != "on":
@@ -1123,6 +1143,17 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
     since_dt = to_utc(since) if since else None
     if since and since_dt is None:
         log.errors.append(f"since is not an ISO-8601 date: {since!r}")
+        return log.as_dict()
+    recheck_dt = to_utc(recheck_before) if recheck_before else None
+    if recheck_before and recheck_dt is None:
+        log.errors.append(f"recheck_before is not an ISO-8601 date: {recheck_before!r}")
+        return log.as_dict()
+    if recheck_dt is not None and recheck_dt > datetime.now(UTC):
+        # The re-check's own runs would fall before it and be re-judged forever.
+        log.errors.append("recheck_before is in the future")
+        return log.as_dict()
+    if recheck_dt is not None and not storyline_ids:
+        log.errors.append("recheck_before needs storyline_ids: name the storylines to re-check")
         return log.as_dict()
 
     await _ensure_graph(ctx)
@@ -1142,6 +1173,10 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
         if record.mode != "on" or record.linked_at is None or record.superseded_by:
             continue
         missing = set(targets) - set(record.storylines_checked)
+        if recheck_dt is not None:
+            # Judged before the cutoff (an unreadable run id counts as before).
+            missing |= {sid for sid in targets if sid in record.storylines_checked
+                        and ((t := _run_time(record.storylines_checked[sid])) is None or t < recheck_dt)}
         if not missing or record.capture_id in superseded:
             continue
         occurred = to_utc(record.occurred_at)
@@ -1202,7 +1237,23 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
             chosen = _role_selections(ctx, "storyline", set(ids), answers[ref], ctx.policy.min_confidence,
                                       record=is_record_linked(ctx, memory))
 
-            def apply(record: CaptureLinkFile, chosen=chosen, ids=ids) -> CaptureLinkFile:
+            replaced: list[CaptureLink] = []
+
+            def apply(record: CaptureLinkFile, chosen=chosen, ids=ids,
+                      replaced=replaced) -> CaptureLinkFile:
+                # A re-check replaces the linker's earlier judgment of these
+                # storylines (owner links stay); the file keeps what it
+                # replaced so revert_run can restore it.
+                undo = RecheckUndo(checked={sid: record.storylines_checked[sid]
+                                            for sid in ids if sid in record.storylines_checked})
+                undo.links = [link for link in record.links
+                              if link.edge == ADVANCES and link.target_id in ids
+                              and link.created_by == LINK_PHASE]
+                if undo.links:
+                    record.links = [link for link in record.links if link not in undo.links]
+                if undo.links or undo.checked:
+                    record.recheck_undo[log.run_id] = undo
+                replaced[:] = undo.links
                 for target_id, target_type, confidence, stance in chosen:
                     _add_link(record, CaptureLink(edge=ADVANCES, target_id=target_id,
                                                   target_type=target_type, confidence=confidence,
@@ -1213,6 +1264,12 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
 
             ctx.links.mutate(memory.id, apply)
             touched[memory.id] = memory
+            for old in replaced:
+                log.unlinked_by_type[ADVANCES] += 1
+                audit_rows.append({"run_id": log.run_id, "mode": "on", "action": "unlink",
+                                   "reason": "recheck", "capture_id": memory.id, "edge": ADVANCES,
+                                   "target_id": old.target_id, "stance": old.stance,
+                                   "confidence": old.confidence, "replaced_run_id": old.run_id})
             for target_id, _, confidence, stance in chosen:
                 log.links_by_type[ADVANCES] += 1
                 audit_rows.append({"run_id": log.run_id, "mode": "on", "action": "link",
@@ -1278,11 +1335,28 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
         extracted_here = record.run_id == run_id
         checked = {k: v for k, v in record.storylines_checked.items() if v != run_id}
         superseded_by = {k: v for k, v in record.superseded_by.items() if v != run_id}
+        # A re-check by this run: put back what it replaced. A later re-check
+        # that replaced this run's links must not restore them either.
+        undo = record.recheck_undo.get(run_id)
+        other_undo = {k: u for k, u in record.recheck_undo.items() if k != run_id}
+        stale = sum(1 for u in other_undo.values() for link in u.links
+                    if link.created_by == LINK_PHASE and link.run_id == run_id)
         if (len(keep) == len(record.links) and not (extracted_here and record.unresolved)
                 and len(checked) == len(record.storylines_checked)
-                and len(superseded_by) == len(record.superseded_by)):
+                and len(superseded_by) == len(record.superseded_by)
+                and undo is None and not stale):
             return None
         removed += len(record.links) - len(keep)
+        if undo is not None:
+            for link in undo.links:
+                if not any(existing.key() == link.key() for existing in keep):
+                    keep.append(link)
+            for sid, earlier in undo.checked.items():
+                checked.setdefault(sid, earlier)
+        for u in other_undo.values():
+            u.links = [link for link in u.links
+                       if not (link.created_by == LINK_PHASE and link.run_id == run_id)]
+        record.recheck_undo = other_undo
         record.links = keep
         record.storylines_checked = checked
         record.superseded_by = superseded_by

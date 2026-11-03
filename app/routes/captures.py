@@ -6,7 +6,7 @@ Externally visible paths (all under /api/captures):
     GET  /api/captures/{capture_id}   — single capture record
     POST /api/captures/{capture_id}/review — audited governance transition
     POST /api/captures/link           — one LINK run over unlinked library captures (ADR-011)
-    POST /api/captures/link/backfill  — storyline-only pass over linked captures
+    POST /api/captures/link/backfill  — storyline-only pass over linked captures (or a re-check)
     POST /api/captures/link/revert    — undo one LINK run (or backfill)
 
 Prefix convention: routers self-prefix with /api (mirrors decisions.py);
@@ -148,6 +148,11 @@ class LinkBackfillRequest(BaseModel):
     )
     since: str | None = Field(None, description="ISO-8601: only captures that occurred on or after")
     max_results: int = Field(50, ge=1, le=500, description="Most captures to judge in this run")
+    recheck_before: str | None = Field(
+        None,
+        description="ISO-8601: also re-judge captures checked against storyline_ids before this "
+        "time (e.g. when the thesis was reworded); their earlier linker links are replaced",
+    )
 
 
 @router.post("/link/backfill")
@@ -161,7 +166,8 @@ async def backfill_storylines(body: LinkBackfillRequest | None = None):
     try:
         return await asyncio.shield(
             asyncio.ensure_future(capture_linker.run_backfill(
-                storyline_ids=body.storyline_ids, since=body.since, max_results=body.max_results
+                storyline_ids=body.storyline_ids, since=body.since, max_results=body.max_results,
+                recheck_before=body.recheck_before,
             ))
         )
     except capture_linker.LinkRunBusy as e:
