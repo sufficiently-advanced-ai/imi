@@ -3,13 +3,14 @@
 > **Audience:** developers and operators wiring library captures into the graph ·
 > **Source of truth:** `app/services/capture_linker.py`, `app/services/capture_link_store.py`,
 > `app/services/graph/capture_graph_writer.py` ·
-> **Decision record:** [ADR-011](../adr/ADR-011-library-capture-enrichment.md) ·
+> **Decision records:** [ADR-011](../adr/ADR-011-library-capture-enrichment.md), [ADR-012](../adr/ADR-012-record-work-log-linking.md) ·
 > **See also:** [Memory](memory.md) · [Entities & Graph](entities-and-graph.md)
 
 Captures (`POST /api/captures`, `capture_thought`) bypass the ingest orchestrator, so on
 their own they never reach the graph. The LINK phase links **library** captures to sources,
 topics, storylines, essays and the entities they discuss, in batches, outside the request
-that created them.
+that created them. Record-lane captures from the sources in `record_sources` are linked too,
+to seeded items only (see [Record-lane sources](#record-lane-sources), ADR-012).
 
 ## Running it
 
@@ -44,6 +45,8 @@ The response is the run's changelog:
 | `admission_dropped` | corroborated names entity admission rejected |
 | `below_bar` | the names closest to the corroboration bar (top 25) |
 | `seeds` | seed sync results per role |
+| `storyline_status` | storyline lifecycle transitions this run made |
+| `superseded` | record claims whose links stopped projecting, and the capture that superseded each |
 
 ## Configuration (`config/lanes.yaml`)
 
@@ -66,6 +69,8 @@ library:
       min_captures: 3
       min_sources: 2
       window_days: 30
+    record_sources: [changes]               # ADR-012; default none
+    record_storyline_min_confidence: 0.6    # default: storyline_min_confidence
 ```
 
 - **off**: the endpoint does nothing.
@@ -76,6 +81,30 @@ library:
 
 The model call is operation `capture_linking` (`app/prompts/capture_linking.xml`); route it
 in `config/inference.yaml`. Corroborated creation also calls `entity_admission`.
+
+## Record-lane sources
+
+ADR-011 left record captures to owner attachment. ADR-012 adds one exception: a record
+capture whose `source` is in `record_sources` (on the personal deployment, the `changes`
+work log) is linked by the same runs, with less:
+
+- **Seeded items only**: `ABOUT`, `ADVANCES` and `EVIDENCE_FOR`. No `FROM_SOURCE`, no
+  mentions, no new topics, so nothing in the work log creates an entity or feeds the
+  corroboration ledger.
+- **Separate calls**: record items go to the model in their own batches, marked
+  `"work_log": true`, as their own text (the `[kind · thread · status] claim` line and its
+  Who / Entities / Quote lines). The prompt's WORK LOG rule maps kinds to stance: progress or
+  a decision that bears the thesis out is `supports`, a risk or failed attempt `challenges`,
+  a question or commitment `context`.
+- **Their own storyline bar**: `record_storyline_min_confidence` when set. A first-hand work
+  item's confidence is relevance only.
+- **Supersession**: a `Supersedes: <claim>` line names an earlier item by its claim text.
+  An item that is already superseded is never linked. When a run links the superseding item,
+  the earlier item's file gets `superseded_by: {capture id: run id}`: its links stay in the
+  file but are no longer projected, so stale state stops counting as storyline evidence.
+  Reverting that run clears the entry.
+- **Unchanged**: the lane, decay and recall. A record capture's `Document` node carries
+  `lane: record`, and so does each edge.
 
 ## Three tiers of entity
 

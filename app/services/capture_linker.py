@@ -19,6 +19,12 @@ that created them (§2):
 ``shadow`` writes link files and audit rows but projects nothing and creates
 no entity; ``on`` acts. Seeds sync in both modes: they are the owner's.
 
+Record-lane captures from ``library.linking.record_sources`` (ADR-012, e.g.
+the ``changes`` work log) are linked too, to seeded items only: no source,
+no mentions, no entity creation, no corroboration. A record claim that a
+later capture supersedes keeps its links in its file but stops projecting
+them.
+
 ``revert_run`` undoes one run. ``attach`` / ``detach`` are the owner's links
 (§5), which pin a library capture against decay.
 """
@@ -213,6 +219,7 @@ class Changelog:
     sources_created: list[str] = field(default_factory=list)
     seeds: dict[str, Any] = field(default_factory=dict)
     storyline_status: list[dict[str, Any]] = field(default_factory=list)
+    superseded: list[dict[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     committed: bool = False
 
@@ -232,6 +239,7 @@ class Changelog:
             "sources_created": self.sources_created,
             "seeds": self.seeds,
             "storyline_status": self.storyline_status,
+            "superseded": self.superseded,
             "errors": self.errors,
             "committed": self.committed,
         }
@@ -255,6 +263,64 @@ def capture_brief(memory: Any, ref: str) -> dict[str, Any]:
         "source": memory.source,
         "date": (memory.source_date or "")[:10] or None,
     }
+
+
+_CLAIM = re.compile(r"^\[[^\]]*\]\s*(.+)$")
+_SUPERSEDES = "Supersedes:"
+
+
+def record_brief(memory: Any, ref: str) -> dict[str, Any]:
+    """A work-log item as the model sees it: its own text (the claim line with
+    kind, thread and status, then Who / Entities / Quote), not an enrichment
+    summary, which for these items is often empty or generic."""
+    lines = [" ".join(line.split()) for line in (memory.content or "").splitlines()]
+    lines = [line for line in lines if line and not line.startswith(("Evidence:", _SUPERSEDES))]
+    return {
+        "ref": ref,
+        "title": lines[0][:200] if lines else memory.id,
+        "summary": " | ".join(lines)[:_SUMMARY_CHARS],
+        "source": memory.source,
+        "date": (memory.source_date or "")[:10] or None,
+    }
+
+
+def _norm_claim(text: str) -> str:
+    return " ".join(text.lower().split()).rstrip(".")
+
+
+def record_claim(content: str | None) -> str | None:
+    """The claim of a ``[kind · thread · status] claim`` first line."""
+    first = (content or "").split("\n", 1)[0].strip()
+    match = _CLAIM.match(first)
+    return _norm_claim(match.group(1)) if match else None
+
+
+def superseded_claims(content: str | None) -> list[str]:
+    return [_norm_claim(line[len(_SUPERSEDES):]) for line in (content or "").splitlines()
+            if line.startswith(_SUPERSEDES) and line[len(_SUPERSEDES):].strip()]
+
+
+def supersession(memories: list[Any]) -> dict[str, set[str]]:
+    """capture id -> the ids of the captures that supersede it. A ``Supersedes:``
+    line names an earlier claim by its text; it matches a capture whose claim
+    is that text and which did not occur after the superseding one."""
+    by_claim: dict[str, list[Any]] = defaultdict(list)
+    for memory in memories:
+        claim = record_claim(memory.content)
+        if claim:
+            by_claim[claim].append(memory)
+    out: dict[str, set[str]] = defaultdict(set)
+    for memory in memories:
+        when = to_utc(memory.source_date)
+        for claim in superseded_claims(memory.content):
+            for earlier in by_claim.get(claim, ()):
+                if earlier.id == memory.id:
+                    continue
+                earlier_when = to_utc(earlier.source_date)
+                if when and earlier_when and earlier_when > when:
+                    continue
+                out[earlier.id].add(memory.id)
+    return dict(out)
 
 
 def _known_entities(kg: Any, mention_types: list[str], text: str) -> list[dict[str, str]]:
@@ -373,10 +439,27 @@ def _resolver(kg: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _unlinked(ctx: LinkContext, mode: str) -> list[tuple[Any, CaptureLinkFile | None]]:
+def is_record_linked(ctx: LinkContext, memory: Any) -> bool:
+    """A record-lane capture whose source the policy links (ADR-012)."""
+    return memory.lane == "record" and memory.source in ctx.policy.record_sources
+
+
+def _record_supersession(ctx: LinkContext, memories: list[Any]) -> dict[str, set[str]]:
+    if not ctx.policy.record_sources:
+        return {}
+    return supersession([m for m in memories if is_record_linked(ctx, m)])
+
+
+def _unlinked(ctx: LinkContext, mode: str, superseded: dict[str, set[str]] | None = None,
+              memories: list[Any] | None = None) -> list[tuple[Any, CaptureLinkFile | None]]:
+    superseded = superseded or {}
     out = []
-    for memory in ctx.captures.iter_all():
-        if memory.lane != "library" or memory.review_status == "rejected" or memory.superseded_by:
+    for memory in ctx.captures.iter_all() if memories is None else memories:
+        if memory.review_status == "rejected" or memory.superseded_by:
+            continue
+        if memory.lane != "library" and not is_record_linked(ctx, memory):
+            continue
+        if memory.id in superseded:  # a later claim replaced it: nothing to link
             continue
         record = ctx.links.get(memory.id)
         if record is not None and record.is_linked(mode):
@@ -397,13 +480,17 @@ def _source_key(memory: Any, source_ref: Any) -> str:
 
 
 def _role_selections(ctx: LinkContext, role: str, ids: set[str], selection: dict[str, Any],
-                     floor: float) -> list[tuple[str, str, float, str | None]]:
+                     floor: float, record: bool = False) -> list[tuple[str, str, float, str | None]]:
     """(target id, type, confidence, stance) the model chose for one seeded
     role, filtered by the role's bar. Storylines take a higher floor, at most
     ``max_advances`` per capture, and always a stance (evidence for a thesis);
-    essays always a stance; topics at most MAX_ABOUT."""
+    essays always a stance; topics at most MAX_ABOUT. A record (work-log)
+    item takes ``record_storyline_min_confidence`` when it is set."""
     if role == "storyline":
-        floor = max(floor, ctx.policy.storyline_min_confidence)
+        story_floor = ctx.policy.storyline_min_confidence
+        if record and ctx.policy.record_storyline_min_confidence is not None:
+            story_floor = ctx.policy.record_storyline_min_confidence
+        floor = max(floor, story_floor)
     chosen = sorted(
         (i for i in _items(selection, _RESPONSE_KEYS[role])
          if i.get("id") in ids and _confidence(i) >= floor),
@@ -472,7 +559,9 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
             if result.as_dict():
                 log.seeds[role] = result.as_dict()
 
-    pending = _unlinked(ctx, mode)
+    every = list(ctx.captures.iter_all())  # one parse of the corpus per run
+    superseded = _record_supersession(ctx, every)
+    pending = _unlinked(ctx, mode, superseded, every)
     batch = pending[:max_results]
     log.remaining = len(pending) - len(batch)
     if not batch:
@@ -494,7 +583,8 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     # 2. deterministic sources
     source_type = ctx.role_type(SOURCE_ROLE)
     for memory, previous in batch:
-        ref = derive_source(memory.source, memory.source_id, memory.content)
+        ref = (None if is_record_linked(ctx, memory)
+               else derive_source(memory.source, memory.source_id, memory.content))
         record = CaptureLinkFile(
             capture_id=memory.id,
             mode="shadow" if mode == "shadow" else "on",
@@ -539,19 +629,30 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     seeded_ids = {role: {s["id"] for s in items} for role, items in seeded.items()}
     topic_type = ctx.role_type("topic")
     resolver = _resolver(ctx.kg)
-    chunks = [batch[i : i + ctx.policy.batch_size] for i in range(0, len(batch), ctx.policy.batch_size)]
+    # Record items go in their own calls: seeded lists only, no mentions.
+    record_ids = {memory.id for memory, _ in batch if is_record_linked(ctx, memory)}
+    size = ctx.policy.batch_size
+    chunks = []
+    for part in ([p for p in batch if p[0].id not in record_ids], [p for p in batch if p[0].id in record_ids]):
+        chunks.extend(part[i : i + size] for i in range(0, len(part), size))
     semaphore = asyncio.Semaphore(ctx.policy.concurrency)
 
     async def select(chunk: list) -> tuple[list[str], dict[str, dict[str, Any]] | None]:
         """(capture ids, selections by capture id), or None for a failed call."""
         refs = {f"c{i + 1}": memory for i, (memory, _) in enumerate(chunk)}
-        briefs = [capture_brief(memory, ref) for ref, memory in refs.items()]
-        text = " ".join(f"{b['title']} {b['summary']}" for b in briefs)
-        payload: dict[str, Any] = {
-            "types": {t: ctx.domain_types[t] for t in ctx.mention_types},
-            "known_entities": _known_entities(ctx.kg, ctx.mention_types, text),
-            "captures": briefs,
-        }
+        if chunk[0][0].id in record_ids:
+            payload: dict[str, Any] = {
+                "work_log": True,
+                "captures": [record_brief(memory, ref) for ref, memory in refs.items()],
+            }
+        else:
+            briefs = [capture_brief(memory, ref) for ref, memory in refs.items()]
+            text = " ".join(f"{b['title']} {b['summary']}" for b in briefs)
+            payload = {
+                "types": {t: ctx.domain_types[t] for t in ctx.mention_types},
+                "known_entities": _known_entities(ctx.kg, ctx.mention_types, text),
+                "captures": briefs,
+            }
         for role, items in seeded.items():
             payload[role + "s"] = items
         ids = [memory.id for memory in refs.values()]
@@ -596,11 +697,13 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
 
         for role, ids in seeded_ids.items():
             for target_id, target_type, confidence, stance in _role_selections(
-                ctx, role, ids, selection, floor
+                ctx, role, ids, selection, floor, record=capture_id in record_ids
             ):
                 add(_ROLE_EDGES[role], target_id, target_type, confidence, stance)
         if seeded_ids.get("storyline"):
             record.storylines_checked = {sid: log.run_id for sid in sorted(seeded_ids["storyline"])}
+        if capture_id in record_ids:
+            continue  # seeded links only: no mentions, no topic growth (ADR-012)
 
         for item in _items(selection, "mentions"):
             name = item.get("name")
@@ -655,11 +758,12 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
         ctx.links.mutate(capture_id, partial(_merge_run_links, run_record=record))
     log.processed = len(records)
 
-    # 5. corroboration
+    # 5. corroboration (record items name nothing, so they never feed it)
     backlinked = await _corroborate(ctx, log, records, audit_rows, memories)
+    hidden = _mark_superseded(ctx, log, superseded, set(records) & record_ids, audit_rows)
 
     # 6. project, audit, commit
-    touched = set(records) | backlinked
+    touched = set(records) | backlinked | hidden
     if mode == "on" and ctx.graph is not None:
         items = []
         for capture_id in touched:
@@ -687,6 +791,33 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
                 mode, log.run_id, log.processed, dict(log.links_by_type),
                 len(log.entities_created), log.remaining)
     return log.as_dict()
+
+
+def _mark_superseded(ctx: LinkContext, log: Changelog, superseded: dict[str, set[str]],
+                     linked_now: set[str], audit_rows: list[dict[str, Any]]) -> set[str]:
+    """Record claims superseded by a capture this run linked: their links stop
+    projecting (ADR-012). Returns the captures whose files changed."""
+    by_superseder: dict[str, set[str]] = defaultdict(set)
+    for earlier, later in superseded.items():
+        for capture_id in later & linked_now:
+            by_superseder[capture_id].add(earlier)
+    changed: set[str] = set()
+    for capture_id, earlier_ids in by_superseder.items():
+        for earlier in sorted(earlier_ids):
+            current = ctx.links.get(earlier)
+            if current is None or capture_id in current.superseded_by:
+                continue
+
+            def mark(record: CaptureLinkFile, by: str = capture_id) -> CaptureLinkFile:
+                record.superseded_by[by] = log.run_id
+                return record
+
+            ctx.links.mutate(earlier, mark)
+            changed.add(earlier)
+            log.superseded.append({"capture_id": earlier, "by": capture_id})
+            audit_rows.append({"run_id": log.run_id, "mode": log.mode, "action": "supersede",
+                               "capture_id": earlier, "by": capture_id})
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -1004,40 +1135,47 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
     if not targets:
         return log.as_dict()
 
-    candidates: list[tuple[datetime, CaptureLinkFile, set[str]]] = []
+    every = {m.id: m for m in ctx.captures.iter_all()}  # one parse of the corpus
+    superseded = _record_supersession(ctx, list(every.values()))
+    candidates: list[tuple[datetime, Any, set[str]]] = []
     for record in ctx.links.iter_all():
-        if record.mode != "on" or record.linked_at is None:
+        if record.mode != "on" or record.linked_at is None or record.superseded_by:
             continue
         missing = set(targets) - set(record.storylines_checked)
-        if not missing:
+        if not missing or record.capture_id in superseded:
             continue
         occurred = to_utc(record.occurred_at)
         if since_dt is not None and (occurred is None or occurred < since_dt):
             continue
-        candidates.append((occurred or datetime.min.replace(tzinfo=UTC), record, missing))
+        # Only captures the linker would link now: a rejected or superseded
+        # capture is never judged, so it is not counted as remaining either.
+        memory = every.get(record.capture_id)
+        if memory is None or memory.review_status == "rejected" or memory.superseded_by:
+            continue
+        if memory.lane != "library" and not is_record_linked(ctx, memory):
+            continue
+        candidates.append((occurred or datetime.min.replace(tzinfo=UTC), memory, missing))
     candidates.sort(key=lambda c: c[0], reverse=True)
-    batch = []
-    for _, record, missing in candidates:
-        if len(batch) >= max_results:
-            break
-        memory = ctx.captures.get(record.capture_id)
-        if memory is not None and memory.review_status != "rejected" and not memory.superseded_by:
-            batch.append((memory, missing))
-    log.remaining = max(0, len(candidates) - len(batch))
+    batch = [(memory, missing) for _, memory, missing in candidates[:max_results]]
+    log.remaining = len(candidates) - len(batch)
     if not batch:
         return log.as_dict()
 
-    # Group captures by the storylines they still need, so each call offers
-    # exactly those (usually one group: every target).
-    groups: dict[frozenset[str], list[Any]] = defaultdict(list)
+    # Group captures by the storylines they still need (usually one group:
+    # every target) and by lane, so each call offers exactly those and record
+    # items go in work-log calls.
+    groups: dict[tuple[frozenset[str], bool], list[Any]] = defaultdict(list)
     for memory, missing in batch:
-        groups[frozenset(missing)].append(memory)
+        groups[(frozenset(missing), is_record_linked(ctx, memory))].append(memory)
     semaphore = asyncio.Semaphore(ctx.policy.concurrency)
 
-    async def select(ids: frozenset[str], memories: list[Any]):
+    async def select(ids: frozenset[str], work_log: bool, memories: list[Any]):
         refs = {f"c{i + 1}": m for i, m in enumerate(memories)}
-        payload = {"captures": [capture_brief(m, ref) for ref, m in refs.items()],
-                   "storylines": [targets[i] for i in sorted(ids)]}
+        brief = record_brief if work_log else capture_brief
+        payload: dict[str, Any] = {"captures": [brief(m, ref) for ref, m in refs.items()],
+                                   "storylines": [targets[i] for i in sorted(ids)]}
+        if work_log:
+            payload["work_log"] = True
         if ctx.claude_client is None:
             return ids, refs, None
         async with semaphore:
@@ -1045,9 +1183,9 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
         return ids, refs, answers
 
     calls = []
-    for ids, memories in groups.items():
+    for (ids, work_log), memories in groups.items():
         for i in range(0, len(memories), ctx.policy.batch_size):
-            calls.append(select(ids, memories[i : i + ctx.policy.batch_size]))
+            calls.append(select(ids, work_log, memories[i : i + ctx.policy.batch_size]))
 
     linked_at = now_iso()
     audit_rows: list[dict[str, Any]] = []
@@ -1061,7 +1199,8 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
             if ref not in answers:
                 failed += 1
                 continue
-            chosen = _role_selections(ctx, "storyline", set(ids), answers[ref], ctx.policy.min_confidence)
+            chosen = _role_selections(ctx, "storyline", set(ids), answers[ref], ctx.policy.min_confidence,
+                                      record=is_record_linked(ctx, memory))
 
             def apply(record: CaptureLinkFile, chosen=chosen, ids=ids) -> CaptureLinkFile:
                 for target_id, target_type, confidence, stance in chosen:
@@ -1138,12 +1277,15 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
         # back-link into this file does not own them.
         extracted_here = record.run_id == run_id
         checked = {k: v for k, v in record.storylines_checked.items() if v != run_id}
+        superseded_by = {k: v for k, v in record.superseded_by.items() if v != run_id}
         if (len(keep) == len(record.links) and not (extracted_here and record.unresolved)
-                and len(checked) == len(record.storylines_checked)):
+                and len(checked) == len(record.storylines_checked)
+                and len(superseded_by) == len(record.superseded_by)):
             return None
         removed += len(record.links) - len(keep)
         record.links = keep
         record.storylines_checked = checked
+        record.superseded_by = superseded_by
         if extracted_here:
             record.unresolved = []
         if run_id not in record.reverted_runs:

@@ -96,6 +96,10 @@ library:
       min_captures: 3
       min_sources: 2
       window_days: 30             # by event time (occurred_at)
+    record_sources: []            # record-lane sources linked to seeded items only
+                                  # (ADR-012), e.g. [changes]: no mentions, no creation
+    # record_storyline_min_confidence: 0.6  # storyline bar for those items
+                                  # (default: storyline_min_confidence)
 recall:
   default_lanes: [record]         # e.g. [record, library]: library hits are
                                   # ranked separately under `background`

@@ -99,5 +99,6 @@ typed datetime parameters.
 
 ## Not yet
 
-Linking record-lane `changes` captures (needs an ADR: ADR-011 left record-lane linking to the
-owner), a timeline view, and an `ask_kb` storyline hint.
+A timeline view and an `ask_kb` storyline hint. Record-lane work-log captures are linked
+since ADR-012 ([Capture Linking](capture-linking.md#record-lane-sources)); their evidence rows
+carry `lane: record`.

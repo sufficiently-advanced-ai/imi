@@ -538,3 +538,125 @@ def test_seeded_ledger_matches_the_full_ledger_on_the_runs_clusters():
     assert {key(c) for c in seeded} == full
     assert all(set(c.members) & seeds for c in seeded)  # no cluster without a run member
     assert len(seeded) == 3  # Acme, Globex, Hooli
+
+
+# --- record-lane linking (ADR-012) ---------------------------------------------------
+
+RISK = "[risk · lego · open] Part recognition misreads slope bricks."
+PROGRESS = "[progress · lego · done] Slope bricks are now recognized from photos."
+
+
+def _work_item(world, claim, date, supersedes=None):
+    content = f"{claim}\nWho: Scott\nEntities: brickmy\nEvidence: session:abc"
+    if supersedes:
+        content += f"\nSupersedes: {supersedes.split('] ', 1)[1]}"
+    return world.captures.capture(content, "changes", f"changes:{date}", source_date=date,
+                                  lane="record").memory
+
+
+def test_supersession_matches_earlier_claims_by_text():
+    def item(cid, claim, date, sup=None):
+        content = claim + (f"\nSupersedes: {sup}" if sup else "")
+        return SimpleNamespace(id=cid, content=content, source_date=date)
+
+    memories = [
+        item("a", RISK, "2026-10-10"),
+        item("b", PROGRESS, "2026-10-12", sup="Part recognition misreads slope  bricks"),  # spacing, no stop
+        item("c", "[risk · x · open] Later claim.", "2026-10-20"),
+        item("d", "[progress · x · done] Earlier.", "2026-10-15", sup="Later claim."),  # c occurs after d
+    ]
+    assert capture_linker.supersession(memories) == {"a": {"b"}}
+    assert capture_linker.record_claim("no bracket line") is None
+
+
+@pytest.mark.asyncio
+async def test_record_sources_link_seeded_items_only(world):
+    _with_storylines(world)
+    risk = _work_item(world, RISK, "2026-10-10T09:00:00Z")
+    world.claude.script[RISK] = {
+        "advances": [{"id": "storyline-arc", "stance": "challenges", "confidence": 0.85}],
+        "about": [{"id": "topic-robotics", "confidence": 0.8}],
+        "mentions": [{"name": "Brickmy", "type": "organization", "confidence": 0.9}],
+        "new_topics": [{"name": "Lego", "confidence": 0.9}],
+    }
+
+    off = await capture_linker.run_link(10, ctx=world.ctx())
+    assert world.links.get(risk.id) is None and off["processed"] == 3  # not a record source
+
+    world.claude.payloads.clear()
+    result = await capture_linker.run_link(10, ctx=world.ctx(record_sources=("changes",)))
+    assert result["processed"] == 1  # the manual note stays unlinked
+    record = world.links.get(risk.id)
+    assert _edges(world, risk) == [("ABOUT", "topic-robotics"), ("ADVANCES", "storyline-arc")]
+    assert [link.stance for link in record.links if link.edge == "ADVANCES"] == ["challenges"]
+    assert record.unresolved == [] and record.lane == "record"  # no mentions, no topic growth
+    (payload,) = world.claude.payloads
+    assert payload["work_log"] is True and "types" not in payload and "known_entities" not in payload
+    assert payload["captures"][0]["title"] == RISK
+    assert "Evidence:" not in payload["captures"][0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_superseding_claim_hides_the_earlier_links_and_reverts(world):
+    _with_storylines(world)
+    ctx = lambda: world.ctx(record_sources=("changes",))  # noqa: E731
+    risk = _work_item(world, RISK, "2026-10-10T09:00:00Z")
+    world.claude.script[RISK] = {"advances": [{"id": "storyline-arc", "stance": "challenges", "confidence": 0.85}]}
+    world.claude.script[PROGRESS] = {"advances": [{"id": "storyline-arc", "stance": "supports", "confidence": 0.9}]}
+    await capture_linker.run_link(10, ctx=ctx())
+    assert world.links.get(risk.id).graph_links()  # linked while it stood
+
+    progress = _work_item(world, PROGRESS, "2026-10-12T09:00:00Z", supersedes=RISK)
+    second = await capture_linker.run_link(10, ctx=ctx())
+    assert second["superseded"] == [{"capture_id": risk.id, "by": progress.id}]
+    earlier = world.links.get(risk.id)
+    assert earlier.superseded_by == {progress.id: second["run_id"]}
+    assert earlier.links and earlier.graph_links() == []  # kept in the file, not projected
+    assert risk.id in {cid for cid, _ in world.graph.writes[-1]}
+
+    backfill = await capture_linker.run_backfill(ctx=ctx())
+    assert backfill["processed"] == 0 and backfill["remaining"] == 0  # nothing new to judge
+
+    await capture_linker.revert_run(second["run_id"], ctx=ctx())
+    assert world.links.get(risk.id).superseded_by == {}
+    assert world.links.get(risk.id).graph_links()
+
+
+@pytest.mark.asyncio
+async def test_superseded_claims_are_never_linked_and_backfill_counts_only_eligible(world):
+    _with_storylines(world)
+    risk = _work_item(world, RISK, "2026-10-10T09:00:00Z")
+    _work_item(world, PROGRESS, "2026-10-12T09:00:00Z", supersedes=RISK)
+    result = await capture_linker.run_link(10, ctx=world.ctx(record_sources=("changes",)))
+    assert result["processed"] == 4 and world.links.get(risk.id) is None
+
+    # a rejected capture is not judged, so it is not "remaining" either
+    rejected = world.captures.get(world.made[0].id)
+    rejected.review_status = "rejected"
+    world.captures.update(rejected)
+    world.kg.nodes["storyline-new"] = _Node(id="storyline-new", name="New", type="storyline",
+                                            metadata={"status": "active"})
+    out = await capture_linker.run_backfill(max_results=1, ctx=world.ctx(record_sources=("changes",)))
+    assert out["processed"] == 1 and out["remaining"] == 2  # 2 library + 1 record eligible
+
+
+def test_record_items_take_their_own_storyline_floor(world):
+    answer = {"advances": [{"id": "storyline-arc", "stance": "challenges", "confidence": 0.6}]}
+    ids = {"storyline-arc"}
+    plain = world.ctx(record_sources=("changes",))
+    assert capture_linker._role_selections(plain, "storyline", ids, answer, 0.6, record=True) == []
+    tuned = world.ctx(record_sources=("changes",), record_storyline_min_confidence=0.6)
+    assert [t[0] for t in capture_linker._role_selections(tuned, "storyline", ids, answer, 0.6, record=True)] == [
+        "storyline-arc"]
+    assert capture_linker._role_selections(tuned, "storyline", ids, answer, 0.6) == []  # library keeps 0.75
+
+
+def test_policy_parses_record_sources():
+    from app.services.capture_link_policy import parse_linking_policy
+
+    p = parse_linking_policy({"library": {"linking": {
+        "mode": "on", "record_sources": ["changes", "changes", 3], "record_storyline_min_confidence": 0.6}}})
+    assert p.record_sources == ("changes",) and p.record_storyline_min_confidence == 0.6
+    assert parse_linking_policy({"library": {"linking": {"record_sources": "changes"}}}).record_sources == ("changes",)
+    bad = parse_linking_policy({"library": {"linking": {"record_storyline_min_confidence": 2}}})
+    assert bad.record_storyline_min_confidence is None and bad.record_sources == ()

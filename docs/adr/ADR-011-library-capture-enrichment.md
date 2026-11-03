@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-10-29, revised the same day after a code review of the draft). Applies ADR-006
+Accepted (2026-10-29, revised the same day after a code review of the draft; record-lane
+linking of opted-in work-log sources added by ADR-012, 2026-11-02). Applies ADR-006
 to captures, which ADR-003 and ADR-006 leave outside the graph. Changes no invariant of ADR-002,
 ADR-003 §1–3 or ADR-006 §2. Implements ADR-003 §5 pinning for captures.
 
