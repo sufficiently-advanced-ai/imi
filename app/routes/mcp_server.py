@@ -503,7 +503,8 @@ async def _storyline_tool(name: str, args: dict, actor: str):
             if max_results:
                 result["evidence"] = (await storylines.storyline_evidence(
                     entity_id, since=args.get("date_from"), until=args.get("date_to"),
-                    stance=args.get("stance"), max_results=max_results,
+                    stance=args.get("stance"), linked_since=args.get("linked_from"),
+                    max_results=max_results,
                 ))["evidence"]
         elif name == "update_storyline":
             fields = {k: v for k, v in args.items() if k != "entity_id"}

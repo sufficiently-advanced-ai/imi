@@ -88,11 +88,16 @@ Seeds sync at the start of every LINK run (`POST /api/captures/link`).
 |---|---|---|
 | `GET /api/storylines?status=&window=` | `list_storylines` | each storyline with evidence counts: last `window` days vs the window before |
 | `GET /api/storylines/{id}?as_of=&evidence=` | `get_storyline` | one storyline, recent evidence, past state |
-| `GET /api/storylines/{id}/evidence?since=&until=&stance=` | `get_storyline` (`date_from`, `date_to`, `stance`) | evidence newest first by `occurred_at` |
+| `GET /api/storylines/{id}/evidence?since=&until=&stance=&linked_since=` | `get_storyline` (`date_from`, `date_to`, `linked_from`, `stance`) | evidence newest first by `occurred_at`; each row has `linked_at` |
 | `GET /api/storylines/{id}/history` | | versions and transitions |
 | `PATCH /api/storylines/{id}` | `update_storyline` | reviewer fields only |
 | `POST /api/storylines` | `propose_storyline` | idempotent on the name |
 | `GET /api/activity?type=&window=` | `list_entity_activity` | per-entity counts for any type: topics by `ABOUT`, storylines by `ADVANCES`, others by `MENTIONED_IN` |
+
+`since` / `until` filter on when the evidence happened (`occurred_at`); `linked_since` filters
+on when it was linked to the storyline (the `ADVANCES` edge's `linked_at`). A reviewer that
+reads "what is new since my last review" should use `linked_since`: a backfill links items that
+happened long ago, and `since` would hide them.
 
 Each read is one aggregate Cypher query over the `Document.occurred_at` index; counts use
 typed datetime parameters.

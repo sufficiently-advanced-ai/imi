@@ -1326,7 +1326,8 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "One storyline: thesis, state, direction, confidence, would_change, open_question, "
             "status, evidence counts, and its evidence (capture documents that advance it, with "
             "stance supports / challenges / context), newest first by occurred_at. Filter evidence "
-            "with date_from / date_to / stance. Pass `timestamp` to also get the review fields as "
+            "with date_from / date_to (when it happened), linked_from (when it was linked, which "
+            "catches older items a backfill linked since your last review) and stance. Pass `timestamp` to also get the review fields as "
             "they stood at that time (from the storyline's version history)."
         ),
         "inputSchema": {
@@ -1335,6 +1336,7 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "entity_id": {"type": "string", "description": "Storyline id, e.g. storyline-local-open-models"},
                 "date_from": {"type": "string", "description": "ISO-8601; evidence on or after (occurred_at)"},
                 "date_to": {"type": "string", "description": "ISO-8601; evidence before (occurred_at)"},
+                "linked_from": {"type": "string", "description": "ISO-8601; evidence linked on or after (linked_at)"},
                 "stance": {"type": "string", "enum": ["supports", "challenges", "context"]},
                 "timestamp": {"type": "string", "description": "ISO-8601; include the state as of then"},
                 "max_results": {

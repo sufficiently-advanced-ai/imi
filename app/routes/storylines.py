@@ -3,7 +3,7 @@
     GET   /api/storylines                      — list, with evidence counts per window
     POST  /api/storylines                      — propose one (status: proposed)
     GET   /api/storylines/{id}                 — one, with recent evidence; ?as_of= for past state
-    GET   /api/storylines/{id}/evidence        — evidence by occurred_at (?since=&until=&stance=)
+    GET   /api/storylines/{id}/evidence        — evidence by occurred_at (?since=&until=&stance=&linked_since=)
     GET   /api/storylines/{id}/history         — state versions and status transitions
     PATCH /api/storylines/{id}                 — reviewer fields only
     GET   /api/activity?type=topic&window=14   — per-entity evidence, last window vs prior
@@ -100,10 +100,14 @@ async def storyline_evidence(
     since: str | None = Query(None, description="ISO-8601, inclusive, by occurred_at"),
     until: str | None = Query(None, description="ISO-8601, exclusive, by occurred_at"),
     stance: str | None = Query(None, description="supports | challenges | context"),
+    linked_since: str | None = Query(
+        None, description="ISO-8601, inclusive, by when the item was linked to the storyline"
+    ),
     max_results: int = Query(50, ge=1, le=storylines.MAX_EVIDENCE),
 ):
     return await _call(storylines.storyline_evidence(storyline_id, since=since, until=until,
-                                                     stance=stance, max_results=max_results))
+                                                     stance=stance, linked_since=linked_since,
+                                                     max_results=max_results))
 
 
 @router.get("/storylines/{storyline_id}/history")

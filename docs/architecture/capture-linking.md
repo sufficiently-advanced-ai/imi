@@ -175,7 +175,8 @@ links should be redone: older files count as unlinked.
 (`id: doc:memory/captures/<id>.json`, `kind: capture`, `lane`, `capture_id`, `url`, `title`,
 `source`, `summary`, `occurred_at` from `source_date`, `recorded_at` from `created_at`) and
 its edges, each marked `capture_link: true` with `lane`, `created_by`, `confidence`,
-`linked_at`, `run_id` and `stance`:
+`linked_at` (`DATETIME`; edges projected before 2026-11-03 hold an ISO string until the
+document is next re-projected, so read it through `datetime()`), `run_id` and `stance`:
 
 | Edge | Direction |
 |---|---|

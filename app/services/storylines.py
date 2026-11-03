@@ -455,16 +455,23 @@ async def list_storylines(status: str | None = None, window_days: int = 14, *,
 
 
 async def storyline_evidence(entity_id: str, *, since: Any = None, until: Any = None,
-                             stance: str | None = None, max_results: int = 50,
-                             kg: Any | None = None) -> dict[str, Any]:
-    """The storyline's evidence, newest first by occurred_at."""
+                             stance: str | None = None, linked_since: Any = None,
+                             max_results: int = 50, kg: Any | None = None) -> dict[str, Any]:
+    """The storyline's evidence, newest first by occurred_at.
+
+    ``since`` / ``until`` filter on when the evidence happened (occurred_at);
+    ``linked_since`` on when it was linked to the storyline (the edge's
+    ``linked_at``), so a reviewer also sees old items a backfill linked
+    after its last review."""
     kg = kg or _graph()
     node = _require(kg, entity_id)
-    since_dt, until_dt = to_utc(since), to_utc(until)
+    since_dt, until_dt, linked_dt = to_utc(since), to_utc(until), to_utc(linked_since)
     if since is not None and since_dt is None:
         raise StorylineError("since must be an ISO-8601 date or timestamp")
     if until is not None and until_dt is None:
         raise StorylineError("until must be an ISO-8601 date or timestamp")
+    if linked_since is not None and linked_dt is None:
+        raise StorylineError("linked_since must be an ISO-8601 date or timestamp")
     if stance is not None:
         from app.services.capture_link_store import STANCES
 
@@ -475,23 +482,28 @@ async def storyline_evidence(entity_id: str, *, since: Any = None, until: Any = 
         "WHERE ($since IS NULL OR d.occurred_at >= $since) "
         "AND ($until IS NULL OR d.occurred_at < $until) "
         "AND ($stance IS NULL OR r.stance = $stance) "
+        # linked_at is DATETIME on edges written since this change and an ISO
+        # string on older ones; datetime() reads both.
+        "AND ($linked_since IS NULL OR datetime(r.linked_at) >= $linked_since) "
         "RETURN d.id AS document_id, d.capture_id AS capture_id, d.title AS title, d.url AS url, "
         "d.summary AS summary, d.source AS source, d.lane AS lane, d.occurred_at AS occurred_at, "
         "d.recorded_at AS recorded_at, r.stance AS stance, r.confidence AS confidence, "
-        "r.created_by AS created_by, r.run_id AS run_id "
+        "r.created_by AS created_by, r.run_id AS run_id, r.linked_at AS linked_at "
         "ORDER BY d.occurred_at DESC LIMIT $limit"
     )
     rows = await _neo4j(kg).execute_read(query, {"id": node.id, "since": since_dt, "until": until_dt,
-                                                 "stance": stance, "limit": limit})
+                                                 "stance": stance, "linked_since": linked_dt,
+                                                 "limit": limit})
     evidence = []
     for row in rows:
         item = {k: v for k, v in row.items() if v not in (None, "")}
-        for k in ("occurred_at", "recorded_at"):
+        for k in ("occurred_at", "recorded_at", "linked_at"):
             if k in item:
                 item[k] = to_iso(item[k])
         evidence.append(item)
     return {"storyline_id": node.id, "evidence": evidence, "count": len(evidence),
-            "since": to_iso(since_dt), "until": to_iso(until_dt), "stance": stance}
+            "since": to_iso(since_dt), "until": to_iso(until_dt), "stance": stance,
+            "linked_since": to_iso(linked_dt)}
 
 
 async def get_storyline(entity_id: str, *, as_of: Any = None, evidence: int = 10,
