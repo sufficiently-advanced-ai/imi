@@ -290,6 +290,30 @@ async def test_update_storyline_clears_a_field_and_history_records_it(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_evidence_filters_by_link_time_with_typed_parameters(kg):
+    kg.nodes["storyline-x"] = _Node(id="storyline-x", name="X", type="storyline", metadata={})
+    out = await storylines.storyline_evidence("storyline-x", linked_since="2026-11-03", kg=kg)
+    query, params = kg.neo4j.queries[-1]
+    assert "datetime(r.linked_at) >= $linked_since" in query and "r.linked_at AS linked_at" in query
+    assert params["linked_since"] == datetime(2026, 11, 3, tzinfo=UTC)  # typed (ADR-004)
+    assert params["since"] is None and out["linked_since"] == "2026-11-03T00:00:00+00:00"
+    await storylines.storyline_evidence("storyline-x", kg=kg)
+    assert kg.neo4j.queries[-1][1]["linked_since"] is None
+    with pytest.raises(StorylineError, match="linked_since"):
+        await storylines.storyline_evidence("storyline-x", linked_since="last tuesday", kg=kg)
+
+
+def test_link_edges_carry_linked_at_as_datetime():
+    from app.services.capture_link_store import CaptureLink
+    from app.services.graph.capture_graph_writer import _edge_props
+
+    link = CaptureLink(edge="ADVANCES", target_id="storyline-x", target_type="storyline",
+                       run_id="r1", linked_at="2026-11-03T19:08:12+00:00", stance="challenges")
+    assert _edge_props(link, "record")["linked_at"] == datetime(2026, 11, 3, 19, 8, 12, tzinfo=UTC)
+
+
+
+@pytest.mark.asyncio
 async def test_activity_picks_the_edge_per_type_and_validates(kg, monkeypatch):
     from app.services import capture_link_policy
 

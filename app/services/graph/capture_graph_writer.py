@@ -128,7 +128,7 @@ def _edge_props(link: Any, lane: str) -> dict[str, Any]:
         "lane": lane,
         "created_by": link.created_by,
         "confidence": float(link.confidence),
-        "linked_at": link.linked_at,
+        "linked_at": to_utc(link.linked_at),  # DATETIME, like every graph time (ADR-004)
         "run_id": link.run_id,
         "stance": link.stance,
     }
