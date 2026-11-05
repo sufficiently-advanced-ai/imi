@@ -25,6 +25,10 @@ no mentions, no entity creation, no corroboration. A record claim that a
 later capture supersedes keeps its links in its file but stops projecting
 them.
 
+Call transcripts are linked in the same run, after the captures, when
+``library.linking.meetings.mode`` is not off (ADR-013, ``meeting_linker``):
+one ``ADVANCES`` edge per excerpt, with who said it and who was there.
+
 ``revert_run`` undoes one run. ``attach`` / ``detach`` are the owner's links
 (§5), which pin a library capture against decay.
 """
@@ -151,6 +155,12 @@ class LinkContext:
     claude_client: Any | None = None
     decision_client: Any | None = None
     git: Any | None = None
+    # Meeting linking (ADR-013). Defaults: a store under repo_root, no
+    # projection, people from the graph's MENTIONED_IN edges, owner_name().
+    meeting_links: Any | None = None  # MeetingLinkStore
+    meeting_graph: Any | None = None  # MeetingGraphWriter
+    meeting_people: Any | None = None  # async (document ids) -> {doc id: [PersonRef]}
+    owner: str | None = None
 
     @property
     def domain_types(self) -> dict[str, str]:
@@ -177,6 +187,8 @@ def default_context(repo_root: Path = REPO_ROOT) -> LinkContext:
     from app.services.claude_client import get_claude_client
     from app.services.graph.capture_graph_writer import CaptureGraphWriter
     from app.services.graph.factory import get_knowledge_graph
+    from app.services.graph.meeting_graph_writer import MeetingGraphWriter
+    from app.services.meeting_link_store import MeetingLinkStore
 
     kg = get_knowledge_graph()
     repo = Path(getattr(getattr(kg, "git_ops", None), "repo_path", None) or repo_root)
@@ -197,6 +209,8 @@ def default_context(repo_root: Path = REPO_ROOT) -> LinkContext:
         graph=CaptureGraphWriter(kg.neo4j, captures.relative_path) if getattr(kg, "neo4j", None) else None,
         claude_client=claude,
         git=getattr(kg, "git_ops", None),
+        meeting_links=MeetingLinkStore(repo_root=repo),
+        meeting_graph=MeetingGraphWriter(kg.neo4j) if getattr(kg, "neo4j", None) else None,
     )
 
 
@@ -224,6 +238,7 @@ class Changelog:
     unlinked_by_type: Counter = field(default_factory=Counter)  # earlier links a re-check replaced
     errors: list[str] = field(default_factory=list)
     committed: bool = False
+    meetings: dict[str, Any] = field(default_factory=dict)  # ADR-013 meeting pass
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +260,7 @@ class Changelog:
             "unlinked_by_type": dict(self.unlinked_by_type),
             "errors": self.errors,
             "committed": self.committed,
+            **({"meetings": self.meetings} if self.meetings else {}),
         }
 
 
@@ -606,12 +622,18 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
     if not batch:
         # Dormancy is time-driven: the lifecycle runs even when nothing is new.
         quiet_rows: list[dict[str, Any]] = []
+        meeting_paths = await _link_meetings(ctx, log, max_results, quiet_rows)
         seed_paths.extend(await _lifecycle(ctx, log, quiet_rows))
+        if meeting_paths:
+            quiet_rows.append({"run_id": log.run_id, "mode": mode, "action": "run_summary",
+                               **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
         if quiet_rows:
             ctx.audit.append_many(quiet_rows)
             seed_paths.append(ctx.audit.relative_path())
-        if seed_paths:
-            await _commit(ctx, sorted(set(seed_paths)), f"link: {log.run_id} seed sync")
+        if seed_paths or meeting_paths:
+            message = (f"link: {log.run_id} ({mode}, {log.meetings.get('processed', 0)} meetings)"
+                       if meeting_paths else f"link: {log.run_id} seed sync")
+            log.committed = await _commit(ctx, meeting_paths + sorted(set(seed_paths)), message)
         return log.as_dict()
 
     audit_rows: list[dict[str, Any]] = []
@@ -816,20 +838,41 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
             logger.warning("[LINK] Graph projection failed (files are written): %s", e, exc_info=True)
             log.errors.append(f"graph projection: {e}")
 
+    meeting_paths = await _link_meetings(ctx, log, max_results, audit_rows)
     seed_paths.extend(await _lifecycle(ctx, log, audit_rows))
 
     audit_rows.append({"run_id": log.run_id, "mode": mode, "action": "run_summary",
                        **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
     ctx.audit.append_many(audit_rows)
+    meeting_note = f", {log.meetings.get('processed', 0)} meetings" if meeting_paths else ""
     log.committed = await _commit(
-        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + [ctx.audit.relative_path()]
-        + sorted(set(seed_paths)),
-        f"link: {log.run_id} ({mode}, {log.processed} captures)",
+        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + meeting_paths
+        + [ctx.audit.relative_path()] + sorted(set(seed_paths)),
+        f"link: {log.run_id} ({mode}, {log.processed} captures{meeting_note})",
     )
     logger.info("[LINK] %s %s: %d processed, links %s, created %d, %d remaining",
                 mode, log.run_id, log.processed, dict(log.links_by_type),
                 len(log.entities_created), log.remaining)
     return log.as_dict()
+
+
+async def _link_meetings(ctx: LinkContext, log: Changelog, max_results: int,
+                         audit_rows: list[dict[str, Any]]) -> list[str]:
+    """The run's meeting pass (ADR-013). Non-fatal: a failure is logged and
+    the captures' results stand. Returns the meeting link paths it changed."""
+    if ctx.policy.meeting_mode == "off":
+        return []
+    from app.services.meeting_linker import link_meetings
+
+    try:
+        result, paths = await link_meetings(ctx, log.run_id, max_results, audit_rows)
+    except Exception as e:
+        logger.warning("[LINK] Meeting linking failed (non-fatal): %s", e, exc_info=True)
+        log.errors.append(f"meeting linking: {e}")
+        return []
+    log.meetings = result.as_dict()
+    log.errors.extend(f"meetings: {err}" for err in result.errors)
+    return paths
 
 
 def _mark_superseded(ctx: LinkContext, log: Changelog, superseded: dict[str, set[str]],
@@ -1148,9 +1191,13 @@ async def _commit(ctx: LinkContext, paths: list[str], message: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+BACKFILL_KINDS = ("capture", "meeting")
+
+
 async def run_backfill(storyline_ids: list[str] | None = None, since: str | None = None,
                        max_results: int = 50, ctx: LinkContext | None = None,
-                       recheck_before: str | None = None) -> dict[str, Any]:
+                       recheck_before: str | None = None,
+                       kinds: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
     """A storyline-only pass over captures that are already linked.
 
     New and proposed storylines only see captures linked after they exist;
@@ -1163,13 +1210,16 @@ async def run_backfill(storyline_ids: list[str] | None = None, since: str | None
     check against those storylines ran before that time, e.g. after the
     thesis was reworded: their earlier linker links to those storylines are
     replaced, and kept in the file so a revert restores them. Repeat calls
-    with the same time work through the rest, newest first."""
+    with the same time work through the rest, newest first.
+
+    ``kinds`` (default both) picks captures, meetings (ADR-013 §6), or both;
+    the meeting pass needs the effective meeting mode ``on``."""
     if _run_lock.locked():
         raise LinkRunBusy("a link run is already in progress")
     async with _run_lock:
         ctx = ctx or default_context()
         return await _backfill(ctx, storyline_ids, since, max(1, min(int(max_results), MAX_RESULTS_CAP)),
-                               recheck_before=recheck_before)
+                               recheck_before=recheck_before, kinds=kinds)
 
 
 _RUN_TIME = re.compile(r"(\d{8}T\d{6}Z)")
@@ -1182,9 +1232,15 @@ def _run_time(run_id: str | None) -> datetime | None:
 
 
 async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: str | None,
-                    max_results: int, recheck_before: str | None = None) -> dict[str, Any]:
+                    max_results: int, recheck_before: str | None = None,
+                    kinds: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
     log = Changelog(run_id=f"backfill-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
                     mode=ctx.policy.mode)
+    kinds = tuple(kinds) if kinds else BACKFILL_KINDS
+    unknown_kinds = sorted(set(kinds) - set(BACKFILL_KINDS))
+    if unknown_kinds:
+        log.errors.append(f"kinds must be among {list(BACKFILL_KINDS)} (got {unknown_kinds})")
+        return log.as_dict()
     if ctx.policy.mode != "on":
         log.errors.append("backfill needs library.linking.mode: on")
         return log.as_dict()
@@ -1218,10 +1274,11 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
     if not targets:
         return log.as_dict()
 
-    every = {m.id: m for m in ctx.captures.iter_all()}  # one parse of the corpus
+    every = ({m.id: m for m in ctx.captures.iter_all()}  # one parse of the corpus
+             if "capture" in kinds else {})
     superseded = _record_supersession(ctx, list(every.values()))
     candidates: list[tuple[datetime, Any, set[str]]] = []
-    for record in ctx.links.iter_all():
+    for record in (ctx.links.iter_all() if "capture" in kinds else ()):
         if record.mode != "on" or record.linked_at is None or record.superseded_by:
             continue
         missing = set(targets) - set(record.storylines_checked)
@@ -1245,8 +1302,6 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
     candidates.sort(key=lambda c: c[0], reverse=True)
     batch = [(memory, missing) for _, memory, missing in candidates[:max_results]]
     log.remaining = len(candidates) - len(batch)
-    if not batch:
-        return log.as_dict()
 
     # Group captures by the storylines they still need (usually one group:
     # every target) and by lane, so each call offers exactly those and record
@@ -1340,18 +1395,43 @@ async def _backfill(ctx: LinkContext, storyline_ids: list[str] | None, since: st
             logger.warning("[LINK] Backfill projection failed (files are written): %s", e, exc_info=True)
             log.errors.append(f"graph projection: {e}")
 
+    meeting_paths: list[str] = []
+    if "meeting" in kinds:
+        meeting_paths = await _backfill_meetings(ctx, log, targets, since_dt, recheck_dt,
+                                                 max_results, audit_rows)
+    if not touched and not meeting_paths:
+        return log.as_dict()
+
     history = await _lifecycle(ctx, log, audit_rows)
     audit_rows.append({"run_id": log.run_id, "mode": "on", "action": "run_summary", "kind": "backfill",
                        **{k: v for k, v in log.as_dict().items() if k not in ("run_id", "mode")}})
     ctx.audit.append_many(audit_rows)
+    meeting_note = f", {log.meetings.get('processed', 0)} meetings" if meeting_paths else ""
     log.committed = await _commit(
-        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + [ctx.audit.relative_path()]
-        + sorted(set(history)),
-        f"link: {log.run_id} (storyline backfill, {log.processed} captures)",
+        ctx, [ctx.links.relative_path(c) for c in sorted(touched)] + meeting_paths
+        + [ctx.audit.relative_path()] + sorted(set(history)),
+        f"link: {log.run_id} (storyline backfill, {log.processed} captures{meeting_note})",
     )
     logger.info("[LINK] backfill %s: %d judged, %d ADVANCES, %d remaining",
                 log.run_id, log.processed, log.links_by_type[ADVANCES], log.remaining)
     return log.as_dict()
+
+
+async def _backfill_meetings(ctx: LinkContext, log: Changelog, targets: dict[str, Any],
+                             since: datetime | None, recheck: datetime | None, max_results: int,
+                             audit_rows: list[dict[str, Any]]) -> list[str]:
+    from app.services.meeting_linker import backfill_meetings
+
+    try:
+        result, paths = await backfill_meetings(ctx, log.run_id, targets, since, recheck,
+                                                max_results, audit_rows)
+    except Exception as e:
+        logger.warning("[LINK] Meeting backfill failed (non-fatal): %s", e, exc_info=True)
+        log.errors.append(f"meeting backfill: {e}")
+        return []
+    log.meetings = result.as_dict()
+    log.errors.extend(f"meetings: {err}" for err in result.errors)
+    return paths
 
 
 # ---------------------------------------------------------------------------
@@ -1470,15 +1550,25 @@ async def _revert(ctx: LinkContext, run_id: str) -> dict[str, Any]:
         except Exception as e:
             logger.warning("[LINK] Reverting storyline status for %s failed: %s", run_id, e)
 
+    from app.services.meeting_linker import revert_meetings
+
+    errors = [f"graph projection: {projection_error}"] if projection_error else []
+    try:
+        meeting_summary, meeting_paths = await revert_meetings(ctx, run_id)
+    except Exception as e:
+        logger.warning("[LINK] Reverting meeting links for %s failed: %s", run_id, e, exc_info=True)
+        meeting_summary, meeting_paths = {"errors": [str(e)]}, []
+    errors.extend(f"meetings: {err}" for err in meeting_summary.pop("errors", []))
+
     summary = {"run_id": run_id, "captures_changed": len(changed), "links_removed": removed,
                "entities_archived": archived, "entities_kept": kept,
-               "storyline_status_reverted": len(history_paths)}
-    if projection_error:
-        summary["errors"] = [f"graph projection: {projection_error}"]
+               "storyline_status_reverted": len(history_paths), **meeting_summary}
+    if errors:
+        summary["errors"] = errors
     ctx.audit.append_many([{"run_id": run_id, "action": "revert", **summary}])
     summary["committed"] = await _commit(
-        ctx, [ctx.links.relative_path(c) for c in changed] + [ctx.audit.relative_path()]
-        + sorted(set(history_paths)),
+        ctx, [ctx.links.relative_path(c) for c in changed] + meeting_paths
+        + [ctx.audit.relative_path()] + sorted(set(history_paths)),
         f"link: revert {run_id} ({removed} links)",
     )
     logger.info("[LINK] Reverted %s: %d links, archived %s", run_id, removed, archived)

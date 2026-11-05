@@ -454,15 +454,57 @@ async def list_storylines(status: str | None = None, window_days: int = 14, *,
     return {"storylines": storylines, "window_days": window_days, "count": len(storylines)}
 
 
+SPEAKER_FILTERS = ("owner", "others", "unknown")
+
+
+def _speaker_filter(speaker: Any) -> str | None:
+    if speaker is None or speaker == "":
+        return None
+    if not isinstance(speaker, str) or not speaker.strip():
+        raise StorylineError("speaker must be a person id, owner, others or unknown")
+    return speaker.strip()
+
+
+def _excerpt(edge: dict[str, Any]) -> dict[str, Any]:
+    """A meeting ADVANCES edge as the stored excerpt object (ADR-013 §5)."""
+    names = edge.get("with_names") or []
+    ids = edge.get("with_ids") or []
+    speaker = {k: v for k, v in (("name", edge.get("speaker_name")), ("id", edge.get("speaker_id")),
+                                 ("basis", edge.get("speaker_basis") or "unknown")) if v}
+    return {
+        "id": edge.get("excerpt_id"),
+        "storyline_id": edge.get("_storyline_id"),
+        "stance": edge.get("stance"),
+        "confidence": edge.get("confidence"),
+        "claim": edge.get("claim"),
+        "lines": list(edge.get("lines") or []),
+        "quote": edge.get("quote"),
+        "speaker": speaker,
+        # Absent on the edge means not known: never reported as False.
+        "speaker_is_owner": edge.get("speaker_is_owner"),
+        "with": [{"name": n, "id": (ids[i] or None) if i < len(ids) else None}
+                 for i, n in enumerate(names)],
+        "with_basis": edge.get("with_basis") or "unknown",
+        "run_id": edge.get("run_id"),
+        "linked_at": to_iso(edge.get("linked_at")),
+    }
+
+
 async def storyline_evidence(entity_id: str, *, since: Any = None, until: Any = None,
                              stance: str | None = None, linked_since: Any = None,
+                             speaker: str | None = None, with_person: str | None = None,
                              max_results: int = 50, kg: Any | None = None) -> dict[str, Any]:
-    """The storyline's evidence, newest first by occurred_at.
+    """The storyline's evidence, one row per Document, newest first by occurred_at.
 
     ``since`` / ``until`` filter on when the evidence happened (occurred_at);
     ``linked_since`` on when it was linked to the storyline (the edge's
     ``linked_at``), so a reviewer also sees old items a backfill linked
-    after its last review."""
+    after its last review.
+
+    A call (ADR-013) is one row with ``kind: meeting`` and its ``excerpts``,
+    in line order; ``stance`` filters excerpts. ``speaker`` (a person id,
+    ``owner``, ``others`` or ``unknown``) and ``with_person`` (a person id)
+    keep matching excerpts only, so they drop capture rows."""
     kg = kg or _graph()
     node = _require(kg, entity_id)
     since_dt, until_dt, linked_dt = to_utc(since), to_utc(until), to_utc(linked_since)
@@ -476,6 +518,8 @@ async def storyline_evidence(entity_id: str, *, since: Any = None, until: Any = 
         from app.services.capture_link_store import STANCES
 
         stance = _enum("stance", stance, STANCES)
+    speaker = _speaker_filter(speaker)
+    with_person = _speaker_filter(with_person) if with_person else None
     limit = max(1, min(int(max_results or 50), MAX_EVIDENCE))
     query = (
         "MATCH (d:Document)-[r:ADVANCES]->(s:Entity {id: $id}) "
@@ -485,25 +529,185 @@ async def storyline_evidence(entity_id: str, *, since: Any = None, until: Any = 
         # linked_at is DATETIME on edges written since this change and an ISO
         # string on older ones; datetime() reads both.
         "AND ($linked_since IS NULL OR datetime(r.linked_at) >= $linked_since) "
+        "AND ($speaker IS NULL OR (r.meeting_link = true AND CASE $speaker "
+        "WHEN 'owner' THEN r.speaker_is_owner = true "
+        "WHEN 'others' THEN r.speaker_is_owner = false "
+        "WHEN 'unknown' THEN r.speaker_is_owner IS NULL "
+        "ELSE r.speaker_id = $speaker END)) "
+        "AND ($with IS NULL OR (r.meeting_link = true AND $with IN coalesce(r.with_ids, []))) "
+        "WITH d, collect(r) AS rs ORDER BY d.occurred_at DESC LIMIT $limit "
         "RETURN d.id AS document_id, d.capture_id AS capture_id, d.title AS title, d.url AS url, "
         "d.summary AS summary, d.source AS source, d.lane AS lane, d.occurred_at AS occurred_at, "
-        "d.recorded_at AS recorded_at, r.stance AS stance, r.confidence AS confidence, "
-        "r.created_by AS created_by, r.run_id AS run_id, r.linked_at AS linked_at "
-        "ORDER BY d.occurred_at DESC LIMIT $limit"
+        "d.recorded_at AS recorded_at, [x IN rs | properties(x)] AS edges"
     )
     rows = await _neo4j(kg).execute_read(query, {"id": node.id, "since": since_dt, "until": until_dt,
                                                  "stance": stance, "linked_since": linked_dt,
+                                                 "speaker": speaker, "with": with_person,
                                                  "limit": limit})
     evidence = []
+    excerpt_count = 0
     for row in rows:
-        item = {k: v for k, v in row.items() if v not in (None, "")}
-        for k in ("occurred_at", "recorded_at", "linked_at"):
-            if k in item:
-                item[k] = to_iso(item[k])
+        edges = row.get("edges") or []
+        doc = {k: v for k, v in row.items() if k != "edges" and v not in (None, "")}
+        for k in ("occurred_at", "recorded_at"):
+            if k in doc:
+                doc[k] = to_iso(doc[k])
+        meeting_edges = [e for e in edges if e.get("meeting_link")]
+        if meeting_edges:
+            excerpts = [_excerpt({**e, "_storyline_id": node.id}) for e in meeting_edges]
+            excerpts.sort(key=lambda x: (x["lines"] or [0])[0])
+            excerpt_count += len(excerpts)
+            item = {"kind": "meeting", "document_id": doc.get("document_id"),
+                    "title": doc.get("title"), "occurred_at": doc.get("occurred_at"),
+                    "lane": doc.get("lane") or "record", "source": doc.get("source") or "meeting",
+                    "excerpts": excerpts}
+            evidence.append({k: v for k, v in item.items() if v is not None})
+            continue
+        edge = edges[0] if edges else {}
+        item = {"kind": "capture", **doc}
+        for k in ("stance", "confidence", "created_by", "run_id", "linked_at"):
+            value = edge.get(k)
+            if value not in (None, ""):
+                item[k] = to_iso(value) if k == "linked_at" else value
         evidence.append(item)
     return {"storyline_id": node.id, "evidence": evidence, "count": len(evidence),
+            "excerpt_count": excerpt_count,
             "since": to_iso(since_dt), "until": to_iso(until_dt), "stance": stance,
-            "linked_since": to_iso(linked_dt)}
+            "linked_since": to_iso(linked_dt), "speaker": speaker, "with": with_person}
+
+
+# ---- voices (ADR-013 §7) ---------------------------------------------------------
+
+_VOICE_QUERY_FIELDS = (
+    "r.stance AS stance, r.speaker_id AS speaker_id, r.speaker_name AS speaker_name, "
+    "r.speaker_basis AS speaker_basis, r.speaker_is_owner AS speaker_is_owner, "
+    "r.with_ids AS with_ids, r.with_names AS with_names"
+)
+
+
+def _voice_window(window_days: Any) -> datetime | None:
+    if window_days is None:
+        return None
+    if not isinstance(window_days, int) or isinstance(window_days, bool) \
+            or not 1 <= window_days <= MAX_WINDOW_DAYS:
+        raise StorylineError(f"window must be 1-{MAX_WINDOW_DAYS} days")
+    return datetime.now(UTC) - timedelta(days=window_days)
+
+
+def _person_key(person_id: Any, name: Any) -> tuple[str, str | None, str | None] | None:
+    """(key, id, name) for a speaker or a person present; None when unknown."""
+    from app.services.meeting_transcript import normalize_name
+
+    if isinstance(person_id, str) and person_id:
+        return person_id, person_id, name if isinstance(name, str) else None
+    norm = normalize_name(name if isinstance(name, str) else None)
+    return (f"name:{norm}", None, name) if norm else None
+
+
+def _empty_counts() -> dict[str, Any]:
+    return {"total": 0, "by_stance": {}}
+
+
+def _bump(bucket: dict[str, Any], stance: str | None, basis: str | None = None) -> None:
+    bucket["total"] += 1
+    key = stance or "context"
+    bucket["by_stance"][key] = bucket["by_stance"].get(key, 0) + 1
+    if basis is not None:
+        bucket.setdefault("by_basis", {})
+        bucket["by_basis"][basis] = bucket["by_basis"].get(basis, 0) + 1
+
+
+def fold_voices(rows: list[dict[str, Any]], group: Any = None,
+                only: str | None = None) -> tuple[dict[Any, dict[str, Any]], dict[Any, dict[str, Any]]]:
+    """Excerpt edges -> per (group, person) ``said`` and
+    ``present_when_owner_said`` counts, plus an unattributed bucket per group.
+    ``only`` keeps one person's rows (a person id)."""
+    people: dict[Any, dict[str, Any]] = {}
+    unattributed: dict[Any, dict[str, Any]] = {}
+
+    def person(g: Any, key: str, pid: str | None, name: str | None) -> dict[str, Any]:
+        entry = people.setdefault((g, key), {"id": pid, "name": name, "said": {**_empty_counts(), "by_basis": {}},
+                                             "present_when_owner_said": _empty_counts()})
+        if name and not entry["name"]:
+            entry["name"] = name
+        return entry
+
+    for row in rows:
+        g = row.get(group) if group else None
+        stance = row.get("stance")
+        is_owner = row.get("speaker_is_owner")
+        if is_owner is True:
+            names = row.get("with_names") or []
+            ids = row.get("with_ids") or []
+            for i, name in enumerate(names):
+                ref = _person_key(ids[i] if i < len(ids) else None, name)
+                if ref is None or (only and ref[1] != only):
+                    continue
+                _bump(person(g, *ref)["present_when_owner_said"], stance)
+            continue
+        ref = _person_key(row.get("speaker_id"), row.get("speaker_name"))
+        if ref is None:
+            if not only:
+                _bump(unattributed.setdefault(g, _empty_counts()), stance)
+            continue
+        if is_owner is not False or (only and ref[1] != only):
+            continue
+        _bump(person(g, *ref)["said"], stance, row.get("speaker_basis") or "unknown")
+    return people, unattributed
+
+
+async def storyline_voices(entity_id: str, *, window_days: int | None = None,
+                           max_results: int = 50, kg: Any | None = None) -> dict[str, Any]:
+    """Who said what on one storyline's calls, and who was present when the
+    owner made a point (ADR-013 §7). Counts only; never "holds" or "heard"."""
+    kg = kg or _graph()
+    node = _require(kg, entity_id)
+    start = _voice_window(window_days)
+    rows = await _neo4j(kg).execute_read(
+        "MATCH (d:Document)-[r:ADVANCES]->(s:Entity {id: $id}) WHERE r.meeting_link = true "
+        "AND ($start IS NULL OR d.occurred_at >= $start) "
+        f"RETURN {_VOICE_QUERY_FIELDS}",
+        {"id": node.id, "start": start},
+    )
+    people, unattributed = fold_voices(rows)
+    voices = sorted(people.values(), key=lambda v: (-(v["said"]["total"] + v["present_when_owner_said"]["total"]),
+                                                    v["name"] or ""))
+    limit = max(1, min(int(max_results or 50), MAX_EVIDENCE))
+    return {"storyline_id": node.id, "window_days": window_days, "voices": voices[:limit],
+            "count": len(voices), "unattributed": unattributed.get(None, _empty_counts()),
+            "excerpts": len(rows)}
+
+
+async def person_storyline_voices(person_id: str, *, window_days: int | None = None,
+                                  max_results: int = 50, kg: Any | None = None) -> dict[str, Any]:
+    """For one person, per storyline: what they said on calls, and the owner's
+    points made on calls they were present for (ADR-013 §7)."""
+    kg = kg or _graph()
+    if not isinstance(person_id, str) or not person_id.strip():
+        raise StorylineError("person id is required")
+    person_id = person_id.strip()
+    if person_id not in (getattr(kg, "nodes", None) or {}):
+        raise StorylineError(f"no person with id {person_id!r}")
+    start = _voice_window(window_days)
+    rows = await _neo4j(kg).execute_read(
+        "MATCH (d:Document)-[r:ADVANCES]->(s:Entity) WHERE r.meeting_link = true "
+        "AND (r.speaker_id = $pid OR $pid IN coalesce(r.with_ids, [])) "
+        "AND ($start IS NULL OR d.occurred_at >= $start) "
+        f"RETURN s.id AS storyline_id, s.name AS storyline_name, {_VOICE_QUERY_FIELDS}",
+        {"pid": person_id, "start": start},
+    )
+    names = {row.get("storyline_id"): row.get("storyline_name") for row in rows}
+    people, _ = fold_voices(rows, group="storyline_id", only=person_id)
+    storylines = []
+    for (storyline_id, _key), entry in people.items():
+        storylines.append({"storyline_id": storyline_id, "name": names.get(storyline_id),
+                           "said": entry["said"],
+                           "present_when_owner_said": entry["present_when_owner_said"]})
+    storylines.sort(key=lambda v: (-(v["said"]["total"] + v["present_when_owner_said"]["total"]),
+                                   v["storyline_id"] or ""))
+    limit = max(1, min(int(max_results or 50), MAX_EVIDENCE))
+    return {"person_id": person_id, "window_days": window_days, "storylines": storylines[:limit],
+            "count": len(storylines)}
 
 
 async def get_storyline(entity_id: str, *, as_of: Any = None, evidence: int = 10,

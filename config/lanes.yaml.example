@@ -100,6 +100,13 @@ library:
                                   # (ADR-012), e.g. [changes]: no mentions, no creation
     # record_storyline_min_confidence: 0.6  # storyline bar for those items
                                   # (default: storyline_min_confidence)
+    meetings:                     # call transcripts -> storyline excerpts (ADR-013)
+      mode: off                   # off | shadow | on; the lower of this and mode applies
+      storyline_min_confidence: 0.75  # set per deployment from a shadow sample
+      max_excerpts_per_storyline: 3
+      max_storylines_per_meeting: 5
+      max_lines_per_part: 400     # longer calls are split into overlapping parts
+      overlap_lines: 40
 recall:
   default_lanes: [record]         # e.g. [record, library]: library hits are
                                   # ranked separately under `background`
