@@ -475,6 +475,7 @@ TOOLS = [
     # --- Storylines ---
     build_mcp_tool("list_storylines"),
     build_mcp_tool("get_storyline"),
+    build_mcp_tool("list_storyline_voices"),
     build_mcp_tool("update_storyline"),
     build_mcp_tool("propose_storyline"),
     build_mcp_tool("list_entity_activity"),
@@ -486,8 +487,8 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 
-_STORYLINE_TOOLS = ("list_storylines", "get_storyline", "update_storyline", "propose_storyline",
-                    "list_entity_activity")
+_STORYLINE_TOOLS = ("list_storylines", "get_storyline", "list_storyline_voices", "update_storyline",
+                    "propose_storyline", "list_entity_activity")
 
 
 async def _storyline_tool(name: str, args: dict, actor: str):
@@ -504,8 +505,22 @@ async def _storyline_tool(name: str, args: dict, actor: str):
                 result["evidence"] = (await storylines.storyline_evidence(
                     entity_id, since=args.get("date_from"), until=args.get("date_to"),
                     stance=args.get("stance"), linked_since=args.get("linked_from"),
+                    speaker=args.get("speaker"), with_person=args.get("with"),
                     max_results=max_results,
                 ))["evidence"]
+        elif name == "list_storyline_voices":
+            storyline_id, person_id = args.get("storyline_id"), args.get("person_id")
+            if bool(storyline_id) == bool(person_id):
+                return _error("pass exactly one of storyline_id or person_id")
+            window = args.get("window_days")
+            window = int(window) if window not in (None, "") else None
+            max_results = int(args.get("max_results") or 50)
+            if storyline_id:
+                result = await storylines.storyline_voices(storyline_id, window_days=window,
+                                                           max_results=max_results)
+            else:
+                result = await storylines.person_storyline_voices(person_id, window_days=window,
+                                                                  max_results=max_results)
         elif name == "update_storyline":
             fields = {k: v for k, v in args.items() if k != "entity_id"}
             result = await storylines.update_storyline(args.get("entity_id") or "", fields, actor=actor)

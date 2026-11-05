@@ -59,6 +59,32 @@ have not been judged against, newest first by `occurred_at`: how a new or propos
 gets its history. It shares the LINK run lock (409 while one runs), and its run id reverts
 like a LINK run.
 
+### Call transcripts (ADR-013)
+
+With `library.linking.meetings.mode` on, the same LINK run also judges each call in
+`meetings/` against the open storylines. The unit is an **excerpt**: one speaker turn of at
+most 8 transcript lines, with a claim, a stance and a confidence, stored in
+`memory/meeting_links/<meeting stem>.json` and projected as one `ADVANCES` edge per excerpt
+(`meeting_link: true`, MERGEd on `excerpt_id`). A call with several excerpts is still one
+piece of evidence: counts and the lifecycle use `count(DISTINCT d)`.
+
+The model returns line numbers only. The server cuts the quote and attributes it:
+
+| `speaker_basis` | When | `speaker_is_owner` |
+|---|---|---|
+| `label` | the turn has a `Name:` label | `true` for the owner's names, else `false` |
+| `sole_other` | unlabeled, between two owner turns, exactly one other participant | `false` |
+| `unknown` | unlabeled, between two owner turns, zero or 2+ other participants | `false` |
+| `unknown` | any other unlabeled turn | `null` (not known) |
+
+`with` is the call's `participants` minus the owner: who was on the call, not who heard a
+given line. Names resolve to `Person` entities meeting ingest already linked to the call;
+nothing is created. When the participants (or the owner's aliases) change, the next run
+re-attributes the stored excerpts without a model call.
+
+`POST /api/captures/link/backfill` takes `kinds: ["capture", "meeting"]` (default both);
+`/link/revert` undoes meeting files too. Meeting ingest never triggers linking.
+
 ## History
 
 `memory/storyline_history/<id>.jsonl` in the corpus, append-only, one row per proposal, review
@@ -93,7 +119,9 @@ judged. To re-judge the existing captures against the new thesis, run a re-check
 |---|---|---|
 | `GET /api/storylines?status=&window=` | `list_storylines` | each storyline with evidence counts: last `window` days vs the window before |
 | `GET /api/storylines/{id}?as_of=&evidence=` | `get_storyline` | one storyline, recent evidence, past state |
-| `GET /api/storylines/{id}/evidence?since=&until=&stance=&linked_since=` | `get_storyline` (`date_from`, `date_to`, `linked_from`, `stance`) | evidence newest first by `occurred_at`; each row has `linked_at` |
+| `GET /api/storylines/{id}/evidence?since=&until=&stance=&linked_since=&speaker=&with=` | `get_storyline` (`date_from`, `date_to`, `linked_from`, `stance`, `speaker`, `with`) | evidence newest first by `occurred_at`, one row per Document; capture rows have `linked_at` and a stance, call rows (`kind: meeting`) have `excerpts` |
+| `GET /api/storylines/{id}/voices?window_days=` | `list_storyline_voices(storyline_id)` | per person: excerpts they `said` (by stance and `speaker_basis`), and the owner's excerpts on calls they were `present_when_owner_said`; plus `unattributed` |
+| `GET /api/people/{id}/storyline-voices?window_days=` | `list_storyline_voices(person_id)` | the same two counts for one person, per storyline |
 | `GET /api/storylines/{id}/history` | | versions and transitions |
 | `PATCH /api/storylines/{id}` | `update_storyline` | reviewer fields only |
 | `POST /api/storylines` | `propose_storyline` | idempotent on the name |
@@ -103,6 +131,11 @@ judged. To re-judge the existing captures against the new thesis, run a re-check
 on when it was linked to the storyline (the `ADVANCES` edge's `linked_at`). A reviewer that
 reads "what is new since my last review" should use `linked_since`: a backfill links items that
 happened long ago, and `since` would hide them.
+
+`stance` filters call excerpts. `speaker` takes a person id, `owner` (`speaker_is_owner:
+true`), `others` (`false`) or `unknown` (`null`); `with` takes a person id. Both keep only
+matching excerpts, so they drop capture rows. `max_results` counts Documents; the response
+adds `excerpt_count`.
 
 Each read is one aggregate Cypher query over the `Document.occurred_at` index; counts use
 typed datetime parameters.

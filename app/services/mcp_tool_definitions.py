@@ -1324,11 +1324,17 @@ TOOL_DEFS: dict[str, ToolDef] = {
         "name": "get_storyline",
         "description": (
             "One storyline: thesis, state, direction, confidence, would_change, open_question, "
-            "status, evidence counts, and its evidence (capture documents that advance it, with "
-            "stance supports / challenges / context), newest first by occurred_at. Filter evidence "
-            "with date_from / date_to (when it happened), linked_from (when it was linked, which "
-            "catches older items a backfill linked since your last review) and stance. Pass `timestamp` to also get the review fields as "
-            "they stood at that time (from the storyline's version history)."
+            "status, evidence counts, and its evidence, newest first by occurred_at, one row per "
+            "document. A capture row has a stance (supports / challenges / context). A call row "
+            "(kind: meeting) has `excerpts`: transcript passages with their own stance, the quote, "
+            "who said it (speaker, speaker_basis; speaker_is_owner true, false, or null when not "
+            "known) and who was present on the call (`with`). Filter evidence with date_from / "
+            "date_to (when it happened), linked_from (when it was linked, which catches older items "
+            "a backfill linked since your last review), stance, speaker (a person id, owner, others "
+            "or unknown) and with (a person id present on the call); speaker and with keep call "
+            "excerpts only. max_results counts documents. Pass `timestamp` to also get the review "
+            "fields as they stood at that time (from the storyline's version history). For counts "
+            "of who said what, use list_storyline_voices."
         ),
         "inputSchema": {
             "type": "object",
@@ -1338,6 +1344,14 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "date_to": {"type": "string", "description": "ISO-8601; evidence before (occurred_at)"},
                 "linked_from": {"type": "string", "description": "ISO-8601; evidence linked on or after (linked_at)"},
                 "stance": {"type": "string", "enum": ["supports", "challenges", "context"]},
+                "speaker": {
+                    "type": "string",
+                    "description": "Call excerpts said by this person id, or owner / others / unknown",
+                },
+                "with": {
+                    "type": "string",
+                    "description": "Call excerpts from calls this person id was present on",
+                },
                 "timestamp": {"type": "string", "description": "ISO-8601; include the state as of then"},
                 "max_results": {
                     "type": "integer", "default": 20, "minimum": 0, "maximum": 200,
@@ -1345,6 +1359,34 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 },
             },
             "required": ["entity_id"],
+        },
+    },
+    "list_storyline_voices": {
+        "name": "list_storyline_voices",
+        "description": (
+            "Counts of who said what about storylines on calls. Pass exactly one of storyline_id or "
+            "person_id. With storyline_id: per person, `said` (their call excerpts on the storyline, "
+            "by stance and by how the speaker was attributed: label or sole_other) and "
+            "`present_when_owner_said` (the owner's excerpts on calls the person was present on, "
+            "by stance), plus an `unattributed` bucket for excerpts whose speaker is not known. "
+            "With person_id: the same two counts for that person, per storyline. Being present "
+            "means being on the call, not that the person heard or agreed with a given point. "
+            "Use get_storyline with speaker / with to read the excerpts themselves."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "storyline_id": {"type": "string", "description": "Storyline id, e.g. storyline-small-firm-adoption"},
+                "person_id": {"type": "string", "description": "Person entity id, e.g. person-jane-doe"},
+                "window_days": {
+                    "type": "integer", "minimum": 1, "maximum": 365,
+                    "description": "Only calls in the last N days (default: all)",
+                },
+                "max_results": {
+                    "type": "integer", "default": 50, "minimum": 1, "maximum": 200,
+                    "description": "People (or storylines) to return",
+                },
+            },
         },
     },
     "update_storyline": {

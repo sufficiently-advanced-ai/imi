@@ -1,0 +1,111 @@
+{
+  "description": "Call transcripts with hand-labeled storyline excerpts for the meeting_linking prompt (ADR-013). Each case is one call: participants and transcript lines in the Littlebird shape (the owner's lines labeled, the other side often not). gold lists the excerpts that should be found: storyline, a line range the excerpt must overlap, and the stance. also_ok lists stances that are defensible for an ambiguous passage. Lines not covered by any gold excerpt should produce none. Used by scripts/eval_meeting_linking.py.",
+  "provenance": "Synthetic. Patterns from the kinds of calls observed on a personal deployment (2026-11-05): client check-ins, process-automation calls, peer calls, cohorts. Names, firms and details invented. Labels authored with ADR-013 §4 and not independently reviewed; treat as a smoke test, not a benchmark.",
+  "owner": "Sam Rivera",
+  "storylines": [
+    {"id": "storyline-small-firm-adoption", "name": "What small firms actually adopt",
+     "thesis": "Small firms adopt narrow, single-purpose AI tools that fit an existing workflow, not broad platforms or general assistants."},
+    {"id": "storyline-local-open-models", "name": "Local and open models",
+     "thesis": "Private and sensitive workloads move to open models running on hardware the firm controls."}
+  ],
+  "cases": [
+    {"id": "c01_client_reports_narrow_tool",
+     "title": "Check-in with Dana", "date": "2026-10-01", "participants": ["Sam Rivera", "Dana Kim"],
+     "lines": [
+       "Sam Rivera: Hey Dana, how's the office this week?",
+       "Busy, but good. Oh, we finally signed up for that intake-form tool, the one that only does client intake.",
+       "Sam Rivera: The narrow one? Nice.",
+       "Yeah, and honestly the front desk loves it. It replaced the clipboard in about a week.",
+       "Sam Rivera: I keep telling people that's where small firms land. The big suites are too much for a twelve-person office.",
+       "We did try the big suite last spring. Nobody opened it after the first month, so we cancelled.",
+       "Sam Rivera: Can you send me the login for the billing portal before Friday?",
+       "Sure, I'll send it tonight."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 2], "stance": "supports"},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [4, 4], "stance": "supports", "optional": true},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [5, 5], "stance": "context", "optional": true},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [6, 6], "stance": "supports"}
+     ]},
+    {"id": "c02_labeled_client_challenges",
+     "title": "Call with Lee", "date": "2026-10-03", "participants": ["Sam Rivera", "Lee Park"],
+     "lines": [
+       "Sam Rivera: How did the rollout go?",
+       "Lee Park: Better than I expected. We put the whole general assistant suite in front of all fourteen people, not just one task.",
+       "Lee Park: Three months in, everyone uses it every day, for drafting, scheduling, research, the lot.",
+       "Sam Rivera: That's not what I usually see at firms your size.",
+       "Lee Park: I know. I think it worked because we did a half-day training first.",
+       "Sam Rivera: Let's set up a time next week to look at the invoices."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 3], "stance": "challenges"},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [5, 5], "stance": "context", "also_ok": ["challenges"], "optional": true}
+     ]},
+    {"id": "c03_secondhand_is_context",
+     "title": "Peer call", "date": "2026-10-05", "participants": ["Sam Rivera", "Ana Cruz"],
+     "lines": [
+       "Sam Rivera: Anything new on your side?",
+       "Not much. A friend at another practice told me she read that small firms are all buying chatbots now.",
+       "Sam Rivera: Hm. Did her firm buy one?",
+       "No idea, she just read it somewhere.",
+       "Sam Rivera: Okay. Talk next week."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 2], "stance": "context", "optional": true}
+     ]},
+    {"id": "c04_owner_reports_what_firms_did",
+     "title": "Cohort session", "date": "2026-10-07", "participants": ["Sam Rivera"],
+     "lines": [
+       "Welcome everyone, let's get started.",
+       "Sam Rivera: Quick data point from my own clients: of the five small firms I set up with the general copilot this year, three cancelled it within two months and kept only the receipt-scanning tool.",
+       "Interesting. Why the receipt tool?",
+       "Sam Rivera: It does one thing inside the bookkeeping they already do.",
+       "Sam Rivera: My bet is that this pattern holds for the next two years.",
+       "Thanks, let's take questions."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 2], "stance": "supports"},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [4, 4], "stance": "supports", "also_ok": ["context"], "optional": true},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [5, 5], "stance": "context", "optional": true}
+     ]},
+    {"id": "c05_local_model_for_confidentiality",
+     "title": "Automation call with Ana", "date": "2026-10-09", "participants": ["Sam Rivera", "Ana Cruz"],
+     "lines": [
+       "Sam Rivera: Where did you land on the document review piece?",
+       "We moved it onto an open model running on the server in our back office. Our clients' contracts never leave the building now.",
+       "Sam Rivera: How's the quality compared to the hosted one?",
+       "A bit slower, but good enough, and our malpractice insurer was much happier.",
+       "Sam Rivera: I think that's where all the sensitive work ends up eventually.",
+       "By the way, did the parking validation get sorted?",
+       "Sam Rivera: Yes, it's on the front desk now."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-local-open-models", "lines": [2, 2], "stance": "supports"},
+       {"storyline_id": "storyline-local-open-models", "lines": [4, 4], "stance": "supports", "optional": true},
+       {"storyline_id": "storyline-local-open-models", "lines": [5, 5], "stance": "context", "optional": true},
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 2], "stance": "supports", "also_ok": ["context"], "optional": true}
+     ]},
+    {"id": "c06_logistics_only",
+     "title": "Access setup", "date": "2026-10-11", "participants": ["Sam Rivera", "Dana Kim", "Lee Park"],
+     "lines": [
+       "Sam Rivera: Did the VPN invite come through?",
+       "It did, I'm in.",
+       "Sam Rivera: Great. And the shared drive?",
+       "Still waiting on IT for that one. I'll ping them.",
+       "Sam Rivera: Thanks. Same time Thursday?",
+       "Works for me."
+     ],
+     "gold": []},
+    {"id": "c07_plan_is_context",
+     "title": "Planning call", "date": "2026-10-13", "participants": ["Sam Rivera", "Lee Park"],
+     "lines": [
+       "Sam Rivera: What's next for you after tax season?",
+       "We're planning to try one of those agent platforms next quarter, the kind that does everything.",
+       "Sam Rivera: Want me to sit in on the demo?",
+       "Please. I'll send you the invite."
+     ],
+     "gold": [
+       {"storyline_id": "storyline-small-firm-adoption", "lines": [2, 2], "stance": "context", "optional": true}
+     ]}
+  ]
+}

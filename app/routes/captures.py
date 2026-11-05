@@ -6,6 +6,7 @@ Externally visible paths (all under /api/captures):
     GET  /api/captures/{capture_id}   — single capture record
     POST /api/captures/{capture_id}/review — audited governance transition
     POST /api/captures/link           — one LINK run over unlinked library captures (ADR-011)
+                                        and, when enabled, call transcripts (ADR-013)
     POST /api/captures/link/backfill  — storyline-only pass over linked captures (or a re-check)
     POST /api/captures/link/revert    — undo one LINK run (or backfill)
 
@@ -153,6 +154,10 @@ class LinkBackfillRequest(BaseModel):
         description="ISO-8601: also re-judge captures checked against storyline_ids before this "
         "time (e.g. when the thesis was reworded); their earlier linker links are replaced",
     )
+    kinds: list[Literal["capture", "meeting"]] | None = Field(
+        None, description="What to backfill: capture, meeting (call transcripts, ADR-013), or both "
+        "(default)"
+    )
 
 
 @router.post("/link/backfill")
@@ -167,7 +172,7 @@ async def backfill_storylines(body: LinkBackfillRequest | None = None):
         return await asyncio.shield(
             asyncio.ensure_future(capture_linker.run_backfill(
                 storyline_ids=body.storyline_ids, since=body.since, max_results=body.max_results,
-                recheck_before=body.recheck_before,
+                recheck_before=body.recheck_before, kinds=body.kinds,
             ))
         )
     except capture_linker.LinkRunBusy as e:

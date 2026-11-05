@@ -342,6 +342,10 @@ class Neo4jKnowledgeGraph:
         # no replay re-creates, so this runs on every tier.
         await self._reingest_captures()
 
+        # Meeting storyline excerpts (ADR-013): projected from their link
+        # files onto the meeting Documents built above.
+        await self._reingest_meeting_links()
+
         self.last_build = datetime.utcnow()
 
         # Clean up bad stub entities after every build (not just clean builds)
@@ -1211,6 +1215,28 @@ class Neo4jKnowledgeGraph:
             )
         except Exception as e:
             logger.warning("[GRAPH] Capture projection failed: %s", e, exc_info=True)
+
+    async def _reingest_meeting_links(self) -> None:
+        """Project meeting link files into Neo4j (ADR-013 §5). Runs after the
+        captures, when meeting Documents and Person entities exist. Non-fatal."""
+        try:
+            from pathlib import Path
+
+            from app.services.graph.meeting_graph_writer import MeetingGraphWriter
+            from app.services.meeting_link_store import MeetingLinkStore
+
+            store = MeetingLinkStore(repo_root=Path(self.git_ops.repo_path))
+            if not store.dir.is_dir():
+                return
+            stats = await MeetingGraphWriter(self.neo4j).project_all(store)
+            logger.info(
+                "[GRAPH] Projected %d linked meeting(s), %d excerpt edge(s)%s",
+                stats["documents"], stats["edges"],
+                f", {len(stats['missing_document'])} missing Document(s)"
+                if stats["missing_document"] else "",
+            )
+        except Exception as e:
+            logger.warning("[GRAPH] Meeting link projection failed: %s", e, exc_info=True)
 
     # ──────────────────────────────────────────────────────────────
     # Timestamp helpers

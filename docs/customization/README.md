@@ -35,6 +35,7 @@ versions by hash — **run the evals after prompt changes**.
 | `extract_relationships.xml` | relationship inference between entities |
 | `person_update.xml`, `project_update.xml`, `team_update.xml` | entity profile updates |
 | `meeting_finalize.xml` | meeting finalization (summary + title envelope) |
+| `meeting_linking.xml` | which transcript passages of a call bear on which storylines, with what stance; the model returns line ranges, the server quotes and attributes the speaker (ADR-013) |
 | `capture_linking.xml` | which seeded topics / storylines / essays a library capture (or a work-log item, ADR-012) links to, with what stance, and what counts as a substantive mention (ADR-011) |
 | `metadata.xml`, `metadata_with_entities.xml` | document metadata analysis |
 | `digest.xml`, `explain-diff.xml`, `search.xml` | digests, diff explanations, `/api/query` |

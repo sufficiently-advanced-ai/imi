@@ -3,7 +3,10 @@
     GET   /api/storylines                      — list, with evidence counts per window
     POST  /api/storylines                      — propose one (status: proposed)
     GET   /api/storylines/{id}                 — one, with recent evidence; ?as_of= for past state
-    GET   /api/storylines/{id}/evidence        — evidence by occurred_at (?since=&until=&stance=&linked_since=)
+    GET   /api/storylines/{id}/evidence        — evidence by occurred_at (?since=&until=&stance=&linked_since=
+                                                 &speaker=&with=)
+    GET   /api/storylines/{id}/voices          — who said what on its calls (ADR-013)
+    GET   /api/people/{id}/storyline-voices    — one person, per storyline (ADR-013)
     GET   /api/storylines/{id}/history         — state versions and status transitions
     PATCH /api/storylines/{id}                 — reviewer fields only
     GET   /api/activity?type=topic&window=14   — per-entity evidence, last window vs prior
@@ -61,7 +64,7 @@ async def _call(coro) -> Any:
         return await coro
     except StorylineError as e:
         message = str(e)
-        raise HTTPException(status_code=404 if message.startswith("no storyline") else 422,
+        raise HTTPException(status_code=404 if message.startswith(("no storyline", "no person")) else 422,
                             detail=message) from e
 
 
@@ -103,11 +106,40 @@ async def storyline_evidence(
     linked_since: str | None = Query(
         None, description="ISO-8601, inclusive, by when the item was linked to the storyline"
     ),
-    max_results: int = Query(50, ge=1, le=storylines.MAX_EVIDENCE),
+    speaker: str | None = Query(
+        None, description="Call excerpts by speaker: a person id, owner, others or unknown"
+    ),
+    with_person: str | None = Query(
+        None, alias="with", description="Call excerpts from calls this person id was present on"
+    ),
+    max_results: int = Query(50, ge=1, le=storylines.MAX_EVIDENCE, description="Documents to return"),
 ):
     return await _call(storylines.storyline_evidence(storyline_id, since=since, until=until,
                                                      stance=stance, linked_since=linked_since,
+                                                     speaker=speaker, with_person=with_person,
                                                      max_results=max_results))
+
+
+@router.get("/storylines/{storyline_id}/voices")
+async def storyline_voices(
+    storyline_id: str,
+    window_days: int | None = Query(None, ge=1, le=storylines.MAX_WINDOW_DAYS,
+                                    description="Only calls in the last N days (default: all)"),
+    max_results: int = Query(50, ge=1, le=storylines.MAX_EVIDENCE),
+):
+    return await _call(storylines.storyline_voices(storyline_id, window_days=window_days,
+                                                   max_results=max_results))
+
+
+@router.get("/people/{person_id}/storyline-voices")
+async def person_storyline_voices(
+    person_id: str,
+    window_days: int | None = Query(None, ge=1, le=storylines.MAX_WINDOW_DAYS,
+                                    description="Only calls in the last N days (default: all)"),
+    max_results: int = Query(50, ge=1, le=storylines.MAX_EVIDENCE),
+):
+    return await _call(storylines.person_storyline_voices(person_id, window_days=window_days,
+                                                          max_results=max_results))
 
 
 @router.get("/storylines/{storyline_id}/history")

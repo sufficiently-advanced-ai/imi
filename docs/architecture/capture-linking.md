@@ -113,6 +113,17 @@ work log) is linked by the same runs, with less:
 - **Unchanged**: the lane, decay and recall. A record capture's `Document` node carries
   `lane: record`, and so does each edge.
 
+## Call transcripts
+
+Calls in `meetings/` are linked to storylines in the same run, after the captures, when
+`library.linking.meetings.mode` is not off (effective mode: the lower of it and `mode`). They
+share the run id, lock, audit log (rows carry `kind: meeting`) and lifecycle step, and have their
+own store (`memory/meeting_links/`), graph writer
+(`app/services/graph/meeting_graph_writer.py`, which never touches `capture_link` edges or
+Document properties) and prompt (`meeting_linking`). A meeting is linked when it has no link
+file, its file is older than `MEETING_LINK_VERSION`, its transcript changed, or its file is
+shadow and the mode is now on. See ADR-013 and [Storylines](storylines.md#call-transcripts-adr-013).
+
 ## Three tiers of entity
 
 | Tier | Roles | How a node comes to exist |

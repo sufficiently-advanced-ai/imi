@@ -294,7 +294,7 @@ async def test_evidence_filters_by_link_time_with_typed_parameters(kg):
     kg.nodes["storyline-x"] = _Node(id="storyline-x", name="X", type="storyline", metadata={})
     out = await storylines.storyline_evidence("storyline-x", linked_since="2026-11-03", kg=kg)
     query, params = kg.neo4j.queries[-1]
-    assert "datetime(r.linked_at) >= $linked_since" in query and "r.linked_at AS linked_at" in query
+    assert "datetime(r.linked_at) >= $linked_since" in query and "properties(x)] AS edges" in query
     assert params["linked_since"] == datetime(2026, 11, 3, tzinfo=UTC)  # typed (ADR-004)
     assert params["since"] is None and out["linked_since"] == "2026-11-03T00:00:00+00:00"
     await storylines.storyline_evidence("storyline-x", kg=kg)
