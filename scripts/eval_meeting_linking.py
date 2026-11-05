@@ -13,7 +13,8 @@ matched excerpts.
     python scripts/eval_meeting_linking.py                 # live model calls
     python scripts/eval_meeting_linking.py --runs 3        # variance check
     python scripts/eval_meeting_linking.py --fixture path  # e.g. a private, real-data set
-    python scripts/eval_meeting_linking.py --replay out.json   # re-score a saved run, no calls
+    python scripts/eval_meeting_linking.py --save raw.json      # keep the raw model output
+    python scripts/eval_meeting_linking.py --replay raw.json    # re-score it, no calls
 
 Run inside the app container so the inference routing and credentials apply.
 """
@@ -83,14 +84,36 @@ def score(cases: list[dict], predictions: dict[str, list[dict]], floor: float) -
             "misses": misses, "false_excerpts": falses, "wrong_stance": wrong}
 
 
+def select_at(cases: list[dict], storylines: list[dict], raw: dict[str, list[dict]],
+              floor: float) -> dict[str, list[dict]]:
+    """The production selection (§3) of each case's raw model output at one
+    confidence floor: the floor applies before the per-storyline cap, as in
+    a LINK run."""
+    from app.services.meeting_linker import select_excerpts
+    from app.services.meeting_transcript import parse_meeting
+
+    ids = {s["id"] for s in storylines}
+    out = {}
+    for case in cases:
+        meeting = parse_meeting(meeting_markdown(case), f"meetings/{case['id']}.md")
+        items = [{**item, "_part": tuple(item["_part"])} if "_part" in item else item
+                 for item in raw.get(case["id"], [])]
+        kept, _ = select_excerpts(meeting, items, ids, min_confidence=floor, max_per_storyline=3,
+                                  max_storylines=5, speaker_key=lambda turn: str(turn))
+        out[case["id"]] = [{"storyline_id": c.storyline_id, "lines": [c.start, c.end],
+                            "stance": c.stance, "confidence": c.confidence, "claim": c.claim}
+                           for c in kept]
+    return out
+
+
 async def predict(cases: list[dict], owner: str, storylines: list[dict]) -> dict[str, list[dict]]:
+    """Raw model output per case (before any server-side selection)."""
     from app.services.claude_client import get_claude_client
-    from app.services.meeting_linker import judge, select_excerpts
+    from app.services.meeting_linker import judge
     from app.services.meeting_transcript import parse_meeting
 
     client = get_claude_client()
     semaphore = asyncio.Semaphore(4)
-    ids = {s["id"] for s in storylines}
 
     async def one(case: dict) -> tuple[str, list[dict]]:
         meeting = parse_meeting(meeting_markdown(case), f"meetings/{case['id']}.md")
@@ -98,11 +121,7 @@ async def predict(cases: list[dict], owner: str, storylines: list[dict]) -> dict
         if raw is None:
             print(f"  {case['id']}: model call failed", file=sys.stderr)
             return case["id"], []
-        kept, _ = select_excerpts(meeting, raw, ids, min_confidence=0.0, max_per_storyline=3,
-                                  max_storylines=5, speaker_key=lambda turn: str(turn))
-        return case["id"], [{"storyline_id": c.storyline_id, "lines": [c.start, c.end],
-                             "stance": c.stance, "confidence": c.confidence, "claim": c.claim}
-                            for c in kept]
+        return case["id"], raw
 
     return dict(await asyncio.gather(*(one(c) for c in cases)))
 
@@ -111,8 +130,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fixture", type=Path, default=FIXTURE)
     parser.add_argument("--runs", type=int, default=1)
-    parser.add_argument("--replay", type=Path, help="score saved predictions instead of calling the model")
-    parser.add_argument("--save", type=Path, help="write the predictions of the last run here")
+    parser.add_argument("--replay", type=Path, help="score a saved raw model output instead of calling the model")
+    parser.add_argument("--save", type=Path, help="write the raw model output of the last run here")
     args = parser.parse_args()
     data = json.loads(args.fixture.read_text(encoding="utf-8"))
     cases = data["cases"]
@@ -123,11 +142,11 @@ def main() -> int:
     print(f"{len(cases)} cases, {len(runs)} run(s)")
     print(f"{'floor':>6} {'excerpts':>9} {'recall':>7} {'false':>6} {'stance':>7}")
     for floor in SWEEP:
-        rows = [score(cases, run, floor) for run in runs]
+        rows = [score(cases, select_at(cases, data["storylines"], run, floor), floor) for run in runs]
         mean = {k: sum(r[k] for r in rows) / len(rows) for k in ("excerpts", "recall", "false", "stance_accuracy")}
         print(f"{floor:>6.2f} {mean['excerpts']:>9.1f} {mean['recall']:>7.2f} {mean['false']:>6.1f} "
               f"{mean['stance_accuracy']:>7.2f}")
-    detail = score(cases, runs[-1], 0.75)
+    detail = score(cases, select_at(cases, data["storylines"], runs[-1], 0.75), 0.75)
     for key in ("misses", "false_excerpts", "wrong_stance"):
         if detail[key]:
             print(f"at 0.75, {key}: {', '.join(detail[key])}")

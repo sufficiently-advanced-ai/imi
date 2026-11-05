@@ -153,7 +153,10 @@ def parse_meeting(text: str, meeting_path: str) -> MeetingTranscript | None:
     lines = [line.rstrip() for line in transcript.splitlines() if line.strip()]
     if not lines:
         return None
-    participants = [str(p).strip() for p in (meta.get("participants") or []) if str(p or "").strip()]
+    raw = meta.get("participants") or []
+    if not isinstance(raw, list):
+        raw = [raw]  # a scalar is one participant, not a string to iterate
+    participants = [str(p).strip() for p in raw if str(p or "").strip()]
     occurred = meta.get("start_time") or meta.get("occurred_at") or meta.get("updated_at")
     return MeetingTranscript(
         meeting_path=meeting_path,

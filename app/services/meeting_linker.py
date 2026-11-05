@@ -438,13 +438,16 @@ def _occurred(meeting: MeetingTranscript) -> datetime:
 
 
 async def _attributors(deps: MeetingDeps, kg: Any, meetings: list[MeetingTranscript],
-                       log: MeetingRunLog) -> dict[str, Attributor]:
+                       log: MeetingRunLog) -> dict[str, Attributor] | None:
+    """Attribution per meeting, or None when the people lookup failed: an
+    empty result would read as "nobody resolves" and strip every speaker id
+    on re-attribution, so callers skip attribution and linking instead."""
     try:
         people = await deps.people([m.document_id for m in meetings])
     except Exception as e:
         logger.warning("[LINK] Meeting people lookup failed: %s", e)
-        log.errors.append(f"people lookup: {e}")
-        people = {}
+        log.errors.append(f"people lookup failed, meetings not attributed or linked: {e}")
+        return None
     owner_norms = owner_names(deps.owner, owner_people(kg, deps.owner))
     return {m.stem: Attributor(m, owner_norms, list(people.get(m.document_id) or []))
             for m in meetings}
@@ -526,6 +529,9 @@ async def link_meetings(ctx: Any, run_id: str, max_results: int,
             audit_rows.append(_audit(run_id, mode, "restore", record.meeting_path))
 
     attributors = await _attributors(deps, ctx.kg, list(meetings.values()), log)
+    if attributors is None:  # keep the orphan changes; try the rest next run
+        await _project(deps, touched, log)
+        return log, [deps.store.relative_path(s) for s in sorted(touched)]
 
     # 2. re-attribution (no model call)
     for stem, meeting in meetings.items():
@@ -553,7 +559,14 @@ async def link_meetings(ctx: Any, run_id: str, max_results: int,
                                  excerpts=len(record.excerpts)))
 
     # 3. linking
-    pending = [m for stem, m in meetings.items() if eligible(deps.store.get(stem), m, mode)]
+    pending = []
+    for stem, meeting in meetings.items():
+        record = deps.store.get(stem)
+        if record is None and deps.store.exists(stem):
+            log.errors.append(f"unreadable meeting link file for {stem}: skipped")
+            continue
+        if eligible(record, meeting, mode):
+            pending.append(meeting)
     pending.sort(key=_occurred, reverse=True)
     batch = pending[:max(0, max_results)]
     log.remaining = len(pending) - len(batch)
@@ -696,6 +709,9 @@ async def backfill_meetings(ctx: Any, run_id: str, targets: dict[str, dict[str, 
         return log, []
 
     attributors = await _attributors(deps, ctx.kg, [m for m, _ in batch], log)
+    if attributors is None:
+        log.remaining += len(batch)
+        return log, []
     semaphore = asyncio.Semaphore(ctx.policy.concurrency)
     answers = await asyncio.gather(*(
         judge(ctx.claude_client, m, [targets[i] for i in sorted(missing)], deps.owner,

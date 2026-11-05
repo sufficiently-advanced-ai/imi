@@ -838,3 +838,48 @@ async def test_relink_keeps_first_linked_at_and_revert_restores_the_earlier_file
     # the transcript still differs from the restored file: the next run re-links it
     again = await _run(world)
     assert again["meetings"]["processed"] == 1
+
+
+def test_eval_applies_the_floor_before_the_cap():
+    module = _eval_module()
+    case = {"id": "c", "title": "T", "date": "2026-10-01", "participants": [OWNER],
+            "lines": ["Dana Kim: a", "Dana Kim: b", "Sam Rivera: x", "Dana Kim: c", "Sam Rivera: y",
+                      "Dana Kim: d"]}
+    raw = {"c": [{"storyline_id": SL, "lines": [n, n], "stance": "supports", "confidence": conf}
+                 for n, conf in ((1, 0.6), (4, 0.62), (6, 0.64), (2, 0.9))]}
+    assert [p["lines"] for p in module.select_at([case], [{"id": SL}], raw, 0.8)["c"]] == [[2, 2]]
+    # at 0.6 the cap (3) keeps the best three of four
+    assert [p["lines"] for p in module.select_at([case], [{"id": SL}], raw, 0.6)["c"]] == [[2, 2], [4, 4], [6, 6]]
+
+
+def test_string_participants_are_one_person():
+    text = "---\ntitle: T\nparticipants: Dana Kim\n---\n\n## Full Transcript\n\nSam Rivera: hi\n"
+    assert parse_meeting(text, "meetings/x.md").participants == ["Dana Kim"]
+
+
+@pytest.mark.asyncio
+async def test_failed_people_lookup_rewrites_nothing(world):
+    world.write("call-w", "Call", [OWNER, "Dana Kim"], ONE_ON_ONE)
+    world.people_by_doc["doc:meetings/call-w.md"] = [PEOPLE["person-dana-kim"]]
+    await _run(world)
+    before = world.store.get("call-w").model_dump()
+    ctx = world.ctx()
+
+    async def broken(_ids):
+        raise RuntimeError("graph down")
+
+    ctx.meeting_people = broken
+    log = await capture_linker.run_link(ctx=ctx)
+    assert any("people lookup failed" in e for e in log["errors"])
+    assert world.store.get("call-w").model_dump() == before and not log["meetings"]["reattributed"]
+
+
+@pytest.mark.asyncio
+async def test_unreadable_link_file_is_skipped_not_fatal(world):
+    world.write("call-x", "Call", [OWNER, "Dana Kim"], ONE_ON_ONE)
+    world.write("call-y", "Call", [OWNER, "Dana Kim"], ONE_ON_ONE)
+    world.store.dir.mkdir(parents=True, exist_ok=True)
+    (world.store.dir / "call-x.json").write_text("{not json")
+    log = await _run(world)
+    assert log["meetings"]["processed"] == 1 and world.store.get("call-y") is not None
+    assert any("unreadable meeting link file for call-x" in e for e in log["errors"])
