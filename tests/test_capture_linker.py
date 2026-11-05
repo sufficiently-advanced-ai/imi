@@ -633,9 +633,25 @@ def test_supersession_matches_earlier_claims_by_text():
         item("a", RISK, "2026-10-10"),
         item("b", PROGRESS, "2026-10-12", sup="Part recognition misreads slope  bricks"),  # spacing, no stop
         item("c", "[risk · x · open] Later claim.", "2026-10-20"),
-        item("d", "[progress · x · done] Earlier.", "2026-10-15", sup="Later claim."),  # c occurs after d
+        item("d", "[progress · x · done] Later claim settled.", "2026-10-15", sup="Later claim."),  # c is after d
+        # attached to the wrong item (the old collector): no words in common, no match
+        item("e", "[progress · infra · done] Export failures were an SDK bug.", "2026-10-25",
+             sup="Part recognition misreads slope bricks."),
     ]
     assert capture_linker.supersession(memories) == {"a": {"b"}}
+    # same thread, reworded, one claim replaced: trusted; the old collector's
+    # many-claim item in the same thread with unrelated wording is not
+    q = item("q", "[question · lego · open] Confirm the default bands at $549.", "2026-10-01")
+    k = item("k", "[risk · lego · open] Kit preview shows an old model.", "2026-10-01")
+    one = item("one", "[decision · lego · firm] Priced at $200 plus 1.6x landed cost.", "2026-10-05",
+               sup="Confirm the default bands at $549.")
+    many = SimpleNamespace(id="many", source_date="2026-10-06", content=(
+        "[progress · lego · done] Roof ends checked.\nSupersedes: Kit preview shows an old model."
+        "\nSupersedes: Something else.\nSupersedes: A third claim."))
+    assert capture_linker.supersession([q, k, one, many]) == {"q": {"one"}}
+    assert capture_linker.record_thread(RISK) == "lego"
+    assert capture_linker.claims_related("Pricing bands by landed cost?", "Bands set by landed cost at $549")
+    assert not capture_linker.claims_related("Boxed kit takes four weeks", "Export failures were an SDK bug")
     assert capture_linker.record_claim("no bracket line") is None
 
 
@@ -690,6 +706,31 @@ async def test_a_superseding_claim_hides_the_earlier_links_and_reverts(world):
     await capture_linker.revert_run(second["run_id"], ctx=ctx())
     assert world.links.get(risk.id).superseded_by == {}
     assert world.links.get(risk.id).graph_links()
+
+
+@pytest.mark.asyncio
+async def test_a_mark_the_guard_no_longer_supports_is_cleared(world):
+    _with_storylines(world)
+    ctx = lambda: world.ctx(record_sources=("changes",))  # noqa: E731
+    risk = _work_item(world, RISK, "2026-10-10T09:00:00Z")
+    world.claude.script[RISK] = {"advances": [{"id": "storyline-arc", "stance": "challenges", "confidence": 0.85}]}
+    await capture_linker.run_link(10, ctx=ctx())
+
+    def stale(record):  # marked under the old rule by an unrelated item
+        record.superseded_by = {"unrelated-capture": "link-20261031T000000Z-aaaaaa"}
+        return record
+
+    world.links.mutate(risk.id, stale)
+    assert world.links.get(risk.id).graph_links() == []
+    _work_item(world, "[progress · infra · done] Export failures were an SDK bug.", "2026-10-25T09:00:00Z")
+    run = await capture_linker.run_link(10, ctx=ctx())
+    record = world.links.get(risk.id)
+    assert record.superseded_by == {} and record.graph_links()  # evidence again
+    assert risk.id in {cid for cid, _ in world.graph.writes[-1]}
+    rows = [{k: v for k, v in r.items() if k != "at"} for r in world.ctx().audit.iter_rows()
+            if r.get("action") == "unsupersede"]
+    assert rows == [{"run_id": run["run_id"], "mode": "on", "action": "unsupersede",
+                     "capture_id": risk.id, "by": "unrelated-capture"}]
 
 
 @pytest.mark.asyncio

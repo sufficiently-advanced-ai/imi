@@ -81,6 +81,14 @@ report does: in a 30-item sample with a matching thesis, relevant items scored 0
 A `Supersedes: <claim>` line names an earlier item by its claim text. The match is on the
 normalized claim of a record-source capture that did not occur after the superseding one.
 
+Amended 2026-11-05: the match must also be plausible. The two claims share words, or they are
+in the same thread and the superseding item replaces at most two claims. Before 2026-11-01 the
+collector attached every replaced claim in a batch to the first new item of the same kind,
+whatever its thread: 288 of 407 matches crossed threads, and one item "replaced" up to 16
+others. The guard drops those (56 work items were being skipped), keeps the genuine ones,
+including reworded ones ("bands at $549…" → "priced at $200 + 1.6×…"), and a run clears a
+`superseded_by` mark the rule no longer supports, with an `unsupersede` audit row.
+
 - An item that is already superseded when a run sees it is not linked.
 - When a run links the superseding item, the earlier item's link file gets
   `superseded_by: {superseding capture id: run id}`. Its links stay in the file, for the audit

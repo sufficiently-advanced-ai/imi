@@ -103,6 +103,9 @@ work log) is linked by the same runs, with less:
 - **Their own storyline bar**: `record_storyline_min_confidence` when set. A first-hand work
   item's confidence is relevance only.
 - **Supersession**: a `Supersedes: <claim>` line names an earlier item by its claim text.
+  It counts only when the two claims share words, or when both items are in the same thread
+  and the superseding item replaces at most two claims (`claims_related`,
+  `SUPERSEDES_MAX_UNRELATED`): this drops lines a collector attached to the wrong item.
   An item that is already superseded is never linked. When a run links the superseding item,
   the earlier item's file gets `superseded_by: {capture id: run id}`: its links stay in the
   file but are no longer projected, so stale state stops counting as storyline evidence.
