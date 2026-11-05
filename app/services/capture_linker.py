@@ -303,10 +303,40 @@ def superseded_claims(content: str | None) -> list[str]:
             if line.startswith(_SUPERSEDES) and line[len(_SUPERSEDES):].strip()]
 
 
+_WORD = re.compile(r"[a-z0-9]{4,}")
+# Share of the shorter claim's words the two claims must have in common.
+SUPERSEDES_MIN_OVERLAP = 0.2
+# A same-thread item that replaces at most this many claims is trusted even
+# when the wording changed ("bands at $549…" -> "priced at $200 + 1.6x…").
+SUPERSEDES_MAX_UNRELATED = 2
+_THREAD = re.compile(r"^\[[^\]·]*·\s*([^\]·]+?)\s*·")
+
+
+def claims_related(a: str | None, b: str | None) -> bool:
+    """Whether two work-log claims share enough words for one to replace the
+    other. Guards against ``Supersedes:`` lines attached to the wrong item:
+    an earlier collector put every replaced claim of a batch on its first item
+    of the same kind, whatever it was about."""
+    wa, wb = set(_WORD.findall((a or "").lower())), set(_WORD.findall((b or "").lower()))
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / min(len(wa), len(wb)) >= SUPERSEDES_MIN_OVERLAP
+
+
+def record_thread(content: str | None) -> str | None:
+    """The thread of a ``[kind · thread · status] claim`` first line."""
+    match = _THREAD.match((content or "").split("\n", 1)[0].strip())
+    return match.group(1).strip().lower() if match else None
+
+
 def supersession(memories: list[Any]) -> dict[str, set[str]]:
     """capture id -> the ids of the captures that supersede it. A ``Supersedes:``
     line names an earlier claim by its text; it matches a capture whose claim
-    is that text and which did not occur after the superseding one."""
+    is that text and which did not occur after the superseding one, when the
+    two claims share words (``claims_related``), or when both are in the same
+    thread and the superseding item replaces at most SUPERSEDES_MAX_UNRELATED
+    claims. An earlier collector attached every replaced claim of a batch to
+    one item, whatever its thread: those many-line, unrelated matches drop."""
     by_claim: dict[str, list[Any]] = defaultdict(list)
     for memory in memories:
         claim = record_claim(memory.content)
@@ -315,9 +345,15 @@ def supersession(memories: list[Any]) -> dict[str, set[str]]:
     out: dict[str, set[str]] = defaultdict(set)
     for memory in memories:
         when = to_utc(memory.source_date)
-        for claim in superseded_claims(memory.content):
+        own, thread = record_claim(memory.content), record_thread(memory.content)
+        claims = superseded_claims(memory.content)
+        few = len(claims) <= SUPERSEDES_MAX_UNRELATED
+        for claim in claims:
+            related = claims_related(claim, own)
             for earlier in by_claim.get(claim, ()):
                 if earlier.id == memory.id:
+                    continue
+                if not (related or (few and thread and record_thread(earlier.content) == thread)):
                     continue
                 earlier_when = to_utc(earlier.source_date)
                 if when and earlier_when and earlier_when > when:
@@ -799,12 +835,28 @@ async def _run(ctx: LinkContext, max_results: int) -> dict[str, Any]:
 def _mark_superseded(ctx: LinkContext, log: Changelog, superseded: dict[str, set[str]],
                      linked_now: set[str], audit_rows: list[dict[str, Any]]) -> set[str]:
     """Record claims superseded by a capture this run linked: their links stop
-    projecting (ADR-012). Returns the captures whose files changed."""
+    projecting (ADR-012). A file marked by a match that no longer holds (the
+    matching rule tightened) projects again. Returns the captures whose files
+    changed."""
+    changed: set[str] = set()
+    for record in list(ctx.links.iter_all()):
+        stale = set(record.superseded_by) - superseded.get(record.capture_id, set())
+        if not stale:
+            continue
+
+        def unmark(rec: CaptureLinkFile, stale: set[str] = stale) -> CaptureLinkFile:
+            rec.superseded_by = {k: v for k, v in rec.superseded_by.items() if k not in stale}
+            return rec
+
+        ctx.links.mutate(record.capture_id, unmark)
+        changed.add(record.capture_id)
+        for by in sorted(stale):
+            audit_rows.append({"run_id": log.run_id, "mode": log.mode, "action": "unsupersede",
+                               "capture_id": record.capture_id, "by": by})
     by_superseder: dict[str, set[str]] = defaultdict(set)
     for earlier, later in superseded.items():
         for capture_id in later & linked_now:
             by_superseder[capture_id].add(earlier)
-    changed: set[str] = set()
     for capture_id, earlier_ids in by_superseder.items():
         for earlier in sorted(earlier_ids):
             current = ctx.links.get(earlier)
