@@ -19,6 +19,7 @@ properties are never trusted for access decisions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -219,49 +220,55 @@ async def list_source_items(
         params,
     )
 
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    skipped_stale = 0
-    total = 0
-    for r in rows:
-        cid = r["capture_id"]
-        if cid in seen:
-            continue
-        seen.add(cid)
-        record = resolve_capture(cid)
-        if record is None or not tenant_matches(getattr(record, "tenant_id", None), tenant_id):
-            continue  # deleted, or another tenant's: never serve ghosts
-        governance = {f: getattr(record, f, None) for f in _GOVERNANCE_FIELDS}
-        if not _passes_governance(governance, "evidence", False):
-            continue  # rejected, or not evidence-grade: recall would not serve it
-        stale = (
-            (getattr(record, "lane", None) or "record") == "library"
-            and decay
-            and not getattr(record, "pinned_by", None)
-            and _is_stale(getattr(record, "stale_after", None))
-        )
-        if stale and not include_stale:
-            skipped_stale += 1
-            continue
-        total += 1
-        if len(items) >= limit:
-            continue
-        items.append({
-            "record_id": cid,
-            "title": r.get("title"),
-            "url": r.get("url") or getattr(record, "source_id", None),
-            "published_at": r.get("occurred_at") or getattr(record, "source_date", None),
-            "time_source": r.get("time_source") or getattr(record, "time_source", None),
-            "summary": getattr(record, "summary", None) or r.get("summary"),
-            "lane": getattr(record, "lane", None) or "record",
-            "stale": stale,
-            "review_status": record.review_status,
-            "use_policy": {
-                "can_use_as_instruction": record.can_use_as_instruction,
-                "can_use_as_evidence": record.can_use_as_evidence,
-                "requires_confirmation": record.review_status == "pending",
-            },
-        })
+    def hydrate() -> tuple[list[dict[str, Any]], int, int]:
+        # One file read per capture: off the event loop, so a busy source
+        # never stalls other requests while its counts are taken.
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        skipped_stale = 0
+        total = 0
+        for r in rows:
+            cid = r["capture_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            record = resolve_capture(cid)
+            if record is None or not tenant_matches(getattr(record, "tenant_id", None), tenant_id):
+                continue  # deleted, or another tenant's: never serve ghosts
+            governance = {f: getattr(record, f, None) for f in _GOVERNANCE_FIELDS}
+            if not _passes_governance(governance, "evidence", False):
+                continue  # rejected, or not evidence-grade: recall would not serve it
+            stale = (
+                (getattr(record, "lane", None) or "record") == "library"
+                and decay
+                and not getattr(record, "pinned_by", None)
+                and _is_stale(getattr(record, "stale_after", None))
+            )
+            if stale and not include_stale:
+                skipped_stale += 1
+                continue
+            total += 1
+            if len(items) >= limit:
+                continue
+            items.append({
+                "record_id": cid,
+                "title": r.get("title"),
+                "url": r.get("url") or getattr(record, "source_id", None),
+                "published_at": r.get("occurred_at") or getattr(record, "source_date", None),
+                "time_source": r.get("time_source") or getattr(record, "time_source", None),
+                "summary": getattr(record, "summary", None) or r.get("summary"),
+                "lane": getattr(record, "lane", None) or "record",
+                "stale": stale,
+                "review_status": record.review_status,
+                "use_policy": {
+                    "can_use_as_instruction": record.can_use_as_instruction,
+                    "can_use_as_evidence": record.can_use_as_evidence,
+                    "requires_confirmation": record.review_status == "pending",
+                },
+            })
+        return items, total, skipped_stale
+
+    items, total, skipped_stale = await asyncio.to_thread(hydrate)
 
     out: dict[str, Any] = {
         "source": {k: resolved[k] for k in ("id", "name", "type", "medium", "url", "matched_via")},

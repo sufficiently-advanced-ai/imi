@@ -244,8 +244,19 @@ async def test_recall_source_filter_beats_a_crowded_library(store, maker):
     kg = _kg([_doc(mine, "source-ai-engineer", 2, title="Agents at scale"),
               *[_doc(c, "source-latent-space", 2) for c in crowd]])
 
+    calls = []
+    search = store.search_vectors
+
+    def counting(*a, **k):
+        calls.append(k.get("k"))
+        return search(*a, **k)
+
+    store.search_vectors = counting
     result = await _recall(store, every, maker, kg, source="AI Engineer", limit=1)
 
+    # One k=3 pass per lane: the store cut to the source's ids before top-k, so
+    # recall never had to widen the pool to dig the capture out.
+    assert calls == [3, 3]
     assert result["memories"] == []
     assert [m["record_id"] for m in result["background"]] == [mine.id]
     hit = result["background"][0]
@@ -308,6 +319,23 @@ async def test_recall_annotation_survives_a_broken_graph(store, maker):
     assert "source" not in result["background"][0]
 
 
+@pytest.mark.asyncio
+async def test_recall_annotation_gives_up_on_a_slow_graph(store, maker, monkeypatch):
+    import asyncio
+
+    class _Slow:
+        async def execute_read(self, *a, **k):
+            await asyncio.sleep(5)
+            return []
+
+    monkeypatch.setattr(memory_recall, "ORIGINS_TIMEOUT_SECONDS", 0.05)
+    cap = _cap("A talk on agents")
+    index_capture(store, _Embedder(), cap)
+    result = await _recall(store, [cap], maker, SimpleNamespace(neo4j=_Slow()), lanes=["library"])
+    assert [m["record_id"] for m in result["background"]] == [cap.id]
+    assert "title" not in result["background"][0]
+
+
 # ---------------------------------------------------------------------------
 # surfaces
 # ---------------------------------------------------------------------------
@@ -329,3 +357,9 @@ def test_tool_is_registered_once():
     assert [t.name for t in TOOLS].count("list_source_items") == 1
     assert TOOL_DEFS["list_source_items"]["inputSchema"]["required"] == ["source"]
     assert "source" in TOOL_DEFS["memory_recall"]["inputSchema"]["properties"]
+
+
+def test_chat_surface_has_the_tool():
+    from app.agents.chat_tools_mcp import _QUERY_TOOLS, list_source_items_tool
+
+    assert list_source_items_tool in _QUERY_TOOLS

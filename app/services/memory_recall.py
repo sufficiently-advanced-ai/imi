@@ -14,6 +14,7 @@ Schema versions: request ``imi.memory.recall.v1``, response
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
@@ -53,6 +54,7 @@ CANDIDATE_FACTOR = 3  # vector candidates per requested result
 RECENCY_CANDIDATE_FACTOR = 20  # with recency blended in (see _candidate_k)
 CANDIDATE_GROWTH = 4  # pool growth per pass under a date cutoff
 MAX_CANDIDATES = 8000  # each candidate re-hydrates its record from the store
+ORIGINS_TIMEOUT_SECONDS = 2.0  # title/source annotation is best effort
 
 # Governance fields re-hydrated from the authoritative record before filtering.
 _GOVERNANCE_FIELDS = (
@@ -267,8 +269,10 @@ async def _annotate_origins(shapes: list[dict], kg: Any) -> None:
     try:
         from app.services import source_items
 
-        origins = await source_items.capture_origins(ids, kg=kg)
-    except Exception as e:  # noqa: BLE001
+        origins = await asyncio.wait_for(
+            source_items.capture_origins(ids, kg=kg), ORIGINS_TIMEOUT_SECONDS
+        )
+    except Exception as e:  # noqa: BLE001 (TimeoutError included)
         logger.debug("[RECALL] capture origins unavailable: %s", e)
         return
     for shape in shapes:

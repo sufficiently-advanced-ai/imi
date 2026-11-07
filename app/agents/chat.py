@@ -818,6 +818,7 @@ When users ask to update or remove signals (decisions, action items, key points,
                 "mcp__chat__find_related_entities",
                 "mcp__chat__list_entity_profiles",
                 "mcp__chat__query_graph_cypher",
+                "mcp__chat__list_source_items",
                 # Meeting transcript & document tools
                 "mcp__chat__search_meeting_transcripts",
                 "mcp__chat__list_meeting_documents",
