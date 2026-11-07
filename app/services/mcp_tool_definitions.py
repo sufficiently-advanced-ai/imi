@@ -121,7 +121,9 @@ TOOL_DEFS: dict[str, ToolDef] = {
         "description": (
             "Look up a single entity by its display name (case-insensitive, with partial-match fallback). "
             "Use this when you have a precise name and want the canonical entity ID and metadata. "
-            "For fuzzy or keyword queries use search_knowledge_graph instead."
+            "For fuzzy or keyword queries use search_knowledge_graph instead. "
+            "To read what a source (channel, newsletter, site) published, use "
+            "list_source_items; this returns only the source entity."
         ),
         "inputSchema": {
             "type": "object",
@@ -522,7 +524,10 @@ TOOL_DEFS: dict[str, ToolDef] = {
             "were party to: meetings, business mail, own notes) is searched, unless "
             "this deployment configures other default lanes; pass "
             'lanes=["record", "library"] to also get third-party watched content '
-            "(articles, newsletters, videos), ranked separately under background."
+            "(articles, newsletters, videos), ranked separately under background. "
+            "Pass source (a channel, newsletter or site name) to search only that "
+            "source's captures; each capture result carries its title and source. "
+            "For a source's latest items with no topic in mind, use list_source_items."
         ),
         "inputSchema": {
             "type": "object",
@@ -574,6 +579,14 @@ TOOL_DEFS: dict[str, ToolDef] = {
                     "description": (
                         "ISO date; keep only records published or sent on or after it. "
                         "Library records with no known publish date are excluded."
+                    ),
+                },
+                "source": {
+                    "type": "string",
+                    "description": (
+                        "Only captures from this source: a YouTube channel, newsletter or "
+                        "site, by name or entity id (e.g. 'AI Engineer'). Restricts to "
+                        "captures and, unless lanes is given, searches both lanes."
                     ),
                 },
                 "include_content": {
@@ -1450,6 +1463,37 @@ TOOL_DEFS: dict[str, ToolDef] = {
                 "max_results": {"type": "integer", "default": 50, "minimum": 1, "maximum": 1000},
             },
             "required": ["entity_type"],
+        },
+    },
+    "list_source_items": {
+        "name": "list_source_items",
+        "description": (
+            "Captures from one source (a YouTube channel, newsletter, podcast or site), "
+            "newest first by publish date: 'the latest AI Engineer videos'. The source is "
+            "matched by name, a near-spelling, or entity id. Returns record ids, titles, "
+            "urls, publish dates and summaries; read one in full with inspect_memory. "
+            "Decayed library items are left out unless include_stale. To search a "
+            "source's items by topic, use memory_recall with source."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Source name or entity id, e.g. 'AI Engineer'",
+                },
+                "published_after": {
+                    "type": "string",
+                    "description": "ISO date; only items published on or after it",
+                },
+                "max_results": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+                "include_stale": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Also list library items past their decay horizon",
+                },
+            },
+            "required": ["source"],
         },
     },
 }

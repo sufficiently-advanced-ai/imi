@@ -230,6 +230,16 @@ class SqliteVectorStore:
             )
             params.extend(lanes)
 
+        # A record-id allow-list (recall's source filter) also cuts before
+        # top-k, so a few hundred sourced captures are never crowded out.
+        ids = _filter_values(filter, "id")
+        if ids:
+            sql += (
+                " AND json_extract(metadata, '$.id') IN "
+                f"({','.join('?' * len(ids))})"
+            )
+            params.extend(ids)
+
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         if not rows:

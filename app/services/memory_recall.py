@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.lane import Lane
 from app.services.recall_trace_store import record_recall
@@ -90,6 +90,9 @@ class RecallRequest(BaseModel):
     # be shown to be recent, so it is excluded rather than dated by ingest.
     published_after: datetime | None = None
     include_rejected: bool = False
+    # Only captures linked FROM_SOURCE to this source (an id or a name, see
+    # source_items.resolve_source). Signals and agent memories have no source.
+    source: str | None = None
     task_id: str | None = None
     flow_id: str | None = None
     runtime_name: str | None = None
@@ -104,6 +107,15 @@ class RecallRequest(BaseModel):
         if not value or not value.strip():
             raise ValueError("query must be non-empty")
         return value
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _blank_source(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("source must be a string")
+        return value.strip() or None
 
     @field_validator("published_after", mode="before")
     @classmethod
@@ -121,6 +133,14 @@ class RecallRequest(BaseModel):
         if not value:
             raise ValueError("lanes must name at least one lane")
         return list(dict.fromkeys(value))  # dedup, keep order
+
+    @model_validator(mode="after")
+    def _source_spans_lanes(self) -> RecallRequest:
+        # Sourced content is mostly library; a source filter that kept the
+        # record-only default would answer "nothing" for a busy channel.
+        if self.source and "lanes" not in self.model_fields_set:
+            self.lanes = ["record", "library"]
+        return self
 
     @field_validator("record_kinds")
     @classmethod
@@ -202,7 +222,7 @@ class _Filter:
         return self
 
 
-def _metadata_filter(kinds: list[str], lane: str):
+def _metadata_filter(kinds: list[str], lane: str, ids: set[str] | None = None):
     try:
         from semantica.vector_store import MetadataFilter
 
@@ -210,7 +230,52 @@ def _metadata_filter(kinds: list[str], lane: str):
     except Exception:  # optional dep absent — same shape, local shim
         mf = _Filter()
     mf = mf.eq("content_type", kinds[0]) if len(kinds) == 1 else mf.in_list("content_type", kinds)
-    return mf.eq("lane", lane)
+    mf = mf.eq("lane", lane)
+    if ids:
+        # Stores that understand it filter before the top-k cut; recall
+        # re-checks every result, so a store that ignores it is still correct.
+        mf = mf.in_list("id", sorted(ids))
+    return mf
+
+
+def _empty_response(warnings: list[str], **extra: Any) -> dict[str, Any]:
+    return {
+        "request_id": None,
+        "schema_version": RESPONSE_SCHEMA_VERSION,
+        "memories": [],
+        "background": [],
+        "warnings": warnings,
+        **extra,
+    }
+
+
+async def _source_scope(source: str, kg: Any) -> tuple[dict, set[str]]:
+    """(resolved source, its capture ids). Raises source_items.SourceError."""
+    from app.services import source_items
+
+    kg = kg or source_items._graph()
+    resolved = await source_items.resolve_source(source, kg=kg)
+    return resolved, set(await source_items.source_capture_ids(resolved["id"], kg=kg))
+
+
+async def _annotate_origins(shapes: list[dict], kg: Any) -> None:
+    """Add ``title`` and ``source`` to capture results, from the graph.
+    Best effort: recall never fails because the graph is unavailable."""
+    ids = [s["record_id"] for s in shapes if s.get("record_kind") == "capture"]
+    if not ids:
+        return
+    try:
+        from app.services import source_items
+
+        origins = await source_items.capture_origins(ids, kg=kg)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[RECALL] capture origins unavailable: %s", e)
+        return
+    for shape in shapes:
+        origin = origins.get(shape["record_id"])
+        if origin and shape.get("record_kind") == "capture":
+            shape["title"] = origin.get("title")
+            shape["source"] = origin.get("source")
 
 
 def _default_lanes() -> list[str]:
@@ -342,6 +407,7 @@ async def recall(
     resolvers: dict[str, Callable[[str], Any]] | None = None,
     session_factory=None,
     tenant_id: str | None = None,
+    kg: Any = None,
 ) -> dict[str, Any]:
     """Execute a governed recall. Returns the response dict (never raises on
     vector/trace failures — degraded results carry a ``warnings`` list)."""
@@ -356,16 +422,30 @@ async def recall(
 
         tenant_id = current_tenant_id.get()
 
+    allowed: set[str] | None = None
+    source_info: dict | None = None
+    if request.source:
+        from app.services.source_items import SourceError
+
+        try:
+            source_info, allowed = await _source_scope(request.source, kg)
+        except SourceError as e:
+            return _empty_response([str(e)])
+        kinds = [k for k in kinds if k == "capture"]
+        if not kinds:
+            return _empty_response(
+                ["source filters captures only; record_kinds excludes capture"],
+                source=source_info,
+            )
+        if not allowed:
+            return _empty_response(
+                [f"source {source_info['name']!r} has no linked captures"], source=source_info
+            )
+
     if vector_store is None or embedder is None:
         vector_store, embedder = _default_stack()
     if vector_store is None or embedder is None:
-        return {
-            "request_id": None,
-            "schema_version": RESPONSE_SCHEMA_VERSION,
-            "memories": [],
-            "background": [],
-            "warnings": ["vector stack unavailable"],
-        }
+        return _empty_response(["vector stack unavailable"])
     resolvers = resolvers or default_resolvers()
     decay = _decay_enabled()
 
@@ -378,7 +458,7 @@ async def recall(
         Each lane gets its own store-side filtered top-k so a large library
         can never crowd record results out (or vice versa)."""
         results = vector_store.search_vectors(
-            embedding, k=k, filter=_metadata_filter(kinds, lane)
+            embedding, k=k, filter=_metadata_filter(kinds, lane, allowed)
         )
 
         # Dedup by record id keeping the best-scoring vector (FAISS append caveat).
@@ -388,6 +468,8 @@ async def recall(
             if meta.get("content_type") not in kinds or not meta.get("id"):
                 continue
             record_id = meta["id"]
+            if allowed is not None and record_id not in allowed:
+                continue  # the store ignored the id filter, or the vector lags
             score = float(result.get("score", 0.0))
             if record_id not in best or score > best[record_id]["similarity"]:
                 best[record_id] = {"meta": meta, "similarity": score}
@@ -461,15 +543,15 @@ async def recall(
         while True:
             scored, fetched = rank_candidates(lane, k)
             if (
-                request.published_after is None
+                (request.published_after is None and allowed is None)
                 or len(scored) >= request.limit
                 or fetched < k
             ):
                 break
             if k >= MAX_CANDIDATES:
                 warnings.append(
-                    f"published_after: searched {k} {lane} candidates; older matches "
-                    "may hide more results"
+                    f"searched {k} {lane} candidates under a date or source filter; "
+                    "more matches may be hidden"
                 )
                 break
             k = min(k * CANDIDATE_GROWTH, MAX_CANDIDATES)
@@ -477,6 +559,7 @@ async def recall(
 
     top = search_lane("record") if "record" in request.lanes else []
     background = search_lane("library") if "library" in request.lanes else []
+    await _annotate_origins([s["shape"] for s in top + background], kg)
     memories = [_fit_content(s["shape"], request) for s in top]
 
     request_id = str(uuid.uuid4())
@@ -509,6 +592,7 @@ async def recall(
                         "record_kinds": kinds,
                         "lanes": request.lanes,
                         "include_rejected": request.include_rejected,
+                        **({"source": source_info["id"]} if source_info else {}),
                     },
                     response_policy={"authority": request.authority},
                     items=[
@@ -528,10 +612,13 @@ async def recall(
             logger.warning("[RECALL] Trace write failed (non-fatal): %s", e)
             warnings.append("trace not recorded")
 
-    return {
+    response = {
         "request_id": request_id,
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "memories": memories,
         "background": [_fit_content(s["shape"], request) for s in background],
         "warnings": warnings,
     }
+    if source_info:
+        response["source"] = source_info
+    return response

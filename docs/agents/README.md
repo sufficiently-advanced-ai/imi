@@ -86,6 +86,9 @@ Escalating strategies:
 3. `query_graph_cypher` for anything structural (read-only, ≤100 rows).
 4. `memory_recall(query, authority="evidence")` for semantic recall across signals +
    captures + agent memories.
+5. By source (a channel, newsletter or site): `list_source_items(source="AI Engineer",
+   published_after=...)` for its latest items, `memory_recall(query, source=...)` to search
+   them by topic. `get_entity_by_name` finds only the source entity, not what it published.
 
 ### Work with decisions
 

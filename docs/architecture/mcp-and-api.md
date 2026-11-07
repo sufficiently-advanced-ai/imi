@@ -61,7 +61,7 @@ against).
 | `delete_signal` | Permanently remove a signal (JSON + git + Neo4j) |
 | `capture_thought` | Persist a free-form thought into the memory layer (dedup, enrich, embed). `source` is the connector it came from; omitted = `unknown`, judged per item; the handler stamps `channel: mcp` (ADR-007). Optional `about`: owner links from the note to named entities or captures (ADR-011 §5) |
 | `memory_writeback` | Batch write typed operational memories after a task (idempotent, safety-gated) |
-| `memory_recall` | Unified governed recall across signals + captures + agent memories |
+| `memory_recall` | Unified governed recall across signals + captures + agent memories. Capture results carry `title` and `source`; `source` (name or id) restricts to one source's captures and, unless `lanes` is given, searches both lanes |
 | `record_memory_usage` | Close the recall feedback loop (which memories were used/ignored) |
 | `inspect_memory` | Audit one memory record: provenance, usage, lineage, judge decisions |
 
@@ -93,6 +93,7 @@ place
 | `get_graph_at_time` | The entities and relationships around an entity as known at a past time |
 | `get_entity_provenance` | Every source that mentions an entity, in event order, with `recorded_at` and `time_source` |
 | `list_claims` | Library claims about (or attributed to) an entity, oldest first, within an optional `date_from`/`date_to` window: attribution (resolved entities + source text), `as_of`, supersession, decay state; `include_stale` to see decayed claims ([ADR-006](../adr/ADR-006-library-primary-deployments.md) §6) |
+| `list_source_items` | One source's captures (YouTube channel, newsletter, site), newest first by `occurred_at`: record id, title, url, summary, use policy. `source` is a name, near-spelling or id; `published_after`; `include_stale` to see decayed items. The read side of `FROM_SOURCE` (`app/services/source_items.py`) |
 
 Full parameter schemas: `app/services/mcp_tool_definitions.py`.
 
