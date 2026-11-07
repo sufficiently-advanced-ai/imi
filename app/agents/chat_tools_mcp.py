@@ -652,6 +652,29 @@ async def memory_recall_tool(args: dict[str, Any]) -> dict[str, Any]:
         return _err(str(e))
 
 
+@tool(*chat_tool_args("list_source_items"))
+async def list_source_items_tool(args: dict[str, Any]) -> dict[str, Any]:
+    start = time.time()
+    tool_name = "list_source_items"
+    await _emit_tool_start(tool_name, args)
+    try:
+        from app.services import source_items
+
+        result = await source_items.list_source_items(
+            args.get("source") or "",
+            published_after=args.get("published_after"),
+            max_results=int(args.get("max_results") or 20),
+            include_stale=bool(args.get("include_stale", False)),
+        )
+        await _emit_tool_complete(
+            tool_name, time.time() - start, f"Listed {result['returned']} items"
+        )
+        return _ok(json.dumps(result, default=str))
+    except Exception as e:
+        await _emit_tool_error(tool_name, time.time() - start, str(e))
+        return _err(str(e))
+
+
 # ============================================================================
 # SIGNAL MUTATION TOOLS (2) — delegate to app/services/chat_tools.py
 # ============================================================================
@@ -1459,6 +1482,7 @@ _QUERY_TOOLS = [
     search_signals_tool,
     capture_thought_tool,
     memory_recall_tool,
+    list_source_items_tool,
 ]
 
 # Graph maintenance tools (always included)
@@ -1620,6 +1644,7 @@ __all__ = [
     "get_entity_context_summary_tool",
     "query_graph_cypher_tool",
     "search_signals_tool",
+    "list_source_items_tool",
     "update_signal_tool",
     "delete_signal_tool",
     "graph_add_node_tool",

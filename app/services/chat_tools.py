@@ -538,6 +538,7 @@ async def memory_recall(
     max_content_chars: int = RECALL_MAX_CONTENT_CHARS,
     half_life_days: float = 90,
     published_after: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Unified governed recall (Phase 3 wiring). Delegates to memory_recall.recall."""
     from app.services import memory_recall as recall_service
@@ -556,6 +557,7 @@ async def memory_recall(
             max_content_chars=max_content_chars,
             half_life_days=half_life_days,
             published_after=published_after,
+            source=source,
             **({"lanes": lanes} if lanes else {}),
         )
     except Exception as e:

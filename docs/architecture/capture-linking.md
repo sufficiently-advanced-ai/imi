@@ -209,6 +209,10 @@ clean rebuild re-projects every link file (`Neo4jKnowledgeGraph._reingest_captur
 Capture documents are excluded from `CO_OCCURRENCE` and from the in-memory graph mirror that
 feeds entity profiles.
 
+Reading by source: `list_source_items` (MCP) lists one source's captures newest first, and
+`memory_recall(source=...)` searches only them (`app/services/source_items.py`). Both resolve
+the source by name, and re-hydrate governance and decay from the capture record.
+
 Useful reads (`query_graph_cypher`):
 
 ```cypher

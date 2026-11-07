@@ -479,6 +479,8 @@ TOOLS = [
     build_mcp_tool("update_storyline"),
     build_mcp_tool("propose_storyline"),
     build_mcp_tool("list_entity_activity"),
+    # --- Library by source (ADR-011 FROM_SOURCE, read side) ---
+    build_mcp_tool("list_source_items"),
 ]
 
 
@@ -742,7 +744,22 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 max_content_chars=args.get("max_content_chars", RECALL_MAX_CONTENT_CHARS),
                 half_life_days=args.get("half_life_days", 90),
                 published_after=args.get("published_after"),
+                source=args.get("source"),
             )
+            return _text(result)
+
+        elif name == "list_source_items":
+            from app.services import source_items
+
+            try:
+                result = await source_items.list_source_items(
+                    args.get("source") or "",
+                    published_after=args.get("published_after"),
+                    max_results=int(args.get("max_results") or 20),
+                    include_stale=bool(args.get("include_stale", False)),
+                )
+            except source_items.SourceError as e:
+                return _error(str(e))
             return _text(result)
 
         elif name == "record_memory_usage":
