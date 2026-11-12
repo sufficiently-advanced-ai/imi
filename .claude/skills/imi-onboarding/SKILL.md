@@ -116,7 +116,9 @@ are in [`docs/mcp_access_tiers.md`](../../../docs/mcp_access_tiers.md). Packs do
 and Relayed; Remote is optional. Warn: MCP is unauthenticated by default (`MCP_AUTH=none`) —
 keep ports loopback-bound (the shipped compose file does) unless the user deliberately runs
 the Remote tier on a private network, ideally with `MCP_AUTH=token` or `oauth` (bearer tokens,
-or an OAuth 2.1 server; see `docs/mcp_access_tiers.md`).
+or an OAuth 2.1 server; see `docs/mcp_access_tiers.md`). With `MCP_AUTH=token` every client
+must send `Authorization: Bearer <token>` (Claude Code: `--header`), so add that header to the
+`.mcp.json` entry and to the step 4 MCP probe, which otherwise get `401`.
 
 ## 6. Inbound
 
