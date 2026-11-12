@@ -113,9 +113,10 @@ A boot crash naming a config field means a malformed domain YAML (fail-fast by d
 `cp .mcp.json.example .mcp.json` for Claude Code in this checkout. For other clients and for
 cloud sessions, the access tiers — **Local**, **Relayed**, **Remote** — and what each needs
 are in [`docs/mcp_access_tiers.md`](../../../docs/mcp_access_tiers.md). Packs document Local
-and Relayed; Remote is optional. Warn: the community edition has no MCP authentication —
+and Relayed; Remote is optional. Warn: MCP is unauthenticated by default (`MCP_AUTH=none`) —
 keep ports loopback-bound (the shipped compose file does) unless the user deliberately runs
-the Remote tier on a private network.
+the Remote tier on a private network, ideally with `MCP_AUTH=token` or `oauth` (bearer tokens,
+or an OAuth 2.1 server; see `docs/mcp_access_tiers.md`).
 
 ## 6. Inbound
 
@@ -146,7 +147,7 @@ claude plugin marketplace add ./build/plugins/imi-marketplace
 claude plugin install imi@imi-local
 ```
 
-Add `--mcp-url http://localhost:8080/api/mcp/sse` if the user wants the plugin to declare the
+Add `--mcp-url http://localhost:8080/api/mcp/http` (Streamable HTTP; `/api/mcp/sse` is the legacy transport) if the user wants the plugin to declare the
 imi MCP server itself (skip it if `.mcp.json` / their client already has one). On a re-run,
 rebuild and `claude plugin marketplace update imi-local`. The skills appear as `imi:brief`,
 `imi:what-changed`, `imi:constitution-review`, `imi:memory-wrap`, plus the pack's own.

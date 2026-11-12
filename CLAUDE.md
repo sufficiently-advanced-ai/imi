@@ -38,13 +38,13 @@ Verification for pipeline/schema changes: real ingest beats unit tests —
 
 1. **ADR-002 authority gate** (`docs/adr/ADR-002-evidence-instruction-authority-gate.md`): `can_use_as_instruction` requires
    `provenance_status ∈ {user_confirmed, imported}`. Enforced in model validators
-   (`app/models/signal.py:132`), the review state machine
+   (`app/models/signal.py`, the `can_use_as_instruction` validator), the review state machine
    (`app/services/signal_governance.py`), and re-hydrated at recall
    (`app/services/memory_recall.py`). Never accept `provenance_status` / `review_status` /
    `can_use_as_*` from client input — that would be a privilege escalation.
 2. **Files are the source of truth.** Entities/meetings/signals are markdown+JSON in the git
-   corpus with write-through from graph mutations (`neo4j_graph.py:2144` rolls back Neo4j on
-   file-write failure). Don't write Neo4j directly and skip the file layer.
+   corpus with write-through from graph mutations (`app/services/graph/neo4j_graph.py`
+   rolls back Neo4j on file-write failure). Don't write Neo4j directly and skip the file layer.
 3. **Idempotency**: ingest dedups by `source_id` then content hash; signal IDs are
    deterministic `uuid5`. Preserve both when touching the pipeline.
 4. **Domain schema is the type system.** Entity/relationship types come from
